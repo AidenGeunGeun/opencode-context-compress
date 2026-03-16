@@ -7,8 +7,21 @@ import { handleContextCommand } from "./commands/context";
 import { handleHelpCommand } from "./commands/help";
 import { handleManageCommand } from "./commands/manage";
 import { ensureSessionInitialized } from "./state/state";
-export function createChatMessageTransformHandler(client, state, logger, config) {
+export function getLastUserSessionId(messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].info.role === "user") {
+            return messages[i].info.sessionID;
+        }
+    }
+    return undefined;
+}
+export function createChatMessageTransformHandler(client, stateManager, logger, config) {
     return async (_input, output) => {
+        const sessionId = getLastUserSessionId(output.messages);
+        if (!sessionId) {
+            return;
+        }
+        const state = stateManager.get(sessionId);
         await checkSession(client, state, logger, output.messages);
         if (state.isSubAgent) {
             return;
@@ -16,17 +29,16 @@ export function createChatMessageTransformHandler(client, state, logger, config)
         syncToolCache(state, config, logger, output.messages);
         buildToolIdList(state, output.messages);
         applyCompressTransforms(state, logger, output.messages);
-        if (state.sessionId) {
-            await logger.saveContext(state.sessionId, output.messages);
-        }
+        await logger.saveContext(sessionId, output.messages);
     };
 }
-export function createCommandExecuteHandler(client, state, logger, config) {
+export function createCommandExecuteHandler(client, stateManager, logger, config) {
     return async (input, _output) => {
         if (!config.commands.enabled) {
             return;
         }
         if (input.command === "compress") {
+            const state = stateManager.get(input.sessionID);
             const messagesResponse = await client.session.messages({
                 path: { id: input.sessionID },
             });

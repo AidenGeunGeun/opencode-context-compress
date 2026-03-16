@@ -34,6 +34,7 @@ export interface Compressed {
 
 export interface SessionState {
     sessionId: string | null
+    initialized: boolean
     isSubAgent: boolean
     compressed: Compressed
     compressSummaries: CompressSummary[]

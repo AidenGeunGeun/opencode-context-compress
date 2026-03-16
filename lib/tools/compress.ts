@@ -126,8 +126,9 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 .describe("One or more compression ranges to process in this call"),
         },
         async execute(args, toolCtx) {
-            const { client, state, logger } = ctx
+            const { client, stateManager, logger } = ctx
             const sessionId = toolCtx.sessionID
+            const state = stateManager.get(sessionId)
 
             await toolCtx.ask({
                 permission: "compress",
@@ -240,9 +241,11 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 totalToolCallsCompressed += containedToolIds.length
             }
 
-            saveSessionState(state, logger).catch((err) =>
-                logger.error("Failed to persist state", { error: err.message }),
-            )
+            try {
+                await saveSessionState(state, logger)
+            } catch (err: any) {
+                logger.error("Failed to persist state", { error: err.message })
+            }
 
             return `Compressed ${ranges.length} ranges (${totalEntriesCompressed} entries, ${totalToolCallsCompressed} tool calls) into summaries.`
         },

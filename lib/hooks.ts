@@ -1,4 +1,5 @@
-import type { SessionState, WithParts } from "./state"
+import type { WithParts } from "./state"
+import { SessionStateManager } from "./state"
 import type { Logger } from "./logger"
 import type { PluginConfig } from "./config"
 import { syncToolCache } from "./state/tool-cache"
@@ -11,13 +12,28 @@ import { handleHelpCommand } from "./commands/help"
 import { handleManageCommand } from "./commands/manage"
 import { ensureSessionInitialized } from "./state/state"
 
+export function getLastUserSessionId(messages: WithParts[]): string | undefined {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].info.role === "user") {
+            return messages[i].info.sessionID
+        }
+    }
+    return undefined
+}
+
 export function createChatMessageTransformHandler(
     client: any,
-    state: SessionState,
+    stateManager: SessionStateManager,
     logger: Logger,
     config: PluginConfig,
 ) {
     return async (_input: {}, output: { messages: WithParts[] }) => {
+        const sessionId = getLastUserSessionId(output.messages)
+        if (!sessionId) {
+            return
+        }
+
+        const state = stateManager.get(sessionId)
         await checkSession(client, state, logger, output.messages)
 
         if (state.isSubAgent) {
@@ -28,16 +44,13 @@ export function createChatMessageTransformHandler(
         buildToolIdList(state, output.messages)
 
         applyCompressTransforms(state, logger, output.messages)
-
-        if (state.sessionId) {
-            await logger.saveContext(state.sessionId, output.messages)
-        }
+        await logger.saveContext(sessionId, output.messages)
     }
 }
 
 export function createCommandExecuteHandler(
     client: any,
-    state: SessionState,
+    stateManager: SessionStateManager,
     logger: Logger,
     config: PluginConfig,
 ) {
@@ -50,6 +63,7 @@ export function createCommandExecuteHandler(
         }
 
         if (input.command === "compress") {
+            const state = stateManager.get(input.sessionID)
             const messagesResponse = await client.session.messages({
                 path: { id: input.sessionID },
             })

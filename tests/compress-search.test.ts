@@ -29,6 +29,7 @@ const createState = (
     summaries: CompressSummary[] = [],
 ): SessionState => ({
     sessionId: "session-test",
+    initialized: true,
     isSubAgent: false,
     compressed: {
         toolIds: new Set<string>(),

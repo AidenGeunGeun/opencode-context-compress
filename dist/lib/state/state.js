@@ -1,20 +1,33 @@
 import { loadSessionState } from "./persistence";
 import { isSubAgentSession, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils";
-import { getLastUserMessage } from "../shared-utils";
+export class SessionStateManager {
+    sessions = new Map();
+    get(sessionId) {
+        let state = this.sessions.get(sessionId);
+        if (!state) {
+            state = createSessionState();
+            state.sessionId = sessionId;
+            this.sessions.set(sessionId, state);
+        }
+        return state;
+    }
+    has(sessionId) {
+        return this.sessions.has(sessionId);
+    }
+    delete(sessionId) {
+        this.sessions.delete(sessionId);
+    }
+}
 export const checkSession = async (client, state, logger, messages) => {
-    const lastUserMessage = getLastUserMessage(messages);
-    if (!lastUserMessage) {
+    if (!state.sessionId) {
         return;
     }
-    const lastSessionId = lastUserMessage.info.sessionID;
-    if (state.sessionId === null || state.sessionId !== lastSessionId) {
-        logger.info(`Session changed: ${state.sessionId} -> ${lastSessionId}`);
-        try {
-            await ensureSessionInitialized(client, state, lastSessionId, logger, messages);
-        }
-        catch (err) {
-            logger.error("Failed to initialize session state", { error: err.message });
-        }
+    try {
+        await ensureSessionInitialized(client, state, state.sessionId, logger, messages);
+    }
+    catch (err) {
+        logger.error("Failed to initialize session state", { error: err.message });
+        return;
     }
     const lastCompactionTimestamp = findLastCompactionTimestamp(messages);
     if (lastCompactionTimestamp > state.lastCompaction) {
@@ -29,6 +42,7 @@ export const checkSession = async (client, state, logger, messages) => {
 export function createSessionState() {
     return {
         sessionId: null,
+        initialized: false,
         isSubAgent: false,
         compressed: {
             toolIds: new Set(),
@@ -46,49 +60,33 @@ export function createSessionState() {
         variant: undefined,
     };
 }
-export function resetSessionState(state) {
-    state.sessionId = null;
-    state.isSubAgent = false;
-    state.compressed = {
-        toolIds: new Set(),
-        messageIds: new Set(),
-    };
-    state.compressSummaries = [];
-    state.stats = {
-        compressTokenCounter: 0,
-        totalCompressTokens: 0,
-    };
-    state.toolParameters.clear();
-    state.toolIdList = [];
-    state.lastCompaction = 0;
-    state.currentTurn = 0;
-    state.variant = undefined;
-}
 export async function ensureSessionInitialized(client, state, sessionId, logger, messages) {
-    if (state.sessionId === sessionId) {
+    if (state.sessionId && state.sessionId !== sessionId) {
+        throw new Error(`Session state mismatch: existing=${state.sessionId}, requested=${sessionId}`);
+    }
+    state.sessionId = sessionId;
+    if (state.initialized) {
         return;
     }
     logger.info("session ID = " + sessionId);
     logger.info("Initializing session state", { sessionId: sessionId });
-    resetSessionState(state);
-    state.sessionId = sessionId;
     const isSubAgent = await isSubAgentSession(client, sessionId);
     state.isSubAgent = isSubAgent;
     logger.info("isSubAgent = " + isSubAgent);
     state.lastCompaction = findLastCompactionTimestamp(messages);
-    state.currentTurn = countTurns(state, messages);
     const persisted = await loadSessionState(sessionId, logger, messages);
-    if (persisted === null) {
-        return;
+    if (persisted !== null) {
+        state.compressed = {
+            toolIds: new Set(persisted.compressed.toolIds || []),
+            messageIds: new Set(persisted.compressed.messageIds || []),
+        };
+        state.compressSummaries = persisted.compressSummaries || [];
+        state.stats = {
+            compressTokenCounter: persisted.stats?.compressTokenCounter || 0,
+            totalCompressTokens: persisted.stats?.totalCompressTokens || 0,
+        };
     }
-    state.compressed = {
-        toolIds: new Set(persisted.compressed.toolIds || []),
-        messageIds: new Set(persisted.compressed.messageIds || []),
-    };
-    state.compressSummaries = persisted.compressSummaries || [];
-    state.stats = {
-        compressTokenCounter: persisted.stats?.compressTokenCounter || 0,
-        totalCompressTokens: persisted.stats?.totalCompressTokens || 0,
-    };
+    state.currentTurn = countTurns(state, messages);
+    state.initialized = true;
 }
 //# sourceMappingURL=state.js.map

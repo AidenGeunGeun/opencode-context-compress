@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config"
 import { Logger } from "./lib/logger"
-import { createSessionState } from "./lib/state"
+import { SessionStateManager } from "./lib/state"
 import { createCompressTool } from "./lib/tools"
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks"
 import { configureClientAuth, isSecureMode } from "./lib/auth"
@@ -14,7 +14,7 @@ const plugin: Plugin = (async (ctx) => {
     }
 
     const logger = new Logger(config.debug)
-    const state = createSessionState()
+    const stateManager = new SessionStateManager()
 
     if (isSecureMode()) {
         configureClientAuth(ctx.client)
@@ -26,7 +26,7 @@ const plugin: Plugin = (async (ctx) => {
     return {
         "experimental.chat.messages.transform": createChatMessageTransformHandler(
             ctx.client,
-            state,
+            stateManager,
             logger,
             config,
         ) as any,
@@ -42,12 +42,12 @@ const plugin: Plugin = (async (ctx) => {
         ) => {
             // Cache variant from real user messages (not synthetic)
             // This avoids scanning all messages to find variant
-            state.variant = input.variant
+            stateManager.get(input.sessionID).variant = input.variant
             logger.debug("Cached variant from chat.message hook", { variant: input.variant })
         },
         "command.execute.before": createCommandExecuteHandler(
             ctx.client,
-            state,
+            stateManager,
             logger,
             config,
         ),
@@ -55,7 +55,7 @@ const plugin: Plugin = (async (ctx) => {
             ...(config.tools.compress.permission !== "deny" && {
                 compress: createCompressTool({
                     client: ctx.client,
-                    state,
+                    stateManager,
                     logger,
                     config,
                     workingDirectory: ctx.directory,

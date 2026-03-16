@@ -1,6 +1,6 @@
 import { getConfig } from "./lib/config";
 import { Logger } from "./lib/logger";
-import { createSessionState } from "./lib/state";
+import { SessionStateManager } from "./lib/state";
 import { createCompressTool } from "./lib/tools";
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks";
 import { configureClientAuth, isSecureMode } from "./lib/auth";
@@ -10,26 +10,26 @@ const plugin = (async (ctx) => {
         return {};
     }
     const logger = new Logger(config.debug);
-    const state = createSessionState();
+    const stateManager = new SessionStateManager();
     if (isSecureMode()) {
         configureClientAuth(ctx.client);
         // logger.info("Secure mode detected, configured client authentication")
     }
     logger.info("Context Compress initialized");
     return {
-        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, state, logger, config),
+        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, config),
         "chat.message": async (input, _output) => {
             // Cache variant from real user messages (not synthetic)
             // This avoids scanning all messages to find variant
-            state.variant = input.variant;
+            stateManager.get(input.sessionID).variant = input.variant;
             logger.debug("Cached variant from chat.message hook", { variant: input.variant });
         },
-        "command.execute.before": createCommandExecuteHandler(ctx.client, state, logger, config),
+        "command.execute.before": createCommandExecuteHandler(ctx.client, stateManager, logger, config),
         tool: {
             ...(config.tools.compress.permission !== "deny" && {
                 compress: createCompressTool({
                     client: ctx.client,
-                    state,
+                    stateManager,
                     logger,
                     config,
                     workingDirectory: ctx.directory,
