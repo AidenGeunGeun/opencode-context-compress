@@ -63,7 +63,7 @@ export class Logger {
         }
     }
     async write(level, component, message, data) {
-        if (!this.enabled)
+        if (!this.enabled && !message.startsWith("[DIAG:"))
             return;
         try {
             await this.ensureLogDir();

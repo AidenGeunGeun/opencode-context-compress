@@ -18,18 +18,30 @@ export function getLastUserSessionId(messages) {
 export function createChatMessageTransformHandler(client, stateManager, logger, config) {
     return async (_input, output) => {
         const sessionId = getLastUserSessionId(output.messages);
+        const msgCount = output.messages.length;
+        const callerInfo = new Error().stack?.split("\n")[2]?.trim() || "unknown";
+        logger.info(`[DIAG:transform] ENTER | sessionId=${sessionId} | msgCount=${msgCount} | activeSessions=${stateManager.size()} | caller=${callerInfo}`);
         if (!sessionId) {
+            logger.info("[DIAG:transform] EXIT early — no sessionId found in messages");
             return;
         }
+        const isNew = !stateManager.has(sessionId);
         const state = stateManager.get(sessionId);
+        logger.info(`[DIAG:transform] state lookup | sessionId=${sessionId} | isNewState=${isNew} | initialized=${state.initialized} | isSubAgent=${state.isSubAgent} | compressedMsgIds=${state.compressed.messageIds.size} | compressedToolIds=${state.compressed.toolIds.size} | summaries=${state.compressSummaries.length}`);
         await checkSession(client, state, logger, output.messages);
+        logger.info(`[DIAG:transform] post-checkSession | initialized=${state.initialized} | isSubAgent=${state.isSubAgent} | compressedMsgIds=${state.compressed.messageIds.size} | compressedToolIds=${state.compressed.toolIds.size} | summaries=${state.compressSummaries.length}`);
         if (state.isSubAgent) {
+            logger.info("[DIAG:transform] EXIT early — isSubAgent=true");
             return;
         }
         syncToolCache(state, config, logger, output.messages);
         buildToolIdList(state, output.messages);
+        const msgCountBefore = output.messages.length;
         applyCompressTransforms(state, logger, output.messages);
+        const msgCountAfter = output.messages.length;
+        logger.info(`[DIAG:transform] post-compress | msgsBefore=${msgCountBefore} | msgsAfter=${msgCountAfter} | removed=${msgCountBefore - msgCountAfter}`);
         await logger.saveContext(sessionId, output.messages);
+        logger.info("[DIAG:transform] EXIT normal");
     };
 }
 export function createCommandExecuteHandler(client, stateManager, logger, config) {
