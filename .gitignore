@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+bun.lock
+
+# Build output
+*.tgz
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OpenCode
+.opencode/
+.code-intel/
+
+# Generated prompt files (from scripts/generate-prompts.ts)
+lib/prompts/**/*.generated.ts
+
+# Tests
+tests/results/
+notes/
+test-update.ts
+
+# Documentation (local development only)
+docs/
+SCHEMA_NOTES.md
+
+repomix-output.xml

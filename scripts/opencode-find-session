@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""
+Find OpenCode session IDs by title search.
+Returns matching session IDs ordered by last usage time.
+
+Usage: opencode-find-session <search-term> [--exact] [--json]
+"""
+
+import json
+import argparse
+from pathlib import Path
+from datetime import datetime
+
+
+def get_all_sessions(storage: Path) -> list[dict]:
+    """Get all sessions with their metadata."""
+    session_dir = storage / "session"
+    message_dir = storage / "message"
+    
+    if not session_dir.exists():
+        return []
+    
+    sessions = []
+    
+    for app_dir in session_dir.iterdir():
+        if not app_dir.is_dir():
+            continue
+        
+        for session_file in app_dir.glob("*.json"):
+            try:
+                session = json.loads(session_file.read_text())
+                session_id = session_file.stem
+                
+                # Get last modified time from message directory
+                msg_path = message_dir / session_id
+                if msg_path.exists():
+                    mtime = msg_path.stat().st_mtime
+                else:
+                    mtime = session_file.stat().st_mtime
+                
+                sessions.append({
+                    "id": session_id,
+                    "title": session.get("title", "Untitled"),
+                    "created_at": session.get("createdAt"),
+                    "last_used": mtime,
+                    "last_used_iso": datetime.fromtimestamp(mtime).isoformat()
+                })
+            except (json.JSONDecodeError, IOError):
+                pass
+    
+    return sessions
+
+
+def search_sessions(sessions: list[dict], search_term: str, exact: bool = False) -> list[dict]:
+    """Search sessions by title."""
+    results = []
+    search_lower = search_term.lower()
+    
+    for session in sessions:
+        title = session.get("title", "")
+        title_lower = title.lower()
+        
+        if exact:
+            if title_lower == search_lower:
+                results.append(session)
+        else:
+            if search_lower in title_lower:
+                results.append(session)
+    
+    # Sort by last used time, most recent first
+    results.sort(key=lambda s: s["last_used"], reverse=True)
+    
+    return results
+
+
+def print_results(results: list[dict], search_term: str):
+    """Print search results."""
+    if not results:
+        print(f"No sessions found matching: {search_term}")
+        return
+    
+    if len(results) == 1:
+        # Single result - just print the ID for easy piping
+        print(results[0]["id"])
+    else:
+        # Multiple results - show a table
+        print(f"Found {len(results)} sessions matching: {search_term}")
+        print()
+        print(f"{'Session ID':<32} {'Last Used':<20} {'Title'}")
+        print("-" * 100)
+        
+        for r in results:
+            last_used = datetime.fromtimestamp(r["last_used"]).strftime("%Y-%m-%d %H:%M")
+            title = r["title"][:50] if len(r["title"]) > 50 else r["title"]
+            print(f"{r['id']:<32} {last_used:<20} {title}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Find OpenCode session IDs by title search"
+    )
+    parser.add_argument(
+        "search_term",
+        type=str,
+        help="Text to search for in session titles"
+    )
+    parser.add_argument(
+        "--exact", "-e",
+        action="store_true",
+        help="Require exact title match (case-insensitive)"
+    )
+    parser.add_argument(
+        "--json", "-j",
+        action="store_true",
+        help="Output as JSON"
+    )
+    parser.add_argument(
+        "--all", "-a",
+        action="store_true",
+        help="Show all sessions (ignore search term)"
+    )
+    args = parser.parse_args()
+    
+    storage = Path.home() / ".local/share/opencode/storage"
+    
+    if not storage.exists():
+        print("Error: OpenCode storage not found at", storage)
+        return 1
+    
+    sessions = get_all_sessions(storage)
+    
+    if args.all:
+        results = sorted(sessions, key=lambda s: s["last_used"], reverse=True)
+    else:
+        results = search_sessions(sessions, args.search_term, args.exact)
+    
+    if args.json:
+        print(json.dumps(results, indent=2, default=str))
+    else:
+        print_results(results, args.search_term if not args.all else "(all)")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())

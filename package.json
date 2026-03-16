@@ -1,0 +1,54 @@
+{
+    "$schema": "https://json.schemastore.org/package.json",
+    "name": "opencode-context-compress",
+    "version": "0.1.0",
+    "type": "module",
+    "description": "Manual context compression plugin for OpenCode sessions",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "files": [
+        "dist",
+        "package.json"
+    ],
+    "scripts": {
+        "clean": "rm -rf dist",
+        "generate:prompts": "tsx scripts/generate-prompts.ts",
+        "prebuild": "npm run generate:prompts",
+        "build": "npm run clean && tsc",
+        "dev": "opencode plugin dev",
+        "typecheck": "npm run generate:prompts && tsc --noEmit",
+        "test": "node --import tsx --test tests/*.test.ts",
+        "compress": "tsx scripts/print.ts"
+    },
+    "author": "",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/skybluejaket/opencode-context-compress.git"
+    },
+    "homepage": "https://github.com/skybluejaket/opencode-context-compress",
+    "keywords": [
+        "opencode",
+        "plugin",
+        "context",
+        "compression",
+        "compress"
+    ],
+    "peerDependencies": {
+        "@opencode-ai/plugin": ">=0.13.7"
+    },
+    "dependencies": {
+        "@anthropic-ai/tokenizer": "^0.0.4",
+        "@opencode-ai/sdk": "^1.1.48",
+        "js-tiktoken": "^1.0.21",
+        "jsonc-parser": "^3.3.1",
+        "ulid": "^3.0.2",
+        "zod": "^4.3.6"
+    },
+    "devDependencies": {
+        "@opencode-ai/plugin": "^1.1.49",
+        "@types/node": "^25.1.0",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3"
+    }
+}

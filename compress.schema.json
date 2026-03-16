@@ -1,0 +1,125 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "compress.schema.json",
+    "title": "Context Compress Configuration",
+    "description": "Configuration for Context Compress - user-controlled context compression plugin",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string",
+            "description": "JSON Schema reference for IDE autocomplete"
+        },
+        "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable or disable the context compression plugin"
+        },
+        "debug": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable debug logging"
+        },
+        "notification": {
+            "type": "string",
+            "enum": ["off", "minimal", "detailed"],
+            "default": "detailed",
+            "description": "Level of notification shown when compression occurs"
+        },
+        "notificationType": {
+            "type": "string",
+            "enum": ["chat", "toast"],
+            "default": "chat",
+            "description": "Where to display compression notifications (chat message or toast notification)"
+        },
+        "commands": {
+            "type": "object",
+            "description": "Configuration for /compress slash commands",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable context compression slash commands (/compress)"
+                },
+                "protectedTools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Additional tool names to exclude from the internal tool cache used by context analysis"
+                }
+            },
+            "default": {
+                "enabled": true,
+                "protectedTools": []
+            }
+        },
+        "turnProtection": {
+            "type": "object",
+            "description": "Protect recent tool outputs from being compressed",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable turn-based protection"
+                },
+                "turns": {
+                    "type": "number",
+                    "default": 4,
+                    "description": "Number of recent turns to protect from compression"
+                }
+            }
+        },
+        "protectedFilePatterns": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "description": "Glob patterns for files that should be protected from compression (e.g., '**/*.config.ts')"
+        },
+        "tools": {
+            "type": "object",
+            "description": "Configuration for compression tools",
+            "additionalProperties": false,
+            "properties": {
+                "settings": {
+                    "type": "object",
+                    "description": "General tool settings",
+                    "additionalProperties": false,
+                    "properties": {
+                        "protectedTools": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "default": [],
+                            "description": "Tool names that should be excluded from context analysis candidates"
+                        }
+                    }
+                },
+                "compress": {
+                    "type": "object",
+                    "description": "Configuration for the compress tool",
+                    "additionalProperties": false,
+                    "properties": {
+                        "permission": {
+                            "type": "string",
+                            "enum": ["ask", "allow", "deny"],
+                            "default": "allow",
+                            "description": "Permission mode (deny disables the tool)"
+                        },
+                        "showCompression": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Show summary output in the UI"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
