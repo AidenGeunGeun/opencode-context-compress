@@ -65,18 +65,13 @@ export function createSessionState() {
 }
 export async function ensureSessionInitialized(client, state, sessionId, logger, messages) {
     if (state.sessionId && state.sessionId !== sessionId) {
-        logger.error(`[DIAG:init] SESSION MISMATCH: existing=${state.sessionId}, requested=${sessionId}`);
         throw new Error(`Session state mismatch: existing=${state.sessionId}, requested=${sessionId}`);
     }
     state.sessionId = sessionId;
-    if (state.initialized) {
-        logger.info(`[DIAG:init] already initialized for ${sessionId} | compressedMsgIds=${state.compressed.messageIds.size} | summaries=${state.compressSummaries.length}`);
+    if (state.initialized)
         return;
-    }
-    logger.info(`[DIAG:init] FIRST INIT for ${sessionId} | msgCount=${messages.length}`);
     const isSubAgent = await isSubAgentSession(client, sessionId);
     state.isSubAgent = isSubAgent;
-    logger.info(`[DIAG:init] isSubAgent=${isSubAgent} for ${sessionId}`);
     state.lastCompaction = findLastCompactionTimestamp(messages);
     const persisted = await loadSessionState(sessionId, logger, messages);
     if (persisted !== null) {
@@ -89,13 +84,8 @@ export async function ensureSessionInitialized(client, state, sessionId, logger,
             compressTokenCounter: persisted.stats?.compressTokenCounter || 0,
             totalCompressTokens: persisted.stats?.totalCompressTokens || 0,
         };
-        logger.info(`[DIAG:init] loaded from disk | toolIds=${state.compressed.toolIds.size} | msgIds=${state.compressed.messageIds.size} | summaries=${state.compressSummaries.length} | totalTokens=${state.stats.totalCompressTokens}`);
-    }
-    else {
-        logger.info(`[DIAG:init] NO persisted state found for ${sessionId}`);
     }
     state.currentTurn = countTurns(state, messages);
     state.initialized = true;
-    logger.info(`[DIAG:init] DONE | turn=${state.currentTurn}`);
 }
 //# sourceMappingURL=state.js.map

@@ -68,7 +68,7 @@ export class Logger {
     }
 
     private async write(level: string, component: string, message: string, data?: any) {
-        if (!this.enabled && !message.startsWith("[DIAG:")) return
+        if (!this.enabled) return
 
         try {
             await this.ensureLogDir()
