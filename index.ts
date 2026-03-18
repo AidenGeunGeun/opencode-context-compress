@@ -6,6 +6,8 @@ import { createCompressTool } from "./lib/tools"
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks"
 import { configureClientAuth, isSecureMode } from "./lib/auth"
 
+const stateManager = new SessionStateManager()
+
 const plugin: Plugin = (async (ctx) => {
     const config = getConfig(ctx)
 
@@ -14,7 +16,6 @@ const plugin: Plugin = (async (ctx) => {
     }
 
     const logger = new Logger(config.debug)
-    const stateManager = new SessionStateManager()
 
     if (isSecureMode()) {
         configureClientAuth(ctx.client)
@@ -29,6 +30,7 @@ const plugin: Plugin = (async (ctx) => {
             stateManager,
             logger,
             config,
+            ctx.directory,
         ) as any,
         "chat.message": async (
             input: {

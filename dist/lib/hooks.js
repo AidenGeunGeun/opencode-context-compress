@@ -15,15 +15,26 @@ export function getLastUserSessionId(messages) {
     }
     return undefined;
 }
-export function createChatMessageTransformHandler(client, stateManager, logger, config) {
+export function createChatMessageTransformHandler(client, stateManager, logger, config, workingDirectory) {
     return async (_input, output) => {
         const sessionId = getLastUserSessionId(output.messages);
         if (!sessionId)
             return;
         const state = stateManager.get(sessionId);
-        await checkSession(client, state, logger, output.messages);
+        const syncResult = await checkSession(client, state, logger, output.messages);
         if (state.isSubAgent)
             return;
+        const messageIds = new Set(output.messages.map((message) => message.info.id));
+        const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter((id) => messageIds.has(id)).length;
+        const appliedSummaryCount = state.compressSummaries.filter((summary) => messageIds.has(summary.anchorMessageId)).length;
+        logger.info("Resolved compress state for prompt transform", {
+            sessionID: sessionId,
+            directory: workingDirectory,
+            source: syncResult.source,
+            lastUpdated: syncResult.lastUpdated,
+            compressedMessageCount: appliedCompressedMessageCount,
+            summaryCount: appliedSummaryCount,
+        });
         syncToolCache(state, config, logger, output.messages);
         buildToolIdList(state, output.messages);
         applyCompressTransforms(state, logger, output.messages);

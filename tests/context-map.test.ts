@@ -51,6 +51,8 @@ const createState = (
     sessionId: "session-test",
     initialized: true,
     isSubAgent: false,
+    hasPersistedState: false,
+    persistedLastUpdated: null,
     compressed: {
         toolIds: new Set<string>(),
         messageIds: new Set<string>(compressedMessageIds),

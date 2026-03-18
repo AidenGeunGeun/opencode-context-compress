@@ -15,6 +15,46 @@ async function ensureStorageDir() {
         await fs.mkdir(STORAGE_DIR, { recursive: true });
     }
 }
+async function writeFileAtomic(filePath, content) {
+    const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let tempFileCreated = false;
+    try {
+        const handle = await fs.open(tempPath, "w");
+        tempFileCreated = true;
+        try {
+            await handle.writeFile(content, "utf-8");
+            await handle.sync();
+        }
+        finally {
+            await handle.close();
+        }
+        await fs.rename(tempPath, filePath);
+        tempFileCreated = false;
+    }
+    finally {
+        if (tempFileCreated) {
+            await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        }
+    }
+}
+async function readJsonFile(filePath) {
+    try {
+        const content = await fs.readFile(filePath, "utf-8");
+        return {
+            status: "loaded",
+            data: JSON.parse(content),
+        };
+    }
+    catch (error) {
+        if (error?.code === "ENOENT") {
+            return { status: "missing" };
+        }
+        return {
+            status: "error",
+            error,
+        };
+    }
+}
 function getSessionFilePath(sessionId) {
     return join(STORAGE_DIR, `${sessionId}.json`);
 }
@@ -79,6 +119,7 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             return;
         }
         await ensureStorageDir();
+        const lastUpdated = new Date().toISOString();
         const state = {
             sessionName: sessionName,
             compressed: {
@@ -87,11 +128,13 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             },
             compressSummaries: sessionState.compressSummaries,
             stats: sessionState.stats,
-            lastUpdated: new Date().toISOString(),
+            lastUpdated,
         };
         const filePath = getSessionFilePath(sessionState.sessionId);
         const content = JSON.stringify(state, null, 2);
-        await fs.writeFile(filePath, content, "utf-8");
+        await writeFileAtomic(filePath, content);
+        sessionState.hasPersistedState = true;
+        sessionState.persistedLastUpdated = lastUpdated;
         logger.info("Saved session state to disk", {
             sessionId: sessionState.sessionId,
             totalTokensSaved: state.stats.totalCompressTokens,
@@ -105,99 +148,107 @@ export async function saveSessionState(sessionState, logger, sessionName) {
     }
 }
 export async function loadSessionState(sessionId, logger, messages) {
-    try {
-        const filePath = getSessionFilePath(sessionId);
-        let state;
-        let migrated = false;
-        if (existsSync(filePath)) {
-            const content = await fs.readFile(filePath, "utf-8");
-            state = JSON.parse(content);
+    const filePath = getSessionFilePath(sessionId);
+    const primaryResult = await readJsonFile(filePath);
+    let state;
+    let migrated = false;
+    if (primaryResult.status === "loaded") {
+        state = primaryResult.data;
+    }
+    else if (primaryResult.status === "error") {
+        logger.warn("Failed to load session state", {
+            sessionId,
+            path: filePath,
+            error: primaryResult.error?.message,
+        });
+        return { status: "error" };
+    }
+    else {
+        const legacyPath = getLegacySessionFilePath(sessionId);
+        const legacyResult = await readJsonFile(legacyPath);
+        if (legacyResult.status === "missing") {
+            return { status: "missing" };
+        }
+        if (legacyResult.status === "error") {
+            logger.warn("Failed to load legacy session state", {
+                sessionId,
+                path: legacyPath,
+                error: legacyResult.error?.message,
+            });
+            return { status: "error" };
+        }
+        logger.info("Found legacy state file, migrating", { sessionId });
+        state = remapLegacyState(legacyResult.data);
+        migrated = true;
+    }
+    if (!state || !state.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+        logger.warn("Invalid session state file, preserving in-memory state", {
+            sessionId,
+            path: migrated ? getLegacySessionFilePath(sessionId) : filePath,
+        });
+        return { status: "error" };
+    }
+    if (!Array.isArray(state.compressed.messageIds)) {
+        state.compressed.messageIds = [];
+    }
+    let compressSummaries = [];
+    if (Array.isArray(state.compressSummaries)) {
+        const validSummaries = state.compressSummaries.filter((s) => s !== null &&
+            typeof s === "object" &&
+            typeof s.anchorMessageId === "string" &&
+            typeof s.summary === "string" &&
+            (s.messageIds === undefined ||
+                (Array.isArray(s.messageIds) &&
+                    s.messageIds.every((messageId) => typeof messageId === "string"))));
+        if (validSummaries.length !== state.compressSummaries.length) {
+            logger.warn("Filtered out malformed compressSummaries entries", {
+                sessionId: sessionId,
+                original: state.compressSummaries.length,
+                valid: validSummaries.length,
+            });
+        }
+        if (messages) {
+            compressSummaries = backfillCompressSummaryMessageIds(validSummaries, messages, new Set(state.compressed.messageIds));
         }
         else {
-            // Fall back to legacy storage path
-            const legacyPath = getLegacySessionFilePath(sessionId);
-            if (!existsSync(legacyPath)) {
-                return null;
-            }
-            logger.info("Found legacy state file, migrating", { sessionId });
-            const content = await fs.readFile(legacyPath, "utf-8");
-            const legacy = JSON.parse(content);
-            state = remapLegacyState(legacy);
-            migrated = true;
+            compressSummaries = validSummaries.map((summary) => ({
+                anchorMessageId: summary.anchorMessageId,
+                messageIds: Array.isArray(summary.messageIds) && summary.messageIds.length > 0
+                    ? [...new Set(summary.messageIds)]
+                    : [summary.anchorMessageId],
+                summary: summary.summary,
+            }));
         }
-        if (!state || !state.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
-            logger.warn("Invalid session state file, ignoring", {
-                sessionId: sessionId,
+    }
+    logger.info("Loaded session state from disk", {
+        sessionId: sessionId,
+        migrated,
+    });
+    const result = {
+        sessionName: state.sessionName,
+        compressed: state.compressed,
+        compressSummaries,
+        stats: state.stats,
+        lastUpdated: state.lastUpdated,
+    };
+    if (migrated) {
+        try {
+            await ensureStorageDir();
+            const newFilePath = getSessionFilePath(sessionId);
+            await writeFileAtomic(newFilePath, JSON.stringify(result, null, 2));
+            logger.info("Migrated legacy state to compress path", { sessionId });
+        }
+        catch (saveError) {
+            logger.warn("Failed to save migrated state (will retry next load)", {
+                sessionId,
+                error: saveError?.message,
             });
-            return null;
         }
-        if (!Array.isArray(state.compressed.messageIds)) {
-            state.compressed.messageIds = [];
-        }
-        let compressSummaries = [];
-        if (Array.isArray(state.compressSummaries)) {
-            const validSummaries = state.compressSummaries.filter((s) => s !== null &&
-                typeof s === "object" &&
-                typeof s.anchorMessageId === "string" &&
-                typeof s.summary === "string" &&
-                (s.messageIds === undefined ||
-                    (Array.isArray(s.messageIds) &&
-                        s.messageIds.every((messageId) => typeof messageId === "string"))));
-            if (validSummaries.length !== state.compressSummaries.length) {
-                logger.warn("Filtered out malformed compressSummaries entries", {
-                    sessionId: sessionId,
-                    original: state.compressSummaries.length,
-                    valid: validSummaries.length,
-                });
-            }
-            if (messages) {
-                compressSummaries = backfillCompressSummaryMessageIds(validSummaries, messages, new Set(state.compressed.messageIds));
-            }
-            else {
-                compressSummaries = validSummaries.map((summary) => ({
-                    anchorMessageId: summary.anchorMessageId,
-                    messageIds: Array.isArray(summary.messageIds) && summary.messageIds.length > 0
-                        ? [...new Set(summary.messageIds)]
-                        : [summary.anchorMessageId],
-                    summary: summary.summary,
-                }));
-            }
-        }
-        logger.info("Loaded session state from disk", {
-            sessionId: sessionId,
-            migrated,
-        });
-        const result = {
-            sessionName: state.sessionName,
-            compressed: state.compressed,
-            compressSummaries,
-            stats: state.stats,
-            lastUpdated: state.lastUpdated,
-        };
-        // One-time migration: save to new path so legacy fallback only runs once
-        if (migrated) {
-            try {
-                await ensureStorageDir();
-                const newFilePath = getSessionFilePath(sessionId);
-                await fs.writeFile(newFilePath, JSON.stringify(result, null, 2), "utf-8");
-                logger.info("Migrated legacy state to compress path", { sessionId });
-            }
-            catch (saveError) {
-                logger.warn("Failed to save migrated state (will retry next load)", {
-                    sessionId,
-                    error: saveError?.message,
-                });
-            }
-        }
-        return result;
     }
-    catch (error) {
-        logger.warn("Failed to load session state", {
-            sessionId: sessionId,
-            error: error?.message,
-        });
-        return null;
-    }
+    return {
+        status: "loaded",
+        state: result,
+    };
 }
 export async function loadAllSessionStats(logger) {
     const result = {

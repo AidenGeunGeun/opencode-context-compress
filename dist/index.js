@@ -4,20 +4,20 @@ import { SessionStateManager } from "./lib/state";
 import { createCompressTool } from "./lib/tools";
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks";
 import { configureClientAuth, isSecureMode } from "./lib/auth";
+const stateManager = new SessionStateManager();
 const plugin = (async (ctx) => {
     const config = getConfig(ctx);
     if (!config.enabled) {
         return {};
     }
     const logger = new Logger(config.debug);
-    const stateManager = new SessionStateManager();
     if (isSecureMode()) {
         configureClientAuth(ctx.client);
         // logger.info("Secure mode detected, configured client authentication")
     }
     logger.info("Context Compress initialized");
     return {
-        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, config),
+        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, config, ctx.directory),
         "chat.message": async (input, _output) => {
             // Cache variant from real user messages (not synthetic)
             // This avoids scanning all messages to find variant

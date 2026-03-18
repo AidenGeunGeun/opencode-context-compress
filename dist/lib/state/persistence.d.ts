@@ -17,12 +17,20 @@ export interface PersistedSessionState {
     stats: SessionStats;
     lastUpdated: string;
 }
+export type LoadSessionStateResult = {
+    status: "missing";
+} | {
+    status: "loaded";
+    state: PersistedSessionState;
+} | {
+    status: "error";
+};
 type MaybeBackfilledCompressSummary = Omit<CompressSummary, "messageIds"> & {
     messageIds?: string[];
 };
 export declare function backfillCompressSummaryMessageIds(summaries: MaybeBackfilledCompressSummary[], messages: WithParts[], compressedMessageIds: Set<string>): CompressSummary[];
 export declare function saveSessionState(sessionState: SessionState, logger: Logger, sessionName?: string): Promise<void>;
-export declare function loadSessionState(sessionId: string, logger: Logger, messages?: WithParts[]): Promise<PersistedSessionState | null>;
+export declare function loadSessionState(sessionId: string, logger: Logger, messages?: WithParts[]): Promise<LoadSessionStateResult>;
 export interface AggregatedStats {
     totalTokens: number;
     totalTools: number;

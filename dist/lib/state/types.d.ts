@@ -29,6 +29,8 @@ export interface SessionState {
     sessionId: string | null;
     initialized: boolean;
     isSubAgent: boolean;
+    hasPersistedState: boolean;
+    persistedLastUpdated: string | null;
     compressed: Compressed;
     compressSummaries: CompressSummary[];
     stats: SessionStats;
