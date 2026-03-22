@@ -126,4 +126,4 @@ Prompt utility docs are in `scripts/README.md`.
 
 ## License
 
-UNLICENSED - personal use only.
+MIT

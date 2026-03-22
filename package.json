@@ -1,6 +1,6 @@
 {
     "$schema": "https://json.schemastore.org/package.json",
-    "name": "opencode-context-compress",
+    "name": "@skybluejacket/opencode-context-compress",
     "version": "0.1.0",
     "type": "module",
     "description": "Manual context compression plugin for OpenCode sessions",
