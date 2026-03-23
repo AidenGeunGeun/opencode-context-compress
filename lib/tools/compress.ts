@@ -30,6 +30,20 @@ export function removeSubsumedCompressSummaries(
     return summaries.filter((summary) => !containedIds.has(summary.anchorMessageId))
 }
 
+/**
+ * Strip recursive preservation/section markers from a summary to prevent
+ * nested "[Preserved from previous compression] [Preserved from ..." chains
+ * when blocks are re-compressed multiple times.
+ */
+function stripPreservationMarkers(text: string): string {
+    return text
+        .replace(/^\[Preserved from previous compression\]\s*/gm, "")
+        .replace(/^\[Preserved context\]\s*/gm, "")
+        .replace(/^\[New content\]\s*/gm, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+}
+
 export function composeSummaryWithPreservedBlocks(
     preservedSummaries: string[],
     newSummary: string,
@@ -38,9 +52,17 @@ export function composeSummaryWithPreservedBlocks(
         return newSummary.trim()
     }
 
+    const cleaned = preservedSummaries
+        .map(stripPreservationMarkers)
+        .filter(Boolean)
+
+    if (cleaned.length === 0) {
+        return newSummary.trim()
+    }
+
     return [
-        "[Preserved from previous compression]",
-        ...preservedSummaries,
+        "[Preserved context]",
+        ...cleaned,
         "",
         "[New content]",
         newSummary.trim(),
@@ -213,6 +235,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     anchorMessageId,
                     messageIds: containedMessageIds,
                     summary: finalSummary,
+                    topic: range.topic,
                 })
 
                 state.stats.compressTokenCounter = rangeMetrics.incrementalCompressTokens

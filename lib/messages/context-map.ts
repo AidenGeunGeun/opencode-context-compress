@@ -73,6 +73,26 @@ function trimPreview(text: string): string {
     return normalized.slice(0, PREVIEW_MAX_CHARS - 3) + "..."
 }
 
+/**
+ * Extract a human-readable preview for a compressed block.
+ * Uses the stored topic if available; otherwise strips known
+ * preservation markers before generating a content preview.
+ */
+function extractBlockPreview(
+    summary: SessionState["compressSummaries"][number],
+): string {
+    if (summary.topic) {
+        return summary.topic
+    }
+    const cleaned = summary.summary
+        .replace(/^\[Preserved from previous compression\]\s*/gm, "")
+        .replace(/^\[Preserved context\]\s*/gm, "")
+        .replace(/^\[New content\]\s*/gm, "")
+        .replace(/^\[Compressed conversation block\]\s*/gm, "")
+        .trim()
+    return trimPreview(cleaned)
+}
+
 function extractPrimaryText(msg: WithParts): string {
     const parts = Array.isArray(msg.parts) ? msg.parts : []
     for (const part of parts) {
@@ -145,7 +165,7 @@ function buildContextMapEntries(
                 kind: "block",
                 role: "assistant",
                 rawMessageIds,
-                preview: trimPreview(summary.summary),
+                preview: extractBlockPreview(summary),
                 tokenEstimate: countTokens(summary.summary, providerId),
                 toolCallCount: 0,
                 toolTypes: [],

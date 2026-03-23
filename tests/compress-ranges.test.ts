@@ -138,11 +138,38 @@ describe("composeSummaryWithPreservedBlocks", () => {
     it("prepends preserved summaries and appends new content summary", () => {
         const result = composeSummaryWithPreservedBlocks(["old summary one", "old summary two"], "new summary")
 
-        assert.match(result, /^\[Preserved from previous compression\]/)
+        assert.match(result, /^\[Preserved context\]/)
         assert.match(result, /old summary one/)
         assert.match(result, /old summary two/)
         assert.match(result, /\[New content\]/)
         assert.match(result, /new summary$/)
+    })
+
+    it("strips recursive preservation markers from preserved summaries", () => {
+        const alreadyPreserved = "[Preserved from previous compression]\noriginal content\n\n[New content]\nblock content"
+        const result = composeSummaryWithPreservedBlocks([alreadyPreserved], "latest content")
+
+        // Should NOT contain nested "[Preserved from previous compression]"
+        assert.doesNotMatch(result, /\[Preserved from previous compression\]/)
+        // Should contain the cleaned original content
+        assert.match(result, /original content/)
+        assert.match(result, /block content/)
+        assert.match(result, /latest content/)
+        // Should have exactly one top-level marker
+        const markerCount = (result.match(/\[Preserved context\]/g) || []).length
+        assert.equal(markerCount, 1)
+    })
+
+    it("strips new-style preservation markers from already-stacked summaries", () => {
+        const alreadyStacked = "[Preserved context]\nold stuff\n\n[New content]\nnewer stuff"
+        const result = composeSummaryWithPreservedBlocks([alreadyStacked], "newest stuff")
+
+        // Should flatten markers, not nest them
+        const markerCount = (result.match(/\[Preserved context\]/g) || []).length
+        assert.equal(markerCount, 1)
+        assert.match(result, /old stuff/)
+        assert.match(result, /newer stuff/)
+        assert.match(result, /newest stuff/)
     })
 })
 

@@ -88,6 +88,7 @@ export function backfillCompressSummaryMessageIds(summaries, messages, compresse
                 anchorMessageId: summary.anchorMessageId,
                 messageIds: [...new Set(summary.messageIds)],
                 summary: summary.summary,
+                ...(summary.topic && { topic: summary.topic }),
             };
         }
         const anchorIndex = messages.findIndex((msg) => msg.info.id === summary.anchorMessageId);
@@ -110,6 +111,7 @@ export function backfillCompressSummaryMessageIds(summaries, messages, compresse
             anchorMessageId: summary.anchorMessageId,
             messageIds,
             summary: summary.summary,
+            ...(summary.topic && { topic: summary.topic }),
         };
     });
 }
@@ -217,6 +219,7 @@ export async function loadSessionState(sessionId, logger, messages) {
                     ? [...new Set(summary.messageIds)]
                     : [summary.anchorMessageId],
                 summary: summary.summary,
+                ...(summary.topic && { topic: summary.topic }),
             }));
         }
     }

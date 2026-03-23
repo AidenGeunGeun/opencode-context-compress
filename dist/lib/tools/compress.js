@@ -11,13 +11,32 @@ export function removeSubsumedCompressSummaries(summaries, containedMessageIds) 
     const containedIds = new Set(containedMessageIds);
     return summaries.filter((summary) => !containedIds.has(summary.anchorMessageId));
 }
+/**
+ * Strip recursive preservation/section markers from a summary to prevent
+ * nested "[Preserved from previous compression] [Preserved from ..." chains
+ * when blocks are re-compressed multiple times.
+ */
+function stripPreservationMarkers(text) {
+    return text
+        .replace(/^\[Preserved from previous compression\]\s*/gm, "")
+        .replace(/^\[Preserved context\]\s*/gm, "")
+        .replace(/^\[New content\]\s*/gm, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
 export function composeSummaryWithPreservedBlocks(preservedSummaries, newSummary) {
     if (preservedSummaries.length === 0) {
         return newSummary.trim();
     }
+    const cleaned = preservedSummaries
+        .map(stripPreservationMarkers)
+        .filter(Boolean);
+    if (cleaned.length === 0) {
+        return newSummary.trim();
+    }
     return [
-        "[Preserved from previous compression]",
-        ...preservedSummaries,
+        "[Preserved context]",
+        ...cleaned,
         "",
         "[New content]",
         newSummary.trim(),
@@ -135,6 +154,7 @@ export function createCompressTool(ctx) {
                     anchorMessageId,
                     messageIds: containedMessageIds,
                     summary: finalSummary,
+                    topic: range.topic,
                 });
                 state.stats.compressTokenCounter = rangeMetrics.incrementalCompressTokens;
                 await sendCompressNotification(client, logger, ctx.config, state, sessionId, containedToolIds, rangeMetrics.mapEntryCount, range.topic, finalSummary, { messageIndex: resolvedRange.startPosition }, { messageIndex: resolvedRange.endPosition }, contextMap.entries.length, currentParams, rangeMetrics.estimatedCompressedTokens);

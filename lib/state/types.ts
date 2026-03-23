@@ -25,6 +25,7 @@ export interface CompressSummary {
     anchorMessageId: string
     messageIds: string[]
     summary: string
+    topic?: string
 }
 
 export interface Compressed {

@@ -31,6 +31,15 @@ You're mid-sprint on related functionality
 
 Before compressing, ask: _"Is this chapter closed?"_ Compression is irreversible. The summary replaces everything in the range.
 
+BLOCK LIFECYCLE — STACKING OVER REWRAPPING
+The compression system maintains a stack of compressed blocks (\`[b0]\`, \`[b1]\`, etc.). Each block should represent a single coherent topic or phase.
+- Prefer creating NEW blocks alongside existing ones rather than rewrapping old blocks into a mega-block.
+- Existing blocks with clear, detailed summaries should be LEFT ALONE.
+- Only include an existing \`[bN]\` block in a new range if its content is directly superseded or needs merging with adjacent same-topic work.
+- The topic label should identify the actual content — "Auth JWT migration", not "previous work".
+- Good result: \`[b0: migration] [b1: CI setup] [b2: embeddings]\` — each block is auditable and topical.
+- Bad result: \`[b0: everything from the whole session]\` — lost structure, hard to audit.
+
 THE FORMAT OF COMPRESS
 \`ranges\`: Array of objects with:
 \`from\`: Index number from \`<compress-context-map>\`, or block reference like \`"b1"\`

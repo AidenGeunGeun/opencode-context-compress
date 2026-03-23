@@ -34,11 +34,24 @@ CRITICAL: Submit ALL compression ranges in a SINGLE compress call using the rang
 RANGE SELECTION RULES
 - Select ranges by index number from the \`<compress-context-map>\`. Each entry has a number or block reference (\`bN\`).
 - Choose \`from\` and \`to\` values that point to map entries in chronological order.
-- Prefer grouping completed phases into a few high-value ranges instead of many tiny ranges.
-- Ranges that include \`[bN]\` blocks will preserve prior block summaries automatically. Write your summary for NEW content only.
+- Create ONE range PER completed topic or phase. Separate topics = separate ranges.
+  Good: 3 ranges for "migration work", "CI/docs setup", "embeddings provider"
+  Bad: 1 mega-range covering all three
+- Do NOT merge unrelated phases just because they are adjacent in the conversation.
+- Topic labels (\`topic\` field) should clearly identify the actual work, e.g. "Auth JWT migration", not "Previous work" or "Completed tasks".
+BLOCK PRESERVATION — CRITICAL
+- If the context map shows existing \`[bN]\` compressed blocks, evaluate whether they are still good.
+- LEAVE GOOD BLOCKS ALONE. Do not re-compress a block that already has a clear topic and detailed summary.
+- Only include a \`[bN]\` block in a new range when:
+  1. The block's summary is genuinely outdated or superseded by later work, OR
+  2. The block needs to merge with immediately adjacent new content on the SAME topic.
+- When in doubt, compress only NEW uncompressed messages and let existing blocks stack.
+- The goal is a clean stack of topical blocks: \`[b0: task A] [b1: task B] [b2: task C]\`
+  NOT a single mega-block: \`[b0: everything]\`
+- Repeatedly re-wrapping old blocks into new mega-blocks degrades auditability and produces ugly recursive previews. Avoid this.
 COMPRESS SCOPE
 - Range = full map entries from \`from\` through \`to\` (inclusive). No sub-message splitting.
-- Existing compressed summaries within the new range are automatically replaced by the new summary.
+- If a range includes existing \`[bN]\` blocks, their summaries are preserved automatically. Write your summary for NEW content in the range only.
 - \`compress\` replaces everything in the matched range — user messages, assistant messages, tool inputs and outputs.
 </instruction>
 </system-reminder>
