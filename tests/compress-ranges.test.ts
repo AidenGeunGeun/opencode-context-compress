@@ -7,6 +7,8 @@ import { collectContentInRange } from "../lib/tools/utils.ts"
 import {
     composeSummaryWithPreservedBlocks,
     calculateCompressionRangeMetrics,
+    removeSubsumedCompressSummaries,
+    selectFinalSummary,
 } from "../lib/tools/compress.ts"
 import type { CompressSummary, SessionState } from "../lib/state/types.ts"
 
@@ -260,5 +262,52 @@ describe("calculateCompressionRangeMetrics", () => {
         assert.equal(secondMetrics.blockTokenEstimate, countTokens(summary.summary))
         assert.equal(secondMetrics.incrementalCompressTokens, secondNewOnlyTokens)
         assert.equal(cumulative, firstMetrics.estimatedCompressedTokens + secondNewOnlyTokens)
+    })
+})
+
+describe("pure-block condense mode", () => {
+    it("selectFinalSummary returns model summary directly for pure-block range", () => {
+        const blockSummaries = ["Block A detailed summary.", "Block B detailed summary."]
+        const condensedByModel = "Condensed: A and B together."
+
+        // Pure-block condense (nonBlockMessageIds empty) — must NOT wrap preserved summaries
+        const result = selectFinalSummary(blockSummaries, condensedByModel, [])
+        assert.equal(result, condensedByModel, "pure condense should return model summary verbatim")
+        assert.ok(!result.includes("[Preserved context]"), "no preserved-context marker in condense output")
+        assert.ok(!result.includes("[New content]"), "no new-content marker in condense output")
+        assert.ok(!result.includes("Block A"), "old block content must not appear in condense output")
+    })
+
+    it("selectFinalSummary wraps preserved summaries when range includes new messages", () => {
+        const blockSummaries = ["Block A detailed summary.", "Block B detailed summary."]
+        const condensedByModel = "New work summary."
+
+        // Mixed range (nonBlockMessageIds non-empty) — must preserve old block content
+        const result = selectFinalSummary(blockSummaries, condensedByModel, ["msg-new-1"])
+        assert.ok(result.startsWith("[Preserved context]"), "mixed mode should wrap preserved content")
+        assert.ok(result.includes("[New content]"), "mixed mode should mark new content")
+        assert.ok(result.includes("Block A"), "old block content must appear in mixed output")
+        assert.ok(result.includes(condensedByModel), "new summary must appear in mixed output")
+    })
+
+    it("range metrics show zero incrementalCompressTokens when range is all blocks", () => {
+        const messages = [
+            textMessage("m1", "user turn 1"),
+            textMessage("m2", "assistant turn 1", "assistant"),
+        ]
+        const existingSummary: CompressSummary = {
+            anchorMessageId: "m1",
+            messageIds: ["m1", "m2"],
+            summary: "previously compressed content",
+        }
+        const state = createState(["m1", "m2"], [existingSummary])
+        const map = buildContextMap(messages as any, state, logger)
+        const resolved = resolveContextMapRange(map, "b0", "b0")
+        const indexById = new Map(messages.map((m, i) => [m.info.id, i]))
+        const metrics = calculateCompressionRangeMetrics(messages as any, indexById, resolved)
+
+        assert.equal(metrics.nonBlockMessageIds.length, 0, "all-block range has no non-block messages")
+        assert.equal(metrics.incrementalCompressTokens, 0, "no incremental tokens for pure-block range")
+        assert.ok(metrics.blockTokenEstimate > 0, "block token estimate should be nonzero")
     })
 })

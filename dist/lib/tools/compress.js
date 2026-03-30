@@ -68,6 +68,24 @@ export function calculateCompressionRangeMetrics(rawMessages, rawMessageIndexByI
         incrementalCompressTokens: nonBlockTokenEstimate,
     };
 }
+/**
+ * Select the final stored summary for a compression range.
+ *
+ * If the range contains only existing compressed blocks and no new raw messages
+ * (pure-block condense), the model's summary is used directly — prepending the
+ * old block content verbatim would double the stored size and defeat the purpose.
+ *
+ * If the range mixes blocks and new messages, the old block content is preserved
+ * alongside the new summary so nothing is silently dropped.
+ */
+export function selectFinalSummary(preservedSummaries, newSummary, nonBlockMessageIds) {
+    if (nonBlockMessageIds.length === 0) {
+        // Pure-block condense: model already has all block content in context,
+        // so its summary IS the condensed version — no need to re-wrap originals.
+        return newSummary.trim();
+    }
+    return composeSummaryWithPreservedBlocks(preservedSummaries, newSummary);
+}
 export function createCompressTool(ctx) {
     return tool({
         description: COMPRESS_TOOL_DESCRIPTION,
@@ -136,7 +154,7 @@ export function createCompressTool(ctx) {
                     return baselineSummaries[blockIndex]?.summary;
                 })
                     .filter((summary) => typeof summary === "string" && summary.length > 0);
-                const finalSummary = composeSummaryWithPreservedBlocks(preservedSummaries, range.summary);
+                const finalSummary = selectFinalSummary(preservedSummaries, range.summary, rangeMetrics.nonBlockMessageIds);
                 const containedToolIds = rangeMetrics.toolIds;
                 for (const id of containedToolIds) {
                     state.compressed.toolIds.add(id);
