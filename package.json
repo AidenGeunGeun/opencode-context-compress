@@ -1,7 +1,7 @@
 {
     "$schema": "https://json.schemastore.org/package.json",
     "name": "@skybluejacket/opencode-context-compress",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "type": "module",
     "description": "Manual context compression plugin for OpenCode sessions",
     "main": "./dist/index.js",
@@ -20,13 +20,13 @@
         "test": "node --import tsx --test tests/*.test.ts",
         "compress": "tsx scripts/print.ts"
     },
-    "author": "",
+    "author": "Aiden Kim",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/skybluejaket/opencode-context-compress.git"
+        "url": "https://github.com/AidenGeunGeun/opencode-context-compress.git"
     },
-    "homepage": "https://github.com/skybluejaket/opencode-context-compress",
+    "homepage": "https://github.com/AidenGeunGeun/opencode-context-compress",
     "keywords": [
         "opencode",
         "plugin",
