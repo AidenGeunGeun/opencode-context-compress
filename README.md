@@ -47,7 +47,9 @@ The model selects ranges by index and calls `compress` with a `ranges` array.
 npm install @skybluejacket/opencode-context-compress
 ```
 
-Then add it to your OpenCode config (`~/.config/opencode/config.jsonc` or project-level `.opencode/config.jsonc`):
+Then add it to your OpenCode config (`~/.config/opencode/opencode.jsonc` or project-level `.opencode/opencode.jsonc`):
+In the case you are using OpenCodeOrchestra (https://github.com/AidenGeunGeun/OpenCodeOrchestra) : 
+add it to `~/.config/oco/oco.jsonc`
 
 ```jsonc
 {
