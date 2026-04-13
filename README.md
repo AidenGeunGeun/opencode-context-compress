@@ -41,18 +41,35 @@ The model selects ranges by index and calls `compress` with a `ranges` array.
 
 ## Installation
 
-Build the plugin and reference the compiled entry file in your OpenCode config:
+### npm (Recommended)
+
+```bash
+npm install @skybluejacket/opencode-context-compress
+```
+
+Then add it to your OpenCode config (`~/.config/opencode/config.jsonc` or project-level `.opencode/config.jsonc`):
 
 ```jsonc
 {
-    "plugin": ["file:///absolute/path/to/plugin/dist/index.js"]
+    "plugin": ["@skybluejacket/opencode-context-compress"]
 }
 ```
 
-Build command:
+### From Source
+
+Clone the repo, build, and reference the compiled entry file directly:
 
 ```bash
+git clone https://github.com/AidenGeunGeun/opencode-context-compress.git
+cd opencode-context-compress
+npm install
 npm run build
+```
+
+```jsonc
+{
+    "plugin": ["file:///absolute/path/to/opencode-context-compress/dist/index.js"]
+}
 ```
 
 ## Configuration
