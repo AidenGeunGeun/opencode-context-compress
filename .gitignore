@@ -40,4 +40,8 @@ test-update.ts
 docs/
 SCHEMA_NOTES.md
 
+# Local planning / internal notes (not shipped)
+specs/
+PROJECT_STATE.md
+
 repomix-output.xml
