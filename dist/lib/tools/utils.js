@@ -1,4 +1,3 @@
-const MANAGEMENT_TOOL_NAMES = new Set(["compress", "compress_map"]);
 export function extractMessageContent(msg) {
     const parts = Array.isArray(msg.parts) ? msg.parts : [];
     let content = "";
@@ -94,37 +93,5 @@ export function collectContentInRange(messages, startIndex, endIndex) {
         }
     }
     return contents;
-}
-export function registerToolOutputForStripping(state, toolCtx) {
-    const callId = typeof toolCtx?.callID === "string"
-        ? toolCtx.callID
-        : typeof toolCtx?.callId === "string"
-            ? toolCtx.callId
-            : undefined;
-    if (callId) {
-        state.compressed.toolIds.add(callId);
-    }
-}
-function hasContextualContent(msg) {
-    if (msg.info.role === "user") {
-        return true;
-    }
-    const parts = Array.isArray(msg.parts) ? msg.parts : [];
-    return parts.some((part) => part.type === "text" ||
-        part.type === "reasoning" ||
-        part.type === "tool" ||
-        part.type === "compaction" ||
-        part.type === "subtask");
-}
-export function stripManagementToolMessages(messages, state) {
-    const clonedMessages = structuredClone(messages);
-    return clonedMessages.filter((msg) => {
-        const parts = Array.isArray(msg.parts) ? msg.parts : [];
-        msg.parts = parts.filter((part) => part.type !== "tool" ||
-            !part.callID ||
-            !state.compressed.toolIds.has(part.callID) ||
-            !MANAGEMENT_TOOL_NAMES.has(part.tool));
-        return hasContextualContent(msg);
-    });
 }
 //# sourceMappingURL=utils.js.map

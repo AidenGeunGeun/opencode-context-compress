@@ -1,8 +1,8 @@
 Use this tool during a user-initiated `/compress manage` turn to replace completed conversation ranges with stored summaries.
 
-`ranges` is an array of compression requests.
+One range per call.
 
-Each range has:
+Args:
 `from`: Start entry from the latest `<compress-context-map>` or returned map snapshot. Accepts numeric indexes, grouped numeric labels like `"2-4"`, or block ids like `"b1"`.
 `to`: End entry from the latest `<compress-context-map>` or returned map snapshot. Inclusive.
 `summary`: Replacement summary for the NEW material in that selected span.
@@ -15,8 +15,8 @@ Range mechanics:
 - Do not merge unrelated phases just because they are nearby.
 
 Density guidance:
-- Older or lower-relevance completed work can be terse.
+- Older or less-relevant completed work should be terse.
 - Recent completed work should keep more fidelity.
 - Leave the active tail alone.
 
-This tool may be called multiple times in the same management turn. On success it returns a fresh `<compress-context-map>` snapshot so you can keep iterating. Do not use it outside explicit user-requested context management.
+If more completed work needs compression, call `compress` again using the fresh `<compress-context-map>` returned by the previous call. Do not use it outside explicit user-requested context management.

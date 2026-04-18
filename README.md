@@ -25,7 +25,7 @@ This plugin does one thing: it helps the model compress completed conversation p
 When `/compress manage` runs, the plugin opens a single model-visible management turn with a short reminder. Inside that turn the agent can:
 
 1. Call `compress_map` to fetch the current `<compress-context-map>` snapshot.
-2. Call `compress` one or more times to replace completed phases with topical blocks.
+2. Call `compress` with one range at a time to replace completed phases with topical blocks.
 3. Read the refreshed map returned by `compress` and continue iterating in the same turn if needed.
 
 The manual boundary stays absolute: outside a user-triggered `/compress manage` turn, the plugin does not prompt for compression or open any background workflow.
@@ -37,16 +37,16 @@ The manual boundary stays absolute: outside a user-triggered `/compress manage` 
 ```text
 <compress-context-map>
 [1] user: "Let's implement JWT auth"
-[2-4] assistant: 5 tool calls (read, glob, bash) - auth exploration (~1,240 tokens)
+[2-4] assistant: 5 tool calls - auth exploration (~1,240 tokens)
 [b0] [compressed] "Prior database migration debugging" (~420 tokens)
 [5] user: "Looks good, now add tests"
-[6-8] assistant: 4 tool calls (edit, write, bash) - test implementation (~2,180 tokens)
+[6-8] assistant: 4 tool calls - test implementation (~2,180 tokens)
 ---
 Total: 8 messages + 1 block | ~6,500 tokens
 </compress-context-map>
 ```
 
-The agent decides what counts as the active tail. Older completed work should be compressed more tersely than the most recent completed phase.
+The agent decides what counts as the active tail. Older completed work should be compressed more tersely than the most recent completed phase. Block labels follow where their anchors appear in the conversation stream, so re-compressing one block does not renumber unrelated blocks.
 
 ## Installation
 
@@ -147,7 +147,7 @@ Stored fields include:
 - compression summaries
 - per-session compression stats
 
-Management-turn outputs from `compress_map` and `compress` are tracked in `compressed.toolIds`, so later turns replace those bulky tool outputs with the normal stripped placeholder instead of re-injecting them.
+Management-turn outputs from `compress_map` and `compress` are left alone. They stay in conversation history like normal tool outputs unless you later compress a range that covers them.
 
 ## Development
 

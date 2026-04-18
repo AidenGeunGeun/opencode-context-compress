@@ -84,7 +84,8 @@ describe("buildContextMap", () => {
 
         assert.match(result.mapText, /<compress-context-map>/)
         assert.match(result.mapText, /\[1\] user:/)
-        assert.match(result.mapText, /\[2-3\] assistant: 2 tool calls \(read, bash\)/)
+        assert.match(result.mapText, /\[2-3\] assistant: 2 tool calls -/)
+        assert.doesNotMatch(result.mapText, /\(read, bash\)/)
         assert.doesNotMatch(result.mapText, /Active:/)
         assert.match(result.mapText, /Total: 5 messages \+ 0 blocks/)
 
@@ -116,5 +117,50 @@ describe("buildContextMap", () => {
         assert.deepEqual(result.lookup.get("b0"), ["m2", "m3"])
         assert.deepEqual(result.lookup.get(1), ["m1"])
         assert.deepEqual(result.lookup.get(2), ["m4"])
+    })
+
+    it("assigns bN labels by anchor position instead of summary array order", () => {
+        const earlySummary: CompressSummary = {
+            anchorMessageId: "m1",
+            messageIds: ["m1", "m2"],
+            summary: "Early block summary",
+            topic: "Early Block",
+        }
+        const middleSummary: CompressSummary = {
+            anchorMessageId: "m3",
+            messageIds: ["m3", "m4"],
+            summary: "Middle block summary",
+            topic: "Middle Block",
+        }
+        const lateSummary: CompressSummary = {
+            anchorMessageId: "m5",
+            messageIds: ["m5", "m6"],
+            summary: "Late block summary",
+            topic: "Late Block",
+        }
+
+        const rawMessages = [
+            textMessage("m1", "early request"),
+            textMessage("m2", "early result", "assistant"),
+            textMessage("m3", "middle request"),
+            textMessage("m4", "middle result", "assistant"),
+            textMessage("m5", "late request"),
+            textMessage("m6", "late result", "assistant"),
+            textMessage("m7", "active tail"),
+        ]
+        const state = createState(
+            ["m1", "m2", "m3", "m4", "m5", "m6"],
+            [middleSummary, lateSummary, earlySummary],
+        )
+
+        const result = buildContextMap(rawMessages as any, state, logger)
+
+        assert.match(
+            result.mapText,
+            /\[b0\] \[compressed\] "Early Block"[\s\S]*\[b1\] \[compressed\] "Middle Block"[\s\S]*\[b2\] \[compressed\] "Late Block"/,
+        )
+        assert.deepEqual(result.lookup.get("b0"), ["m1", "m2"])
+        assert.deepEqual(result.lookup.get("b1"), ["m3", "m4"])
+        assert.deepEqual(result.lookup.get("b2"), ["m5", "m6"])
     })
 })

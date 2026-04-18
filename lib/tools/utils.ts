@@ -1,6 +1,4 @@
-import type { SessionState, WithParts } from "../state"
-
-const MANAGEMENT_TOOL_NAMES = new Set(["compress", "compress_map"])
+import type { WithParts } from "../state"
 
 export function extractMessageContent(msg: WithParts): string {
     const parts = Array.isArray(msg.parts) ? msg.parts : []
@@ -120,56 +118,4 @@ export function collectContentInRange(
         }
     }
     return contents
-}
-
-export function registerToolOutputForStripping(
-    state: SessionState,
-    toolCtx: { callID?: string; callId?: string } | undefined,
-): void {
-    const callId =
-        typeof toolCtx?.callID === "string"
-            ? toolCtx.callID
-            : typeof toolCtx?.callId === "string"
-              ? toolCtx.callId
-              : undefined
-
-    if (callId) {
-        state.compressed.toolIds.add(callId)
-    }
-}
-
-function hasContextualContent(msg: WithParts): boolean {
-    if (msg.info.role === "user") {
-        return true
-    }
-
-    const parts = Array.isArray(msg.parts) ? msg.parts : []
-    return parts.some(
-        (part) =>
-            part.type === "text" ||
-            part.type === "reasoning" ||
-            part.type === "tool" ||
-            part.type === "compaction" ||
-            part.type === "subtask",
-    )
-}
-
-export function stripManagementToolMessages(
-    messages: WithParts[],
-    state: SessionState,
-): WithParts[] {
-    const clonedMessages = structuredClone(messages) as WithParts[]
-
-    return clonedMessages.filter((msg) => {
-        const parts = Array.isArray(msg.parts) ? msg.parts : []
-        msg.parts = parts.filter(
-            (part) =>
-                part.type !== "tool" ||
-                !part.callID ||
-                !state.compressed.toolIds.has(part.callID) ||
-                !MANAGEMENT_TOOL_NAMES.has(part.tool),
-        )
-
-        return hasContextualContent(msg)
-    })
 }

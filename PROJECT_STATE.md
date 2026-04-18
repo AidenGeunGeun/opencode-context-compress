@@ -44,8 +44,9 @@ This plugin is focused on manual context compression only.
 ## Operational Notes
 
 - `/compress manage` injects a lean reminder; it no longer embeds the full map into the chat turn.
-- `compress` returns an updated `<compress-context-map>` snapshot so the agent can compress iteratively in one turn.
-- `compress_map` and `compress` add their own tool call ids to `compressed.toolIds`, so later turns strip those management outputs automatically.
+- `compress` handles one range per call and returns an updated `<compress-context-map>` snapshot so the agent can iterate safely in one turn.
+- `compress_map` and `compress` management outputs are not auto-stripped; only tool calls inside a compressed raw-message range are stripped later.
+- `[bN]` labels are stable because they are assigned by each block's anchor position in the conversation stream.
 - Compression metrics split block summary estimate and new-content estimate to avoid double counting.
 - Notifications are controlled by `notification` and `notificationType` config keys.
 - Debug logging path is `~/.config/opencode/logs/compress/`.

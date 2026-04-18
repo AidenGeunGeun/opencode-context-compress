@@ -7,6 +7,7 @@ export interface ContextMapEntry {
     kind: "message" | "block";
     role: string;
     rawMessageIds: string[];
+    anchorMessageId?: string;
     preview: string;
     tokenEstimate: number;
     toolCallCount: number;

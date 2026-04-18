@@ -53,13 +53,6 @@ const plugin: Plugin = (async (ctx) => {
             logger,
             config,
         ),
-        "tool.execute.before": async (input) => {
-            if (input.tool !== "compress" && input.tool !== "compress_map") {
-                return
-            }
-
-            stateManager.get(input.sessionID).compressed.toolIds.add(input.callID)
-        },
         tool: {
             ...(config.tools.compress_map.permission !== "deny" && {
                 compress_map: createCompressMapTool({

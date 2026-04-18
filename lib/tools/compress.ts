@@ -8,8 +8,6 @@ import { estimateTokensBatch, getCurrentParams } from "../token-utils"
 import {
     collectContentInRange,
     collectToolIdsInRange,
-    registerToolOutputForStripping,
-    stripManagementToolMessages,
 } from "./utils"
 import { sendCompressNotification } from "../ui/notification"
 import {
@@ -32,7 +30,14 @@ export function removeSubsumedCompressSummaries(
     containedMessageIds: string[],
 ): CompressSummary[] {
     const containedIds = new Set(containedMessageIds)
-    return summaries.filter((summary) => !containedIds.has(summary.anchorMessageId))
+    return summaries.filter((summary) => {
+        if (containedIds.has(summary.anchorMessageId)) {
+            return false
+        }
+
+        const summaryMessageIds = Array.isArray(summary.messageIds) ? summary.messageIds : []
+        return !summaryMessageIds.some((messageId) => containedIds.has(messageId))
+    })
 }
 
 /**
@@ -152,28 +157,18 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
     return tool({
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            ranges: tool.schema
-                .array(
-                    tool.schema.object({
-                        from: tool.schema
-                            .union([tool.schema.number(), tool.schema.string()])
-                            .describe(
-                                "Range start index from <compress-context-map>, or block reference like 'b1'",
-                            ),
-                        to: tool.schema
-                            .union([tool.schema.number(), tool.schema.string()])
-                            .describe(
-                                "Range end index from <compress-context-map>, or block reference like 'b1'",
-                            ),
-                        summary: tool.schema
-                            .string()
-                            .describe("Complete technical summary replacing NEW content in this range"),
-                        topic: tool.schema
-                            .string()
-                            .describe("Short label (3-5 words) for display - e.g., 'Auth System Exploration'"),
-                    }),
-                )
-                .describe("One or more compression ranges to process in this call"),
+            from: tool.schema
+                .union([tool.schema.number(), tool.schema.string()])
+                .describe("Range start index from <compress-context-map>, or block reference like 'b1'"),
+            to: tool.schema
+                .union([tool.schema.number(), tool.schema.string()])
+                .describe("Range end index from <compress-context-map>, or block reference like 'b1'"),
+            summary: tool.schema
+                .string()
+                .describe("Complete technical summary replacing NEW content in this range"),
+            topic: tool.schema
+                .string()
+                .describe("Short label (3-5 words) for display - e.g., 'Auth System Exploration'"),
         },
         async execute(args, toolCtx) {
             const { client, stateManager, logger } = ctx
@@ -187,9 +182,21 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 metadata: {},
             })
 
-            const ranges = Array.isArray(args.ranges) ? (args.ranges as CompressRangeInput[]) : []
-            if (ranges.length === 0) {
-                throw new Error("ranges is required and must contain at least one compression range")
+            const range = args as Partial<CompressRangeInput>
+            if (typeof range !== "object" || !range) {
+                throw new Error("compress requires { from, to, summary, topic }")
+            }
+            if (!range.topic || typeof range.topic !== "string") {
+                throw new Error("compress requires a non-empty topic")
+            }
+            if (!range.summary || typeof range.summary !== "string") {
+                throw new Error("compress requires a non-empty summary")
+            }
+            if (
+                (typeof range.from !== "number" && typeof range.from !== "string") ||
+                (typeof range.to !== "number" && typeof range.to !== "string")
+            ) {
+                throw new Error("compress requires valid from/to range boundaries")
             }
 
             const messagesResponse = await client.session.messages({
@@ -200,104 +207,86 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
 
             const currentParams = getCurrentParams(state, rawMessages, logger)
-            const contextMessages = stripManagementToolMessages(rawMessages, state)
-            const contextMap = buildContextMap(contextMessages, state, logger, currentParams.providerId)
+            const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
             const baselineSummaries = [...state.compressSummaries]
+            const baselineSummariesByAnchor = new Map(
+                baselineSummaries.map((summary) => [summary.anchorMessageId, summary]),
+            )
             const rawMessageIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]))
 
-            let totalEntriesCompressed = 0
-            let totalToolCallsCompressed = 0
-
-            for (const range of ranges) {
-                if (!range || typeof range !== "object") {
-                    throw new Error("Each range entry must be an object")
-                }
-                if (!range.topic || typeof range.topic !== "string") {
-                    throw new Error("Each range requires a non-empty topic")
-                }
-                if (!range.summary || typeof range.summary !== "string") {
-                    throw new Error("Each range requires a non-empty summary")
-                }
-
-                const resolvedRange = resolveContextMapRange(contextMap, range.from, range.to)
-                const rangeMetrics = calculateCompressionRangeMetrics(
-                    rawMessages,
-                    rawMessageIndexById,
-                    resolvedRange,
-                    currentParams.providerId,
-                )
-                const containedMessageIds = rangeMetrics.messageIds
-                if (containedMessageIds.length === 0) {
-                    throw new Error("Could not resolve raw message IDs for one of the requested ranges")
-                }
-
-                const preservedSummaries = resolvedRange.blockIds
-                    .map((blockId) => {
-                        const blockIndex = Number(blockId.slice(1))
-                        return baselineSummaries[blockIndex]?.summary
-                    })
-                    .filter((summary): summary is string => typeof summary === "string" && summary.length > 0)
-
-                const finalSummary = selectFinalSummary(
-                    preservedSummaries,
-                    range.summary,
-                    rangeMetrics.nonBlockMessageIds,
-                )
-                const containedToolIds = rangeMetrics.toolIds
-
-                for (const id of containedToolIds) {
-                    state.compressed.toolIds.add(id)
-                }
-                for (const id of containedMessageIds) {
-                    state.compressed.messageIds.add(id)
-                }
-
-                state.compressSummaries = removeSubsumedCompressSummaries(
-                    state.compressSummaries,
-                    containedMessageIds,
-                )
-
-                const startEntry = contextMap.entries[resolvedRange.startPosition]
-                const anchorMessageId =
-                    typeof startEntry?.key === "string" && /^b\d+$/.test(startEntry.key)
-                        ? baselineSummaries[Number(startEntry.key.slice(1))]?.anchorMessageId ||
-                          containedMessageIds[0]
-                        : containedMessageIds[0]
-
-                state.compressSummaries.push({
-                    anchorMessageId,
-                    messageIds: containedMessageIds,
-                    summary: finalSummary,
-                    topic: range.topic,
-                })
-
-                state.stats.compressTokenCounter = rangeMetrics.incrementalCompressTokens
-
-                await sendCompressNotification(
-                    client,
-                    logger,
-                    ctx.config,
-                    state,
-                    sessionId,
-                    containedToolIds,
-                    rangeMetrics.mapEntryCount,
-                    range.topic,
-                    finalSummary,
-                    { messageIndex: resolvedRange.startPosition },
-                    { messageIndex: resolvedRange.endPosition },
-                    contextMap.entries.length,
-                    currentParams,
-                    rangeMetrics.estimatedCompressedTokens,
-                )
-
-                state.stats.totalCompressTokens += rangeMetrics.incrementalCompressTokens
-                state.stats.compressTokenCounter = 0
-
-                totalEntriesCompressed += rangeMetrics.mapEntryCount
-                totalToolCallsCompressed += containedToolIds.length
+            const resolvedRange = resolveContextMapRange(contextMap, range.from!, range.to!)
+            const rangeMetrics = calculateCompressionRangeMetrics(
+                rawMessages,
+                rawMessageIndexById,
+                resolvedRange,
+                currentParams.providerId,
+            )
+            const containedMessageIds = rangeMetrics.messageIds
+            if (containedMessageIds.length === 0) {
+                throw new Error("Could not resolve raw message IDs for the requested range")
             }
 
-            registerToolOutputForStripping(state, toolCtx as any)
+            const preservedSummaries = resolvedRange.entries
+                .filter(
+                    (entry): entry is typeof entry & { kind: "block"; anchorMessageId: string } =>
+                        entry.kind === "block" && typeof entry.anchorMessageId === "string",
+                )
+                .map((entry) => baselineSummariesByAnchor.get(entry.anchorMessageId)?.summary)
+                .filter((summary): summary is string => typeof summary === "string" && summary.length > 0)
+
+            const finalSummary = selectFinalSummary(
+                preservedSummaries,
+                range.summary,
+                rangeMetrics.nonBlockMessageIds,
+            )
+            const containedToolIds = rangeMetrics.toolIds
+
+            for (const id of containedToolIds) {
+                state.compressed.toolIds.add(id)
+            }
+            for (const id of containedMessageIds) {
+                state.compressed.messageIds.add(id)
+            }
+
+            state.compressSummaries = removeSubsumedCompressSummaries(
+                state.compressSummaries,
+                containedMessageIds,
+            )
+
+            const startEntry = contextMap.entries[resolvedRange.startPosition]
+            const anchorMessageId =
+                startEntry?.kind === "block" && startEntry.anchorMessageId
+                    ? startEntry.anchorMessageId
+                    : containedMessageIds[0]
+
+            state.compressSummaries.push({
+                anchorMessageId,
+                messageIds: containedMessageIds,
+                summary: finalSummary,
+                topic: range.topic,
+            })
+
+            state.stats.compressTokenCounter = rangeMetrics.incrementalCompressTokens
+
+            await sendCompressNotification(
+                client,
+                logger,
+                ctx.config,
+                state,
+                sessionId,
+                containedToolIds,
+                rangeMetrics.mapEntryCount,
+                range.topic,
+                finalSummary,
+                { messageIndex: resolvedRange.startPosition },
+                { messageIndex: resolvedRange.endPosition },
+                contextMap.entries.length,
+                currentParams,
+                rangeMetrics.estimatedCompressedTokens,
+            )
+
+            state.stats.totalCompressTokens += rangeMetrics.incrementalCompressTokens
+            state.stats.compressTokenCounter = 0
 
             try {
                 await saveSessionState(state, logger)
@@ -305,16 +294,10 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 logger.error("Failed to persist state", { error: err.message })
             }
 
-            const updatedContextMessages = stripManagementToolMessages(rawMessages, state)
-            const updatedContextMap = buildContextMap(
-                updatedContextMessages,
-                state,
-                logger,
-                currentParams.providerId,
-            )
+            const updatedContextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
 
             return [
-                `Compressed ${ranges.length} ranges (${totalEntriesCompressed} entries, ${totalToolCallsCompressed} tool calls) into summaries.`,
+                `Compressed range (${rangeMetrics.mapEntryCount} entries, ${containedToolIds.length} tool calls) into summary.`,
                 updatedContextMap.mapText,
             ].join("\n\n")
         },

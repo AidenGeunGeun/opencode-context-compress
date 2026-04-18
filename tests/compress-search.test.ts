@@ -90,6 +90,27 @@ describe("compressed message transformation", () => {
         assert.equal(result.length, 1)
         assert.equal(result[0].anchorMessageId, "m8")
     })
+
+    it("subsumes old summary when messageIds overlap even if anchor stays outside the new range", () => {
+        const overlappingSummary: CompressSummary = {
+            anchorMessageId: "m1",
+            messageIds: ["m1", "m2", "m3"],
+            summary: "legacy overlapping block",
+        }
+        const untouchedSummary: CompressSummary = {
+            anchorMessageId: "m8",
+            messageIds: ["m8", "m9"],
+            summary: "keep me",
+        }
+
+        const result = removeSubsumedCompressSummaries(
+            [overlappingSummary, untouchedSummary],
+            ["m2", "m3", "m4"],
+        )
+
+        assert.equal(result.length, 1)
+        assert.equal(result[0].anchorMessageId, "m8")
+    })
 })
 
 describe("compress summary maintenance", () => {

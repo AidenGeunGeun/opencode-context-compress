@@ -6,7 +6,6 @@ import { saveSessionState } from "../state/persistence"
 import { getCurrentParams } from "../token-utils"
 import { buildContextMap } from "../messages/context-map"
 import type { CompressToolContext } from "./types"
-import { registerToolOutputForStripping, stripManagementToolMessages } from "./utils"
 
 const COMPRESS_MAP_TOOL_DESCRIPTION = loadPrompt("compress-map-tool-spec")
 
@@ -34,9 +33,7 @@ export function createCompressMapTool(ctx: CompressToolContext): ReturnType<type
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
 
             const currentParams = getCurrentParams(state, rawMessages, logger)
-            registerToolOutputForStripping(state, toolCtx as any)
-            const contextMessages = stripManagementToolMessages(rawMessages, state)
-            const contextMap = buildContextMap(contextMessages, state, logger, currentParams.providerId)
+            const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
 
             try {
                 await saveSessionState(state, logger)

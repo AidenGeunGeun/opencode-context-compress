@@ -14,6 +14,7 @@ export interface ContextMapEntry {
     kind: "message" | "block"
     role: string
     rawMessageIds: string[]
+    anchorMessageId?: string
     preview: string
     tokenEstimate: number
     toolCallCount: number
@@ -126,6 +127,27 @@ function collectToolStats(msg: WithParts): { count: number; types: string[] } {
     }
 }
 
+function buildBlockIdByAnchor(rawMessages: WithParts[], state: SessionState): Map<string, string> {
+    const rawMessageIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]))
+
+    const sortedSummaries = state.compressSummaries
+        .map((summary, originalIndex) => ({
+            summary,
+            originalIndex,
+            anchorPosition: rawMessageIndexById.get(summary.anchorMessageId) ?? Number.MAX_SAFE_INTEGER,
+        }))
+        .sort((a, b) => {
+            if (a.anchorPosition !== b.anchorPosition) {
+                return a.anchorPosition - b.anchorPosition
+            }
+            return a.originalIndex - b.originalIndex
+        })
+
+    return new Map(
+        sortedSummaries.map(({ summary }, index) => [summary.anchorMessageId, `b${index}`]),
+    )
+}
+
 function buildContextMapEntries(
     rawMessages: WithParts[],
     state: SessionState,
@@ -138,9 +160,7 @@ function buildContextMapEntries(
     keyToPosition: Map<number | string, number>
 } {
     const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger)
-    const blockIndexByAnchor = new Map(
-        state.compressSummaries.map((summary, idx) => [summary.anchorMessageId, idx]),
-    )
+    const blockIdByAnchor = buildBlockIdByAnchor(rawMessages, state)
 
     const entries: ContextMapEntry[] = []
     const lookup = new Map<number | string, string[]>()
@@ -148,13 +168,12 @@ function buildContextMapEntries(
     const keyToPosition = new Map<number | string, number>()
 
     let messageNumber = 0
-    let fallbackBlockIndex = state.compressSummaries.length
+    let fallbackBlockIndex = blockIdByAnchor.size
 
     for (const msg of transformed) {
         const summary = syntheticMap.get(msg.info.id)
         if (summary) {
-            const configuredBlockIndex = blockIndexByAnchor.get(summary.anchorMessageId)
-            const blockId = `b${configuredBlockIndex ?? fallbackBlockIndex++}`
+            const blockId = blockIdByAnchor.get(summary.anchorMessageId) ?? `b${fallbackBlockIndex++}`
             const rawMessageIds = dedupeMessageIds(
                 summary.messageIds.length > 0 ? summary.messageIds : [summary.anchorMessageId],
             )
@@ -164,6 +183,7 @@ function buildContextMapEntries(
                 kind: "block",
                 role: "assistant",
                 rawMessageIds,
+                anchorMessageId: summary.anchorMessageId,
                 preview: extractBlockPreview(summary),
                 tokenEstimate: countTokens(summary.summary, providerId),
                 toolCallCount: 0,
@@ -248,14 +268,11 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
         }
 
         const toolCallCount = grouped.reduce((sum, entry) => sum + entry.toolCallCount, 0)
-        const toolTypes = [...new Set(grouped.flatMap((entry) => entry.toolTypes))]
         const tokenEstimate = grouped.reduce((sum, entry) => sum + entry.tokenEstimate, 0)
         const firstPreview = grouped.find((entry) => entry.preview)?.preview ?? "assistant activity"
 
         const toolDetails =
-            toolCallCount > 0
-                ? `${toolCallCount} tool calls (${toolTypes.join(", ")})`
-                : `messages grouped for context`
+            toolCallCount > 0 ? `${toolCallCount} tool calls` : `messages grouped for context`
 
         lines.push(
             `[${rangeLabel}] assistant: ${toolDetails} - ${firstPreview} (~${tokenEstimate.toLocaleString()} tokens)`,

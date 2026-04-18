@@ -26,13 +26,12 @@ index.ts
   conditionally registers tool surfaces, and updates OpenCode config metadata.
 
 lib/tools/compress-map.ts
-  Returns the current `<compress-context-map>` snapshot and marks its own
-  output for stripping on later turns.
+  Returns the current `<compress-context-map>` snapshot.
 
 lib/tools/compress.ts
-  Compression tool implementation. Validates args, requests permission,
-  calculates per-range metrics, tracks compressed IDs, stores summaries, and
-  returns a refreshed map snapshot for iterative use.
+  Compression tool implementation. Validates one range at a time, requests
+  permission, calculates range metrics, tracks compressed IDs, stores
+  summaries, and returns a refreshed map snapshot for iterative use.
 
 lib/messages/compress-transform.ts
   Applies persisted compression decisions to outgoing message context.
@@ -58,8 +57,8 @@ lib/state/*
 1. Startup loads config and initializes state.
 2. Hooks sync tool cache, apply compression transforms, and route `/compress` commands.
 3. `/compress manage` injects a short reminder; the agent fetches the map with `compress_map`.
-4. `compress_map` / `compress` add their own `callID`s to `state.compressed.toolIds` so later turns strip those outputs.
-5. `compress` updates compressed IDs, summaries, saved-token counters, and returns an updated map for same-turn iteration.
+4. `compress` handles one range per call, then returns an updated map for same-turn iteration.
+5. Only raw messages inside a compressed range feed `state.compressed.toolIds`; management-tool outputs are not auto-stripped.
 
 ## Prompt Generation
 
@@ -105,6 +104,7 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 - `compress_map` and `compress` are for explicit user-requested context management only; there is no runtime manage-window guard beyond that prompt contract.
 - Context maps no longer emit a hardcoded `Active: [...]` footer. The PM agent decides what counts as the active tail.
+- `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
 - Debug logs and context snapshots are written under `~/.config/opencode/logs/compress/` when debug is enabled.
 - Diagnostic logs prefixed with `[DIAG:]` bypass the `enabled` check in the logger — they always write regardless of debug config. Use for temporary debugging, remove before release.
