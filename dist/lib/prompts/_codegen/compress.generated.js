@@ -18,9 +18,9 @@ Range mechanics:
 - Do not merge unrelated phases just because they are nearby.
 
 Turn protocol:
-- Keep the whole turn to 2 blocks when possible; 3 max.
-- Compression 1: compress completed conversation into 1-2 new blocks; 3 max if needed.
-- Later compressions: leave older dense \`[bN]\` archive blocks alone, fold the blocks created on the previous compression turn into one dense block, then compress newly completed work into 1-2 new blocks.
+- Turn budget: 2 blocks, 3 max.
+- If the map has no \`[bN]\` blocks: compress completed conversation into 1-2 new blocks.
+- If the map already has \`[bN]\` blocks: leave older broad \`[bN]\` blocks alone; if the newest \`[bN]\` blocks are multiple and narrow-topic, fold them into one dense block; then compress newly completed conversation into 1-2 new blocks.
 
 Density guidance:
 - Older or less-relevant completed work should be terse.
