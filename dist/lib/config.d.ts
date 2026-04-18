@@ -3,12 +3,16 @@ export interface CompressTool {
     permission: "ask" | "allow" | "deny";
     showCompression: boolean;
 }
+export interface PermissionTool {
+    permission: "ask" | "allow" | "deny";
+}
 export interface ToolSettings {
     protectedTools: string[];
 }
 export interface Tools {
     settings: ToolSettings;
     compress: CompressTool;
+    compress_map: PermissionTool;
 }
 export interface Commands {
     enabled: boolean;

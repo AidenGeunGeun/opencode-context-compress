@@ -36,6 +36,9 @@ const config: PluginConfig = {
             permission: "allow",
             showCompression: true,
         },
+        compress_map: {
+            permission: "allow",
+        },
     },
 }
 

@@ -1,13 +1,15 @@
 // Generated prompts (from .md files via scripts/generate-prompts.ts)
 import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated"
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated"
+import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated"
 
 export interface ToolFlags {
     compress: boolean
+    compress_map: boolean
 }
 
 function processConditionals(template: string, flags: ToolFlags & Record<string, boolean>): string {
-    const tools = ["compress"] as const
+    const tools = ["compress", "compress_map"] as const
     let result = template
     // Strip comments: // ... //
     result = result.replace(/\/\/.*?\/\//g, "")
@@ -26,6 +28,7 @@ export function renderSystemPrompt(flags: ToolFlags): string {
 
 const PROMPTS: Record<string, string> = {
     "compress-tool-spec": COMPRESS_TOOL_SPEC,
+    "compress-map-tool-spec": COMPRESS_MAP_TOOL_SPEC,
 }
 
 export function loadPrompt(name: string, vars?: Record<string, string>): string {

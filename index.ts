@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config"
 import { Logger } from "./lib/logger"
 import { SessionStateManager } from "./lib/state"
-import { createCompressTool } from "./lib/tools"
+import { createCompressMapTool, createCompressTool } from "./lib/tools"
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks"
 import { configureClientAuth, isSecureMode } from "./lib/auth"
 
@@ -53,7 +53,23 @@ const plugin: Plugin = (async (ctx) => {
             logger,
             config,
         ),
+        "tool.execute.before": async (input) => {
+            if (input.tool !== "compress" && input.tool !== "compress_map") {
+                return
+            }
+
+            stateManager.get(input.sessionID).compressed.toolIds.add(input.callID)
+        },
         tool: {
+            ...(config.tools.compress_map.permission !== "deny" && {
+                compress_map: createCompressMapTool({
+                    client: ctx.client,
+                    stateManager,
+                    logger,
+                    config,
+                    workingDirectory: ctx.directory,
+                }),
+            }),
             ...(config.tools.compress.permission !== "deny" && {
                 compress: createCompressTool({
                     client: ctx.client,
@@ -74,6 +90,7 @@ const plugin: Plugin = (async (ctx) => {
             }
 
             const toolsToAdd: string[] = []
+            if (config.tools.compress_map.permission !== "deny") toolsToAdd.push("compress_map")
             if (config.tools.compress.permission !== "deny") toolsToAdd.push("compress")
 
             if (toolsToAdd.length > 0) {
@@ -91,6 +108,7 @@ const plugin: Plugin = (async (ctx) => {
             const permission = opencodeConfig.permission ?? {}
             opencodeConfig.permission = {
                 ...permission,
+                compress_map: config.tools.compress_map.permission,
                 compress: config.tools.compress.permission,
             } as typeof permission
         },

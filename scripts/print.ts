@@ -6,10 +6,15 @@ const args = process.argv.slice(2)
 
 const flags: ToolFlags = {
     compress: args.includes("-c") || args.includes("--compress"),
+    compress_map: args.includes("-m") || args.includes("--compress-map"),
 }
 
 if (!flags.compress) {
     flags.compress = true
+}
+
+if (!flags.compress_map) {
+    flags.compress_map = true
 }
 
 const showSystem = args.includes("--system")
@@ -26,6 +31,7 @@ Types:
 
 Flags (for --system):
   -c, --compress      Enable compress tool guidance (default: on)
+  -m, --compress-map  Enable compress_map tool guidance (default: on)
 
 Examples:
   npm run compress -- --system
@@ -42,7 +48,7 @@ const header = (title: string) => {
 }
 
 if (showSystem) {
-    header("SYSTEM PROMPT (tools: compress)")
+    header("SYSTEM PROMPT (tools: compress_map, compress)")
     console.log(renderSystemPrompt(flags))
 }
 
@@ -55,7 +61,6 @@ if (showCompressContext) {
 [5] user: "Looks good, now add tests"
 [6-8] assistant: 4 tool calls (edit, write, bash) - test implementation (~2,180 tokens)
 ---
-Active: [5-8] (current work - do not compress)
 Total: 8 messages + 1 block | ~6,500 tokens
 </compress-context-map>`)
 }

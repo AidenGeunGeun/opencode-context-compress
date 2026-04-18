@@ -8,7 +8,7 @@ Core contract:
 
 - No autonomous context-management loops.
 - Compression workflow is triggered by `/compress manage`.
-- `compress` is the only model-callable tool.
+- During that management turn, the PM agent can use `compress_map` and `compress`.
 
 ## Build and Test
 
@@ -25,9 +25,14 @@ index.ts
   Plugin entrypoint. Loads config, initializes logger/state, wires hooks,
   conditionally registers tool surfaces, and updates OpenCode config metadata.
 
+lib/tools/compress-map.ts
+  Returns the current `<compress-context-map>` snapshot and marks its own
+  output for stripping on later turns.
+
 lib/tools/compress.ts
   Compression tool implementation. Validates args, requests permission,
-  calculates per-range metrics, tracks compressed IDs, and stores summaries.
+  calculates per-range metrics, tracks compressed IDs, stores summaries, and
+  returns a refreshed map snapshot for iterative use.
 
 lib/messages/compress-transform.ts
   Applies persisted compression decisions to outgoing message context.
@@ -37,8 +42,8 @@ lib/messages/context-map.ts
   and resolves map boundaries to raw message IDs.
 
 lib/commands/manage.ts
-  Implements /compress manage: renders guidance + context map and sends one
-  model-visible management turn.
+  Implements /compress manage: renders a lean reminder and sends one
+  model-visible management turn without embedding the map.
 
 lib/config.ts
   Config schema + layered loading/merge (global/config-dir/project), defaults,
@@ -52,8 +57,9 @@ lib/state/*
 
 1. Startup loads config and initializes state.
 2. Hooks sync tool cache, apply compression transforms, and route `/compress` commands.
-3. `/compress manage` injects guidance and `<compress-context-map>`.
-4. `compress` updates compressed IDs, summaries, and saved-token counters.
+3. `/compress manage` injects a short reminder; the agent fetches the map with `compress_map`.
+4. `compress_map` / `compress` add their own `callID`s to `state.compressed.toolIds` so later turns strip those outputs.
+5. `compress` updates compressed IDs, summaries, saved-token counters, and returns an updated map for same-turn iteration.
 
 ## Prompt Generation
 
@@ -97,7 +103,8 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 ## Notes
 
-- Context map indexes are snapshot-based, so callers must submit all compression ranges in one tool call.
+- `compress_map` and `compress` are for explicit user-requested context management only; there is no runtime manage-window guard beyond that prompt contract.
+- Context maps no longer emit a hardcoded `Active: [...]` footer. The PM agent decides what counts as the active tail.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
 - Debug logs and context snapshots are written under `~/.config/opencode/logs/compress/` when debug is enabled.
 - Diagnostic logs prefixed with `[DIAG:]` bypass the `enabled` check in the logger — they always write regardless of debug config. Use for temporary debugging, remove before release.

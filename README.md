@@ -9,20 +9,30 @@ This plugin does one thing: it helps the model compress completed conversation p
 - No autonomous context management loops.
 - No automatic nudges or per-turn injections.
 - Compression runs only when you trigger `/compress manage`.
-- The only model-callable tool is `compress` (subject to permissions).
+- During `/compress manage`, the agent can use `compress_map` and `compress` (subject to permissions).
 
 ## Commands
 
 - `/compress` or `/compress help`: show command help.
-- `/compress manage`: send compression guidance and context map to the active agent.
+- `/compress manage`: send a lean context-management reminder to the active agent.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
 
 `/compress manage` is the only command that intentionally creates a model-visible turn.
 
+## Agentic Workflow
+
+When `/compress manage` runs, the plugin opens a single model-visible management turn with a short reminder. Inside that turn the agent can:
+
+1. Call `compress_map` to fetch the current `<compress-context-map>` snapshot.
+2. Call `compress` one or more times to replace completed phases with topical blocks.
+3. Read the refreshed map returned by `compress` and continue iterating in the same turn if needed.
+
+The manual boundary stays absolute: outside a user-triggered `/compress manage` turn, the plugin does not prompt for compression or open any background workflow.
+
 ## Context Map
 
-When `/compress manage` runs, the plugin injects a structured map:
+`compress_map` and `compress` both use the same structured map format:
 
 ```text
 <compress-context-map>
@@ -32,12 +42,11 @@ When `/compress manage` runs, the plugin injects a structured map:
 [5] user: "Looks good, now add tests"
 [6-8] assistant: 4 tool calls (edit, write, bash) - test implementation (~2,180 tokens)
 ---
-Active: [5-8] (current work - do not compress)
 Total: 8 messages + 1 block | ~6,500 tokens
 </compress-context-map>
 ```
 
-The model selects ranges by index and calls `compress` with a `ranges` array.
+The agent decides what counts as the active tail. Older completed work should be compressed more tersely than the most recent completed phase.
 
 ## Installation
 
@@ -103,7 +112,7 @@ Default runtime config:
     "notificationType": "chat",
     "commands": {
         "enabled": true,
-        "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
+        "protectedTools": ["task", "todowrite", "todoread", "compress", "compress_map", "batch", "plan_enter", "plan_exit"]
     },
     "turnProtection": {
         "enabled": false,
@@ -112,11 +121,14 @@ Default runtime config:
     "protectedFilePatterns": [],
     "tools": {
         "settings": {
-            "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
+            "protectedTools": ["task", "todowrite", "todoread", "compress", "compress_map", "batch", "plan_enter", "plan_exit"]
         },
         "compress": {
             "permission": "allow",
             "showCompression": false
+        },
+        "compress_map": {
+            "permission": "allow"
         }
     }
 }
@@ -134,6 +146,8 @@ Stored fields include:
 - compressed message IDs
 - compression summaries
 - per-session compression stats
+
+Management-turn outputs from `compress_map` and `compress` are tracked in `compressed.toolIds`, so later turns replace those bulky tool outputs with the normal stripped placeholder instead of re-injecting them.
 
 ## Development
 

@@ -9,6 +9,10 @@ export interface CompressTool {
     showCompression: boolean
 }
 
+export interface PermissionTool {
+    permission: "ask" | "allow" | "deny"
+}
+
 export interface ToolSettings {
     protectedTools: string[]
 }
@@ -16,6 +20,7 @@ export interface ToolSettings {
 export interface Tools {
     settings: ToolSettings
     compress: CompressTool
+    compress_map: PermissionTool
 }
 
 export interface Commands {
@@ -44,6 +49,7 @@ const DEFAULT_PROTECTED_TOOLS = [
     "todowrite",
     "todoread",
     "compress",
+    "compress_map",
     "batch",
     "plan_enter",
     "plan_exit",
@@ -71,6 +77,8 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.compress",
     "tools.compress.permission",
     "tools.compress.showCompression",
+    "tools.compress_map",
+    "tools.compress_map.permission",
 ])
 
 // Extract all key paths from a config object for validation
@@ -235,6 +243,18 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
                 })
             }
         }
+        if (tools.compress_map) {
+            if (tools.compress_map.permission !== undefined) {
+                const validValues = ["ask", "allow", "deny"]
+                if (!validValues.includes(tools.compress_map.permission)) {
+                    errors.push({
+                        key: "tools.compress_map.permission",
+                        expected: '"ask" | "allow" | "deny"',
+                        actual: JSON.stringify(tools.compress_map.permission),
+                    })
+                }
+            }
+        }
     }
 
     return errors
@@ -307,6 +327,9 @@ const defaultConfig: PluginConfig = {
         compress: {
             permission: "allow",
             showCompression: false,
+        },
+        compress_map: {
+            permission: "allow",
         },
     },
 }
@@ -431,6 +454,9 @@ function mergeTools(
             permission: override.compress?.permission ?? base.compress.permission,
             showCompression: override.compress?.showCompression ?? base.compress.showCompression,
         },
+        compress_map: {
+            permission: override.compress_map?.permission ?? base.compress_map.permission,
+        },
     }
 }
 
@@ -461,6 +487,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
                 protectedTools: [...config.tools.settings.protectedTools],
             },
             compress: { ...config.tools.compress },
+            compress_map: { ...config.tools.compress_map },
         },
     }
 }

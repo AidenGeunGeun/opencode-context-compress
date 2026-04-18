@@ -118,6 +118,19 @@
                             "description": "Show summary output in the UI"
                         }
                     }
+                },
+                "compress_map": {
+                    "type": "object",
+                    "description": "Configuration for the compress_map tool",
+                    "additionalProperties": false,
+                    "properties": {
+                        "permission": {
+                            "type": "string",
+                            "enum": ["ask", "allow", "deny"],
+                            "default": "allow",
+                            "description": "Permission mode (deny disables the tool)"
+                        }
+                    }
                 }
             }
         }

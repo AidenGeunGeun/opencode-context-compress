@@ -4,7 +4,6 @@ import { countTokens } from "../token-utils"
 import { transformMessagesForSearch } from "./compress-transform"
 import { extractMessageContent } from "../tools/utils"
 
-const ACTIVE_TAIL_COUNT = 4
 const PREVIEW_MAX_CHARS = 90
 
 export type ContextMapKey = number | string
@@ -270,18 +269,6 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
     const totalTokens = entries.reduce((sum, entry) => sum + entry.tokenEstimate, 0)
 
     lines.push("---")
-
-    if (numericEntries.length > 0) {
-        const activeEntries = numericEntries.slice(-ACTIVE_TAIL_COUNT)
-        const start = activeEntries[0].key as number
-        const end = activeEntries[activeEntries.length - 1].key as number
-        const activeRange = formatRangeLabel(start, end)
-        if (activeEntries.length > 1) {
-            const ids = dedupeMessageIds(activeEntries.flatMap((entry) => entry.rawMessageIds))
-            lookup.set(activeRange, ids)
-        }
-        lines.push(`Active: [${activeRange}] (current work - do not compress)`)
-    }
 
     lines.push(
         `Total: ${numericEntries.length} messages + ${blockEntries.length} ${blockEntries.length === 1 ? "block" : "blocks"} | ~${totalTokens.toLocaleString()} tokens`,

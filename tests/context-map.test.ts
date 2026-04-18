@@ -85,7 +85,8 @@ describe("buildContextMap", () => {
         assert.match(result.mapText, /<compress-context-map>/)
         assert.match(result.mapText, /\[1\] user:/)
         assert.match(result.mapText, /\[2-3\] assistant: 2 tool calls \(read, bash\)/)
-        assert.match(result.mapText, /Active:/)
+        assert.doesNotMatch(result.mapText, /Active:/)
+        assert.match(result.mapText, /Total: 5 messages \+ 0 blocks/)
 
         assert.deepEqual(result.lookup.get(1), ["m1"])
         assert.deepEqual(result.lookup.get(2), ["m2"])
@@ -111,6 +112,7 @@ describe("buildContextMap", () => {
         const result = buildContextMap(rawMessages as any, state, logger)
 
         assert.match(result.mapText, /\[b0\] \[compressed\]/)
+        assert.doesNotMatch(result.mapText, /Active:/)
         assert.deepEqual(result.lookup.get("b0"), ["m2", "m3"])
         assert.deepEqual(result.lookup.get(1), ["m1"])
         assert.deepEqual(result.lookup.get(2), ["m4"])

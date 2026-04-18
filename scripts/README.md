@@ -17,6 +17,7 @@ Supported flags:
 - `--system`: render system prompt.
 - `--compress-context`: print a mock `<compress-context-map>` block.
 - `-c`, `--compress`: enable compress section for `--system` rendering (default on).
+- `-m`, `--compress-map`: enable compress_map section for `--system` rendering (default on).
 
 Examples:
 
@@ -33,3 +34,4 @@ Current generated prompt set:
 
 - `system.generated.ts`
 - `compress.generated.ts`
+- `compress-map.generated.ts`

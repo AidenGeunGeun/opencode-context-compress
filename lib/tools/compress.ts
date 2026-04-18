@@ -5,7 +5,12 @@ import { ensureSessionInitialized } from "../state"
 import { saveSessionState } from "../state/persistence"
 import { loadPrompt } from "../prompts"
 import { estimateTokensBatch, getCurrentParams } from "../token-utils"
-import { collectContentInRange, collectToolIdsInRange } from "./utils"
+import {
+    collectContentInRange,
+    collectToolIdsInRange,
+    registerToolOutputForStripping,
+    stripManagementToolMessages,
+} from "./utils"
 import { sendCompressNotification } from "../ui/notification"
 import {
     buildContextMap,
@@ -195,7 +200,8 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
 
             const currentParams = getCurrentParams(state, rawMessages, logger)
-            const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
+            const contextMessages = stripManagementToolMessages(rawMessages, state)
+            const contextMap = buildContextMap(contextMessages, state, logger, currentParams.providerId)
             const baselineSummaries = [...state.compressSummaries]
             const rawMessageIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]))
 
@@ -291,13 +297,26 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 totalToolCallsCompressed += containedToolIds.length
             }
 
+            registerToolOutputForStripping(state, toolCtx as any)
+
             try {
                 await saveSessionState(state, logger)
             } catch (err: any) {
                 logger.error("Failed to persist state", { error: err.message })
             }
 
-            return `Compressed ${ranges.length} ranges (${totalEntriesCompressed} entries, ${totalToolCallsCompressed} tool calls) into summaries.`
+            const updatedContextMessages = stripManagementToolMessages(rawMessages, state)
+            const updatedContextMap = buildContextMap(
+                updatedContextMessages,
+                state,
+                logger,
+                currentParams.providerId,
+            )
+
+            return [
+                `Compressed ${ranges.length} ranges (${totalEntriesCompressed} entries, ${totalToolCallsCompressed} tool calls) into summaries.`,
+                updatedContextMap.mapText,
+            ].join("\n\n")
         },
     })
 }

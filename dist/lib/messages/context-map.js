@@ -1,7 +1,6 @@
 import { countTokens } from "../token-utils";
 import { transformMessagesForSearch } from "./compress-transform";
 import { extractMessageContent } from "../tools/utils";
-const ACTIVE_TAIL_COUNT = 4;
 const PREVIEW_MAX_CHARS = 90;
 function dedupeMessageIds(ids) {
     const seen = new Set();
@@ -185,17 +184,6 @@ function buildMapText(entries, lookup) {
     const blockEntries = entries.filter((entry) => entry.kind === "block");
     const totalTokens = entries.reduce((sum, entry) => sum + entry.tokenEstimate, 0);
     lines.push("---");
-    if (numericEntries.length > 0) {
-        const activeEntries = numericEntries.slice(-ACTIVE_TAIL_COUNT);
-        const start = activeEntries[0].key;
-        const end = activeEntries[activeEntries.length - 1].key;
-        const activeRange = formatRangeLabel(start, end);
-        if (activeEntries.length > 1) {
-            const ids = dedupeMessageIds(activeEntries.flatMap((entry) => entry.rawMessageIds));
-            lookup.set(activeRange, ids);
-        }
-        lines.push(`Active: [${activeRange}] (current work - do not compress)`);
-    }
     lines.push(`Total: ${numericEntries.length} messages + ${blockEntries.length} ${blockEntries.length === 1 ? "block" : "blocks"} | ~${totalTokens.toLocaleString()} tokens`);
     lines.push("</compress-context-map>");
     return lines.join("\n");
