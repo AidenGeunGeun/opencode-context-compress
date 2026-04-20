@@ -8,22 +8,16 @@ Args:
 `summary`: Replacement summary for the NEW material in that selected span.
 `topic`: Short display label for the resulting block.
 
-Range mechanics:
 - A range covers whole map entries from `from` through `to`.
-- If the range includes existing `[bN]` blocks, their stored summaries are already preserved by the tool. Write `summary` for the new material you are adding or condensing now.
-- Prefer stacking topical blocks. Reuse an existing `[bN]` block only when it is outdated or needs to merge with adjacent same-topic work.
-- Do not merge unrelated phases just because they are nearby.
-
-Turn protocol:
+- Existing `[bN]` blocks in the range are already preserved — write `summary` only for what you're adding or condensing now.
+- Stack new topical blocks; reuse an existing `[bN]` only when it's outdated or needs to merge with adjacent same-topic work.
+- Don't merge unrelated phases just because they're nearby.
 - Turn budget: 2 blocks, 3 max.
-- If the map has no `[bN]` blocks: compress completed conversation into 1-2 new blocks.
-- If the map already has `[bN]` blocks: leave older broad `[bN]` blocks alone; if the newest `[bN]` blocks are multiple and narrow-topic, fold them into one dense block; then compress newly completed conversation into 1-2 new blocks.
-
-Density guidance:
+- No `[bN]` blocks yet → compress completed conversation into 1-2 new blocks.
+- `[bN]` blocks exist → leave older ones alone, fold the newest narrow blocks into one, then compress the rest into 1-2 new blocks.
 - Older or less-relevant completed work should be terse.
 - Recent completed work should keep more fidelity.
 - Leave the active tail alone.
-
-Each call rewrites history and invalidates cache from that point, so use as few calls as possible.
-
-If more completed work needs compression, call `compress` again using the fresh `<compress-context-map>` returned by the previous call. Do not use it outside explicit user-requested context management.
+- Each call invalidates cache from that point — use as few calls as possible.
+- After each call, use the fresh `<compress-context-map>` returned by the tool for the next decision.
+- Do not use outside explicit user-requested context management.

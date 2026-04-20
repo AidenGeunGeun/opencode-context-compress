@@ -3,12 +3,12 @@ CONTEXT MANAGEMENT REQUESTED
 The user explicitly ran `/compress manage`.
 <compress_map>Use `compress_map` to read the current context map.</compress_map>
 <compress>Use `compress` to replace one completed range per call with a topical block. One range per call; if more completed work needs compression, call `compress` again using the returned map.</compress>
-Each `compress` call invalidates cache from that point in this turn, so keep calls sparse. Turn budget: 2 blocks, 3 max.
-If the map has no `[bN]` blocks: compress completed conversation into 1-2 new blocks.
-If the map has `[bN]` blocks: leave older broad `[bN]` blocks alone; if the newest `[bN]` blocks are multiple and narrow-topic, fold them into one dense block; then compress newly completed conversation into 1-2 new blocks.
-Older or less-relevant completed work should be terse.
-Recent completed work should keep more fidelity.
-Do not touch the active tail; decide that boundary from the conversation itself.
-Prefer stacking new topical blocks over rewrapping good existing blocks.
-Use compression tools only inside this `/compress manage` turn.
+- Turn budget: 2 blocks, 3 max. Each `compress` call invalidates cache from that point.
+- No `[bN]` blocks yet → compress completed conversation into 1-2 new blocks.
+- `[bN]` blocks exist → leave older ones alone, fold the newest narrow blocks into one, then compress the rest into 1-2 new blocks.
+- Older or less-relevant completed work should be terse.
+- Recent completed work should keep more fidelity.
+- Leave the active tail alone.
+- Stack new topical blocks; don't rewrap good existing ones.
+- Use compression tools only inside this `/compress manage` turn.
 </system-reminder>
