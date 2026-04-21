@@ -2,6 +2,7 @@ import { SessionState, WithParts } from "./state"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { Logger } from "./logger"
 import { getLastUserMessage, isMessageCompacted } from "./shared-utils"
+import { getCompletedToolOutputText } from "./tools/utils"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
 import { encodingForModel, type Tiktoken } from "js-tiktoken"
 
@@ -88,12 +89,14 @@ export function extractToolContent(part: any): string[] {
         }
     }
 
-    if (part.state?.status === "completed" && part.state?.output) {
-        const content =
-            typeof part.state.output === "string"
-                ? part.state.output
-                : JSON.stringify(part.state.output)
-        contents.push(content)
+    if (part.state?.status === "completed") {
+        const content = getCompletedToolOutputText(part, part.state.output, {
+            requireTruthy: true,
+            stringifyNonString: true,
+        })
+        if (typeof content === "string") {
+            contents.push(content)
+        }
     } else if (part.state?.status === "error" && part.state?.error) {
         const content =
             typeof part.state.error === "string"

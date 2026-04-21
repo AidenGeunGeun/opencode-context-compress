@@ -1,4 +1,5 @@
 import { getLastUserMessage, isMessageCompacted } from "./shared-utils";
+import { getCompletedToolOutputText } from "./tools/utils";
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
 import { encodingForModel } from "js-tiktoken";
 // Lazy-initialized tiktoken encoder (created on first non-Anthropic call)
@@ -69,11 +70,14 @@ export function extractToolContent(part) {
             contents.push(inputContent);
         }
     }
-    if (part.state?.status === "completed" && part.state?.output) {
-        const content = typeof part.state.output === "string"
-            ? part.state.output
-            : JSON.stringify(part.state.output);
-        contents.push(content);
+    if (part.state?.status === "completed") {
+        const content = getCompletedToolOutputText(part, part.state.output, {
+            requireTruthy: true,
+            stringifyNonString: true,
+        });
+        if (typeof content === "string") {
+            contents.push(content);
+        }
     }
     else if (part.state?.status === "error" && part.state?.error) {
         const content = typeof part.state.error === "string"

@@ -175,6 +175,107 @@ describe("composeSummaryWithPreservedBlocks", () => {
     })
 })
 
+describe("collectContentInRange", () => {
+    it("replaces generated-image output with a short placeholder for range metrics", () => {
+        const messages = [
+            {
+                info: {
+                    id: "m1",
+                    role: "assistant" as const,
+                    sessionID: "session-test",
+                    agent: "agent-test",
+                    model: "model-test",
+                    time: { created: Date.now() },
+                },
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "image_generation",
+                        callID: "call-image",
+                        state: {
+                            status: "completed",
+                            input: { prompt: "make it bluer" },
+                            output: JSON.stringify({ result: "A".repeat(4096) }),
+                        },
+                    },
+                ],
+            },
+        ]
+
+        assert.deepEqual(collectContentInRange(messages as any, 0, 0), [
+            JSON.stringify({ prompt: "make it bluer" }),
+            "[generated image: call-image]",
+        ])
+    })
+
+    it("still emits a generated-image placeholder when the completed output is falsy", () => {
+        const messages = [
+            {
+                info: {
+                    id: "m1",
+                    role: "assistant" as const,
+                    sessionID: "session-test",
+                    agent: "agent-test",
+                    model: "model-test",
+                    time: { created: Date.now() },
+                },
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "image_generation",
+                        callID: "call-image",
+                        state: {
+                            status: "completed",
+                            output: "",
+                        },
+                    },
+                ],
+            },
+        ]
+
+        assert.deepEqual(collectContentInRange(messages as any, 0, 0), ["[generated image: call-image]"])
+    })
+
+    it("leaves non-image tool output unchanged even when it is large", () => {
+        const largeOutput = "B".repeat(4096)
+        const messages = [toolMessage("m1", "read", largeOutput)]
+
+        assert.deepEqual(collectContentInRange(messages as any, 0, 0), [
+            JSON.stringify({ description: "read call" }),
+            largeOutput,
+        ])
+    })
+
+    it("preserves prior falsy-output handling for non-image tools", () => {
+        const messages = [
+            {
+                info: {
+                    id: "m1",
+                    role: "assistant" as const,
+                    sessionID: "session-test",
+                    agent: "agent-test",
+                    model: "model-test",
+                    time: { created: Date.now() },
+                },
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "read",
+                        callID: "call-read",
+                        state: {
+                            status: "completed",
+                            input: { description: "read call" },
+                            output: 0,
+                        },
+                    },
+                ],
+            },
+        ]
+
+        assert.deepEqual(collectContentInRange(messages as any, 0, 0), [JSON.stringify({ description: "read call" })])
+    })
+})
+
 describe("calculateCompressionRangeMetrics", () => {
     it("uses block summary token estimates and counts tools from non-block messages only", () => {
         const summary: CompressSummary = {

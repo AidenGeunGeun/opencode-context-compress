@@ -105,6 +105,7 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 - `compress_map` and `compress` are for explicit user-requested context management only; there is no runtime manage-window guard beyond that prompt contract.
 - Context maps no longer emit a hardcoded `Active: [...]` footer. The PM agent decides what counts as the active tail.
 - `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.
+- Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
 - Debug logs and context snapshots are written under `~/.config/opencode/logs/compress/` when debug is enabled.
 - Diagnostic logs prefixed with `[DIAG:]` bypass the `enabled` check in the logger — they always write regardless of debug config. Use for temporary debugging, remove before release.

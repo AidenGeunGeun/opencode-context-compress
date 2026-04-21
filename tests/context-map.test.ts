@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 import { buildContextMap } from "../lib/messages/context-map.ts"
 import type { CompressSummary, SessionState } from "../lib/state/types.ts"
+import { countTokens } from "../lib/token-utils.ts"
 
 const logger = {
     info: () => {},
@@ -117,6 +118,51 @@ describe("buildContextMap", () => {
         assert.deepEqual(result.lookup.get("b0"), ["m2", "m3"])
         assert.deepEqual(result.lookup.get(1), ["m1"])
         assert.deepEqual(result.lookup.get(2), ["m4"])
+    })
+
+    it("renders generated-image tool results as readable placeholder previews", () => {
+        const placeholder = "[generated image: call-image]"
+        const rawMessages = [
+            textMessage("m1", "Please make it bluer"),
+            {
+                info: {
+                    id: "m2",
+                    role: "assistant" as const,
+                    sessionID: "session-test",
+                    agent: "agent-test",
+                    model: "model-test",
+                    time: { created: Date.now() },
+                },
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "image_generation",
+                        callID: "call-image",
+                        state: {
+                            status: "completed",
+                            output: JSON.stringify({ result: "A".repeat(4096) }),
+                        },
+                    },
+                ],
+            },
+        ]
+
+        const result = buildContextMap(rawMessages as any, createState(), logger)
+        const expectedTotalTokens = countTokens("Please make it bluer") + countTokens(placeholder)
+
+        assert.equal(
+            result.mapText,
+            [
+                "<compress-context-map>",
+                '[1] user: "Please make it bluer"',
+                `[2] assistant: 1 tool calls - ${placeholder} (~${countTokens(placeholder).toLocaleString()} tokens)`,
+                "---",
+                `Total: 2 messages + 0 blocks | ~${expectedTotalTokens.toLocaleString()} tokens`,
+                "</compress-context-map>",
+            ].join("\n"),
+        )
+        assert.equal(result.entries[1]?.preview, placeholder)
+        assert.ok(result.entries[1]?.tokenEstimate < 100)
     })
 
     it("assigns bN labels by anchor position instead of summary array order", () => {

@@ -87,6 +87,20 @@ describe("countToolTokens", () => {
         assert.ok(countToolTokens(part) > 0)
     })
 
+    it("counts generated-image output from the placeholder instead of the base64 payload", () => {
+        const part = {
+            tool: "image_generation",
+            callID: "call-image",
+            state: {
+                status: "completed",
+                output: JSON.stringify({ result: "A".repeat(4096) }),
+            },
+        }
+
+        assert.ok(countToolTokens(part) > 0)
+        assert.ok(countToolTokens(part) < 100)
+    })
+
     it("returns 0 when tool part has no extractable content", () => {
         const part = {
             tool: "read",

@@ -89,6 +89,69 @@ describe("extractToolContent", () => {
         assert.deepEqual(extractToolContent(part), ["file contents"])
     })
 
+    it("preserves falsy completed outputs for non-image tools as non-content", () => {
+        const part = {
+            tool: "read",
+            state: { status: "completed", output: 0 },
+        }
+
+        assert.deepEqual(extractToolContent(part), [])
+    })
+
+    it("replaces generated-image output with a placeholder that includes the callID", () => {
+        const part = {
+            tool: "image_generation",
+            callID: "call-image",
+            state: {
+                status: "completed",
+                output: JSON.stringify({ result: "A".repeat(4096) }),
+            },
+        }
+
+        assert.deepEqual(extractToolContent(part), ["[generated image: call-image]"])
+    })
+
+    it("still emits a generated-image placeholder when the completed output is falsy", () => {
+        const part = {
+            tool: "image_generation",
+            callID: "call-image",
+            state: {
+                status: "completed",
+                output: "",
+            },
+        }
+
+        assert.deepEqual(extractToolContent(part), ["[generated image: call-image]"])
+    })
+
+    it("keeps generated-image placeholders short when callIDs are very long", () => {
+        const part = {
+            tool: "image_generation",
+            callID: "call-" + "x".repeat(200),
+            state: {
+                status: "completed",
+                output: JSON.stringify({ result: "A".repeat(4096) }),
+            },
+        }
+
+        const [placeholder] = extractToolContent(part)
+        assert.ok(placeholder.startsWith("[generated image: call-"))
+        assert.ok(placeholder.endsWith("...]"))
+        assert.ok(placeholder.length <= 80)
+    })
+
+    it("falls back to a generic generated-image placeholder without a callID", () => {
+        const part = {
+            tool: "image_generation",
+            state: {
+                status: "completed",
+                output: JSON.stringify({ result: "A".repeat(4096) }),
+            },
+        }
+
+        assert.deepEqual(extractToolContent(part), ["[generated image]"])
+    })
+
     it("extracts error output when tool failed", () => {
         const part = {
             tool: "read",
@@ -96,6 +159,16 @@ describe("extractToolContent", () => {
         }
 
         assert.deepEqual(extractToolContent(part), ["not found"])
+    })
+
+    it("keeps image-generation errors on the error branch", () => {
+        const part = {
+            tool: "image_generation",
+            callID: "call-image",
+            state: { status: "error", error: "generation failed" },
+        }
+
+        assert.deepEqual(extractToolContent(part), ["generation failed"])
     })
 
     it("includes write input and output", () => {
