@@ -1,8 +1,18 @@
+<div align="center">
+
+<img src=".github/assets/hero.jpg" alt="opencode-context-compress hero" width="100%">
+
 # opencode-context-compress
 
-Manual-first OpenCode plugin for explicit context compression.
+**Manual-first context compression. You own the when.**
 
-This plugin does one thing: it helps the model compress completed conversation phases into durable technical summaries when you explicitly ask for it.
+[![npm version](https://img.shields.io/npm/v/%40skybluejacket%2Fopencode-context-compress?color=369eff&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@skybluejacket/opencode-context-compress)
+[![License](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
+
+</div>
+
+OpenCode plugin for explicit, user-triggered context compression.
+It helps the model fold completed conversation phases into durable technical summaries only when you ask for it.
 
 ## Core Behavior
 
