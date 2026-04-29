@@ -366,6 +366,138 @@ export interface AggregatedStats {
     sessionCount: number
 }
 
+export interface ForkSessionStateInput {
+    sourceSessionId: string
+    targetSessionId: string
+    messageIdMap: Record<string, string>
+    toolIdsByMessageId: Record<string, string[]>
+    sessionName?: string
+}
+
+export type ForkSessionStateResult =
+    | { status: "missing" }
+    | { status: "error" }
+    | { status: "skipped"; reason: "empty-message-map" | "empty-migrated-state" }
+    | {
+          status: "migrated"
+          summaries: number
+          compressedMessages: number
+          compressedTools: number
+          droppedSummaries: number
+          droppedMessages: number
+      }
+
+function scaleStats(stats: SessionStats, originalMessageCount: number, migratedMessageCount: number): SessionStats {
+    if (originalMessageCount <= 0 || migratedMessageCount <= 0) {
+        return {
+            compressTokenCounter: 0,
+            totalCompressTokens: 0,
+        }
+    }
+
+    if (migratedMessageCount >= originalMessageCount) {
+        return stats
+    }
+
+    const ratio = migratedMessageCount / originalMessageCount
+    return {
+        compressTokenCounter: Math.round((stats.compressTokenCounter || 0) * ratio),
+        totalCompressTokens: Math.round((stats.totalCompressTokens || 0) * ratio),
+    }
+}
+
+export async function forkSessionState(
+    input: ForkSessionStateInput,
+    logger: Logger,
+): Promise<ForkSessionStateResult> {
+    const source = await loadSessionState(input.sourceSessionId, logger)
+    if (source.status === "missing") return { status: "missing" }
+    if (source.status === "error") return { status: "error" }
+
+    const messageIdMap = new Map(Object.entries(input.messageIdMap))
+    if (messageIdMap.size === 0) return { status: "skipped", reason: "empty-message-map" }
+
+    const sourceState = source.state
+    const sourceCompressedMessageIds = new Set(sourceState.compressed.messageIds || [])
+    const toolIdsByMessageId = input.toolIdsByMessageId
+    const migratedSourceMessageIds = new Set<string>()
+    const migratedSourceToolIds = new Set<string>()
+    const compressSummaries: CompressSummary[] = []
+    let droppedSummaries = 0
+
+    for (const summary of sourceState.compressSummaries || []) {
+        const sourceMessageIds = [...new Set(summary.messageIds || [])]
+        const fullyCopied =
+            sourceMessageIds.length > 0 &&
+            messageIdMap.has(summary.anchorMessageId) &&
+            sourceMessageIds.every((messageId) => messageIdMap.has(messageId))
+
+        if (!fullyCopied) {
+            droppedSummaries++
+            continue
+        }
+
+        for (const messageId of sourceMessageIds) {
+            migratedSourceMessageIds.add(messageId)
+            for (const toolId of toolIdsByMessageId[messageId] || []) {
+                if (sourceState.compressed.toolIds.includes(toolId)) migratedSourceToolIds.add(toolId)
+            }
+        }
+
+        compressSummaries.push({
+            anchorMessageId: messageIdMap.get(summary.anchorMessageId)!,
+            messageIds: sourceMessageIds.map((messageId) => messageIdMap.get(messageId)!),
+            summary: summary.summary,
+            ...(summary.topic && { topic: summary.topic }),
+        })
+    }
+
+    const compressedMessageIds = [...migratedSourceMessageIds]
+        .filter((messageId) => sourceCompressedMessageIds.has(messageId))
+        .map((messageId) => messageIdMap.get(messageId)!)
+
+    const compressedToolIds = [...migratedSourceToolIds]
+
+    if (compressedMessageIds.length === 0 && compressedToolIds.length === 0 && compressSummaries.length === 0) {
+        return { status: "skipped", reason: "empty-migrated-state" }
+    }
+
+    await ensureStorageDir()
+    const lastUpdated = new Date().toISOString()
+    const targetState: PersistedSessionState = {
+        sessionName: input.sessionName ?? sourceState.sessionName,
+        compressed: {
+            toolIds: compressedToolIds,
+            messageIds: compressedMessageIds,
+        },
+        compressSummaries,
+        stats: scaleStats(sourceState.stats, sourceState.compressed.messageIds.length, compressedMessageIds.length),
+        lastUpdated,
+    }
+
+    await writeFileAtomic(getSessionFilePath(input.targetSessionId), JSON.stringify(targetState, null, 2))
+
+    const droppedMessages = sourceState.compressed.messageIds.filter((messageId) => !migratedSourceMessageIds.has(messageId)).length
+    logger.info("Forked persisted compression state", {
+        sourceSessionId: input.sourceSessionId,
+        targetSessionId: input.targetSessionId,
+        summaries: compressSummaries.length,
+        compressedMessages: compressedMessageIds.length,
+        compressedTools: compressedToolIds.length,
+        droppedSummaries,
+        droppedMessages,
+    })
+
+    return {
+        status: "migrated",
+        summaries: compressSummaries.length,
+        compressedMessages: compressedMessageIds.length,
+        compressedTools: compressedToolIds.length,
+        droppedSummaries,
+        droppedMessages,
+    }
+}
+
 export async function loadAllSessionStats(logger: Logger): Promise<AggregatedStats> {
     const result: AggregatedStats = {
         totalTokens: 0,

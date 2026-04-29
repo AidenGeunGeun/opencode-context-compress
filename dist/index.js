@@ -2,7 +2,7 @@ import { getConfig } from "./lib/config";
 import { Logger } from "./lib/logger";
 import { SessionStateManager } from "./lib/state";
 import { createCompressMapTool, createCompressTool } from "./lib/tools";
-import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks";
+import { createChatMessageTransformHandler, createCommandExecuteHandler, createSessionForkHandler } from "./lib/hooks";
 import { configureClientAuth, isSecureMode } from "./lib/auth";
 const stateManager = new SessionStateManager();
 const plugin = (async (ctx) => {
@@ -16,7 +16,7 @@ const plugin = (async (ctx) => {
         // logger.info("Secure mode detected, configured client authentication")
     }
     logger.info("Context Compress initialized");
-    return {
+    const hooks = {
         "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, config, ctx.directory),
         "chat.message": async (input, _output) => {
             // Cache variant from real user messages (not synthetic)
@@ -25,6 +25,7 @@ const plugin = (async (ctx) => {
             logger.debug("Cached variant from chat.message hook", { variant: input.variant });
         },
         "command.execute.before": createCommandExecuteHandler(ctx.client, stateManager, logger, config),
+        "session.fork": createSessionForkHandler(stateManager, logger),
         tool: {
             ...(config.tools.compress_map.permission !== "deny" && {
                 compress_map: createCompressMapTool({
@@ -75,6 +76,7 @@ const plugin = (async (ctx) => {
             };
         },
     };
+    return hooks;
 });
 export default plugin;
 //# sourceMappingURL=index.js.map

@@ -253,6 +253,100 @@ export async function loadSessionState(sessionId, logger, messages) {
         state: result,
     };
 }
+function scaleStats(stats, originalMessageCount, migratedMessageCount) {
+    if (originalMessageCount <= 0 || migratedMessageCount <= 0) {
+        return {
+            compressTokenCounter: 0,
+            totalCompressTokens: 0,
+        };
+    }
+    if (migratedMessageCount >= originalMessageCount) {
+        return stats;
+    }
+    const ratio = migratedMessageCount / originalMessageCount;
+    return {
+        compressTokenCounter: Math.round((stats.compressTokenCounter || 0) * ratio),
+        totalCompressTokens: Math.round((stats.totalCompressTokens || 0) * ratio),
+    };
+}
+export async function forkSessionState(input, logger) {
+    const source = await loadSessionState(input.sourceSessionId, logger);
+    if (source.status === "missing")
+        return { status: "missing" };
+    if (source.status === "error")
+        return { status: "error" };
+    const messageIdMap = new Map(Object.entries(input.messageIdMap));
+    if (messageIdMap.size === 0)
+        return { status: "skipped", reason: "empty-message-map" };
+    const sourceState = source.state;
+    const sourceCompressedMessageIds = new Set(sourceState.compressed.messageIds || []);
+    const toolIdsByMessageId = input.toolIdsByMessageId;
+    const migratedSourceMessageIds = new Set();
+    const migratedSourceToolIds = new Set();
+    const compressSummaries = [];
+    let droppedSummaries = 0;
+    for (const summary of sourceState.compressSummaries || []) {
+        const sourceMessageIds = [...new Set(summary.messageIds || [])];
+        const fullyCopied = sourceMessageIds.length > 0 &&
+            messageIdMap.has(summary.anchorMessageId) &&
+            sourceMessageIds.every((messageId) => messageIdMap.has(messageId));
+        if (!fullyCopied) {
+            droppedSummaries++;
+            continue;
+        }
+        for (const messageId of sourceMessageIds) {
+            migratedSourceMessageIds.add(messageId);
+            for (const toolId of toolIdsByMessageId[messageId] || []) {
+                if (sourceState.compressed.toolIds.includes(toolId))
+                    migratedSourceToolIds.add(toolId);
+            }
+        }
+        compressSummaries.push({
+            anchorMessageId: messageIdMap.get(summary.anchorMessageId),
+            messageIds: sourceMessageIds.map((messageId) => messageIdMap.get(messageId)),
+            summary: summary.summary,
+            ...(summary.topic && { topic: summary.topic }),
+        });
+    }
+    const compressedMessageIds = [...migratedSourceMessageIds]
+        .filter((messageId) => sourceCompressedMessageIds.has(messageId))
+        .map((messageId) => messageIdMap.get(messageId));
+    const compressedToolIds = [...migratedSourceToolIds];
+    if (compressedMessageIds.length === 0 && compressedToolIds.length === 0 && compressSummaries.length === 0) {
+        return { status: "skipped", reason: "empty-migrated-state" };
+    }
+    await ensureStorageDir();
+    const lastUpdated = new Date().toISOString();
+    const targetState = {
+        sessionName: input.sessionName ?? sourceState.sessionName,
+        compressed: {
+            toolIds: compressedToolIds,
+            messageIds: compressedMessageIds,
+        },
+        compressSummaries,
+        stats: scaleStats(sourceState.stats, sourceState.compressed.messageIds.length, compressedMessageIds.length),
+        lastUpdated,
+    };
+    await writeFileAtomic(getSessionFilePath(input.targetSessionId), JSON.stringify(targetState, null, 2));
+    const droppedMessages = sourceState.compressed.messageIds.filter((messageId) => !migratedSourceMessageIds.has(messageId)).length;
+    logger.info("Forked persisted compression state", {
+        sourceSessionId: input.sourceSessionId,
+        targetSessionId: input.targetSessionId,
+        summaries: compressSummaries.length,
+        compressedMessages: compressedMessageIds.length,
+        compressedTools: compressedToolIds.length,
+        droppedSummaries,
+        droppedMessages,
+    });
+    return {
+        status: "migrated",
+        summaries: compressSummaries.length,
+        compressedMessages: compressedMessageIds.length,
+        compressedTools: compressedToolIds.length,
+        droppedSummaries,
+        droppedMessages,
+    };
+}
 export async function loadAllSessionStats(logger) {
     const result = {
         totalTokens: 0,

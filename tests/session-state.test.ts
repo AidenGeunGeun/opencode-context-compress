@@ -11,7 +11,7 @@ import {
     ensureSessionInitialized,
 } from "../lib/state/state.ts"
 import { getLastUserSessionId } from "../lib/hooks.ts"
-import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
+import { forkSessionState, loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
 
 const logger = {
     debug: () => {},
@@ -291,6 +291,118 @@ describe("saveSessionState", () => {
             assert.equal(typeof state.persistedLastUpdated, "string")
         } finally {
             await cleanupSessionFiles(sessionId)
+        }
+    })
+})
+
+describe("forkSessionState", () => {
+    it("remaps only complete compressed ranges into the fork", async () => {
+        const sourceId = `session-state-fork-source-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const targetId = `session-state-fork-target-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFiles(sourceId)
+        await cleanupSessionFiles(targetId)
+
+        try {
+            const source = createSessionState()
+            source.sessionId = sourceId
+            source.compressed.toolIds = new Set(["tool-2", "tool-3", "tool-4", "tool-5"])
+            source.compressed.messageIds = new Set(["m2", "m3", "m4", "m5"])
+            source.compressSummaries = [
+                {
+                    anchorMessageId: "m2",
+                    messageIds: ["m2", "m3"],
+                    summary: "kept block",
+                    topic: "kept",
+                },
+                {
+                    anchorMessageId: "m4",
+                    messageIds: ["m4", "m5"],
+                    summary: "dropped partial block",
+                    topic: "dropped",
+                },
+            ]
+            source.stats = {
+                compressTokenCounter: 20,
+                totalCompressTokens: 100,
+            }
+            await saveSessionState(source, logger, "source session")
+
+            const result = await forkSessionState(
+                {
+                    sourceSessionId: sourceId,
+                    targetSessionId: targetId,
+                    messageIdMap: {
+                        m1: "n1",
+                        m2: "n2",
+                        m3: "n3",
+                        m4: "n4",
+                    },
+                    toolIdsByMessageId: {
+                        m2: ["tool-2"],
+                        m3: ["tool-3"],
+                        m4: ["tool-4"],
+                    },
+                },
+                logger,
+            )
+
+            assert.equal(result.status, "migrated")
+            if (result.status !== "migrated") throw new Error(`Expected migrated, got ${result.status}`)
+            assert.equal(result.summaries, 1)
+            assert.equal(result.droppedSummaries, 1)
+            assert.equal(result.droppedMessages, 2)
+
+            const target = await loadSessionState(targetId, logger)
+            assert.equal(target.status, "loaded")
+            if (target.status !== "loaded") throw new Error(`Expected loaded, got ${target.status}`)
+            assert.deepEqual(target.state.compressed.messageIds, ["n2", "n3"])
+            assert.deepEqual(target.state.compressed.toolIds, ["tool-2", "tool-3"])
+            assert.deepEqual(target.state.compressSummaries, [
+                {
+                    anchorMessageId: "n2",
+                    messageIds: ["n2", "n3"],
+                    summary: "kept block",
+                    topic: "kept",
+                },
+            ])
+            assert.deepEqual(target.state.stats, {
+                compressTokenCounter: 10,
+                totalCompressTokens: 50,
+            })
+
+            const reloadedSource = await loadSessionState(sourceId, logger)
+            assert.equal(reloadedSource.status, "loaded")
+            if (reloadedSource.status !== "loaded") throw new Error(`Expected loaded, got ${reloadedSource.status}`)
+            assert.deepEqual(reloadedSource.state.compressed.messageIds, ["m2", "m3", "m4", "m5"])
+            assert.deepEqual(reloadedSource.state.compressSummaries, source.compressSummaries)
+        } finally {
+            await cleanupSessionFiles(sourceId)
+            await cleanupSessionFiles(targetId)
+        }
+    })
+
+    it("does not create fork state when the source has no persisted state", async () => {
+        const sourceId = `session-state-fork-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const targetId = `session-state-fork-missing-target-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFiles(sourceId)
+        await cleanupSessionFiles(targetId)
+
+        try {
+            const result = await forkSessionState(
+                {
+                    sourceSessionId: sourceId,
+                    targetSessionId: targetId,
+                    messageIdMap: { m1: "n1" },
+                    toolIdsByMessageId: { m1: ["tool-1"] },
+                },
+                logger,
+            )
+
+            assert.equal(result.status, "missing")
+            assert.equal(existsSync(getSessionFilePath(targetId)), false)
+        } finally {
+            await cleanupSessionFiles(sourceId)
+            await cleanupSessionFiles(targetId)
         }
     })
 })

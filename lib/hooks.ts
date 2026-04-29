@@ -11,6 +11,7 @@ import { handleContextCommand } from "./commands/context"
 import { handleHelpCommand } from "./commands/help"
 import { handleManageCommand } from "./commands/manage"
 import { ensureSessionInitialized } from "./state/state"
+import { forkSessionState } from "./state/persistence"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -130,5 +131,38 @@ export function createCommandExecuteHandler(
             })
             throw new Error("__COMPRESS_HELP_HANDLED__")
         }
+    }
+}
+
+export function createSessionForkHandler(stateManager: SessionStateManager, logger: Logger) {
+    return async (input: {
+        sourceSessionID: string
+        targetSessionID: string
+        cutoffMessageID?: string
+        messageIDMap: Record<string, string>
+        toolIDsByMessageID: Record<string, string[]>
+        childSessionIDMap: Record<string, string>
+    }) => {
+        const result = await forkSessionState(
+            {
+                sourceSessionId: input.sourceSessionID,
+                targetSessionId: input.targetSessionID,
+                messageIdMap: input.messageIDMap,
+                toolIdsByMessageId: input.toolIDsByMessageID,
+            },
+            logger,
+        )
+
+        if (result.status === "migrated") {
+            stateManager.delete(input.targetSessionID)
+        }
+
+        logger.info("Handled session fork compression state", {
+            sourceSessionID: input.sourceSessionID,
+            targetSessionID: input.targetSessionID,
+            cutoffMessageID: input.cutoffMessageID,
+            childSessions: Object.keys(input.childSessionIDMap || {}).length,
+            result,
+        })
     }
 }

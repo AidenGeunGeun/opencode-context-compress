@@ -7,6 +7,7 @@ import { handleContextCommand } from "./commands/context";
 import { handleHelpCommand } from "./commands/help";
 import { handleManageCommand } from "./commands/manage";
 import { ensureSessionInitialized } from "./state/state";
+import { forkSessionState } from "./state/persistence";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -95,6 +96,26 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
             });
             throw new Error("__COMPRESS_HELP_HANDLED__");
         }
+    };
+}
+export function createSessionForkHandler(stateManager, logger) {
+    return async (input) => {
+        const result = await forkSessionState({
+            sourceSessionId: input.sourceSessionID,
+            targetSessionId: input.targetSessionID,
+            messageIdMap: input.messageIDMap,
+            toolIdsByMessageId: input.toolIDsByMessageID,
+        }, logger);
+        if (result.status === "migrated") {
+            stateManager.delete(input.targetSessionID);
+        }
+        logger.info("Handled session fork compression state", {
+            sourceSessionID: input.sourceSessionID,
+            targetSessionID: input.targetSessionID,
+            cutoffMessageID: input.cutoffMessageID,
+            childSessions: Object.keys(input.childSessionIDMap || {}).length,
+            result,
+        });
     };
 }
 //# sourceMappingURL=hooks.js.map

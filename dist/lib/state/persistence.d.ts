@@ -37,6 +37,29 @@ export interface AggregatedStats {
     totalMessages: number;
     sessionCount: number;
 }
+export interface ForkSessionStateInput {
+    sourceSessionId: string;
+    targetSessionId: string;
+    messageIdMap: Record<string, string>;
+    toolIdsByMessageId: Record<string, string[]>;
+    sessionName?: string;
+}
+export type ForkSessionStateResult = {
+    status: "missing";
+} | {
+    status: "error";
+} | {
+    status: "skipped";
+    reason: "empty-message-map" | "empty-migrated-state";
+} | {
+    status: "migrated";
+    summaries: number;
+    compressedMessages: number;
+    compressedTools: number;
+    droppedSummaries: number;
+    droppedMessages: number;
+};
+export declare function forkSessionState(input: ForkSessionStateInput, logger: Logger): Promise<ForkSessionStateResult>;
 export declare function loadAllSessionStats(logger: Logger): Promise<AggregatedStats>;
 export {};
 //# sourceMappingURL=persistence.d.ts.map
