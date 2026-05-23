@@ -1,5 +1,5 @@
-import { SessionState, WithParts } from "./state"
-import { isIgnoredUserMessage } from "./messages/utils"
+import { SessionState, WithParts } from "./state/index.js"
+import { isIgnoredUserMessage } from "./messages/utils.js"
 
 export const isMessageCompacted = (state: SessionState, msg: WithParts): boolean => {
     if (msg.info.time.created < state.lastCompaction) {

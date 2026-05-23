@@ -37,13 +37,13 @@
  *   belong with "Assistant" since reasoning IS assistant-generated content.
  */
 
-import type { Logger } from "../logger"
-import type { SessionState, WithParts } from "../state"
-import { sendIgnoredMessage } from "../ui/notification"
-import { formatTokenCount } from "../ui/utils"
-import { isMessageCompacted } from "../shared-utils"
-import { isIgnoredUserMessage } from "../messages/utils"
-import { countTokens, getCurrentParams } from "../token-utils"
+import type { Logger } from "../logger.js"
+import type { SessionState, WithParts } from "../state/index.js"
+import { sendIgnoredMessage } from "../ui/notification.js"
+import { formatTokenCount } from "../ui/utils.js"
+import { isMessageCompacted } from "../shared-utils.js"
+import { isIgnoredUserMessage } from "../messages/utils.js"
+import { countTokens, getCurrentParams } from "../token-utils.js"
 import type { AssistantMessage, TextPart, ToolPart } from "@opencode-ai/sdk/v2"
 
 export interface ContextCommandContext {

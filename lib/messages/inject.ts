@@ -1,6 +1,6 @@
-import type { SessionState, WithParts } from "../state"
-import type { Logger } from "../logger"
-import { buildContextMap } from "./context-map"
+import type { SessionState, WithParts } from "../state/index.js"
+import type { Logger } from "../logger.js"
+import { buildContextMap } from "./context-map.js"
 
 export const buildCompressContext = (
     state: SessionState,

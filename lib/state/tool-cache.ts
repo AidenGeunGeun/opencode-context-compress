@@ -1,8 +1,8 @@
-import type { SessionState, ToolStatus, WithParts } from "./index"
-import type { Logger } from "../logger"
-import { PluginConfig } from "../config"
-import { isMessageCompacted } from "../shared-utils"
-import { countToolTokens } from "../token-utils"
+import type { SessionState, ToolStatus, WithParts } from "./index.js"
+import type { Logger } from "../logger.js"
+import { PluginConfig } from "../config.js"
+import { isMessageCompacted } from "../shared-utils.js"
+import { countToolTokens } from "../token-utils.js"
 
 const MAX_TOOL_CACHE_SIZE = 1000
 

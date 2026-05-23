@@ -1,11 +1,11 @@
-import { tool } from "@opencode-ai/plugin"
+import { tool } from "@opencode-ai/plugin/tool"
 
-import { loadPrompt } from "../prompts"
-import { ensureSessionInitialized } from "../state"
-import { saveSessionState } from "../state/persistence"
-import { getCurrentParams } from "../token-utils"
-import { buildContextMap } from "../messages/context-map"
-import type { CompressToolContext } from "./types"
+import { loadPrompt } from "../prompts/index.js"
+import { ensureSessionInitialized } from "../state/index.js"
+import { saveSessionState } from "../state/persistence.js"
+import { getCurrentParams } from "../token-utils.js"
+import { buildContextMap } from "../messages/context-map.js"
+import type { CompressToolContext } from "./types.js"
 
 const COMPRESS_MAP_TOOL_DESCRIPTION = loadPrompt("compress-map-tool-spec")
 

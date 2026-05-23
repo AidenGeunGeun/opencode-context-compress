@@ -1,5 +1,5 @@
-import { ToolParameterEntry } from "../state"
-import { extractParameterKey } from "../messages/utils"
+import { ToolParameterEntry } from "../state/index.js"
+import { extractParameterKey } from "../messages/utils.js"
 
 export function formatStatsHeader(totalTokensSaved: number, compressTokenCounter: number): string {
     const totalTokensSavedStr = `~${formatTokenCount(totalTokensSaved + compressTokenCounter)}`

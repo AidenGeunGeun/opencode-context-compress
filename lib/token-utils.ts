@@ -1,8 +1,8 @@
-import { SessionState, WithParts } from "./state"
+import { SessionState, WithParts } from "./state/index.js"
 import { UserMessage } from "@opencode-ai/sdk/v2"
-import { Logger } from "./logger"
-import { getLastUserMessage, isMessageCompacted } from "./shared-utils"
-import { getCompletedToolOutputText } from "./tools/utils"
+import { Logger } from "./logger.js"
+import { getLastUserMessage, isMessageCompacted } from "./shared-utils.js"
+import { getCompletedToolOutputText } from "./tools/utils.js"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
 import { encodingForModel, type Tiktoken } from "js-tiktoken"
 

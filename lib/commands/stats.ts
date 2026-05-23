@@ -3,12 +3,12 @@
  * Shows compression statistics for the current session and all-time totals.
  */
 
-import type { Logger } from "../logger"
-import type { SessionState, WithParts } from "../state"
-import { sendIgnoredMessage } from "../ui/notification"
-import { formatTokenCount } from "../ui/utils"
-import { loadAllSessionStats, type AggregatedStats } from "../state/persistence"
-import { getCurrentParams } from "../token-utils"
+import type { Logger } from "../logger.js"
+import type { SessionState, WithParts } from "../state/index.js"
+import { sendIgnoredMessage } from "../ui/notification.js"
+import { formatTokenCount } from "../ui/utils.js"
+import { loadAllSessionStats, type AggregatedStats } from "../state/persistence.js"
+import { getCurrentParams } from "../token-utils.js"
 
 export interface StatsCommandContext {
     client: any

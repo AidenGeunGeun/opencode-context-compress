@@ -3,10 +3,10 @@
  * Shows available compression commands and their descriptions.
  */
 
-import type { Logger } from "../logger"
-import type { SessionState, WithParts } from "../state"
-import { sendIgnoredMessage } from "../ui/notification"
-import { getCurrentParams } from "../token-utils"
+import type { Logger } from "../logger.js"
+import type { SessionState, WithParts } from "../state/index.js"
+import { sendIgnoredMessage } from "../ui/notification.js"
+import { getCurrentParams } from "../token-utils.js"
 
 export interface HelpCommandContext {
     client: any

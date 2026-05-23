@@ -1,8 +1,8 @@
-import type { Logger } from "../logger"
-import type { SessionState, WithParts } from "../state"
-import { countTokens } from "../token-utils"
-import { transformMessagesForSearch } from "./compress-transform"
-import { extractMessageContent } from "../tools/utils"
+import type { Logger } from "../logger.js"
+import type { SessionState, WithParts } from "../state/index.js"
+import { countTokens } from "../token-utils.js"
+import { transformMessagesForSearch } from "./compress-transform.js"
+import { extractMessageContent } from "../tools/utils.js"
 
 const PREVIEW_MAX_CHARS = 90
 

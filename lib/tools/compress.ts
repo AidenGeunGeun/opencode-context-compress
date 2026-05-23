@@ -1,20 +1,20 @@
-import { tool } from "@opencode-ai/plugin"
-import type { WithParts, CompressSummary } from "../state"
-import type { CompressToolContext } from "./types"
-import { ensureSessionInitialized } from "../state"
-import { saveSessionState } from "../state/persistence"
-import { loadPrompt } from "../prompts"
-import { estimateTokensBatch, getCurrentParams } from "../token-utils"
+import { tool } from "@opencode-ai/plugin/tool"
+import type { WithParts, CompressSummary } from "../state/index.js"
+import type { CompressToolContext } from "./types.js"
+import { ensureSessionInitialized } from "../state/index.js"
+import { saveSessionState } from "../state/persistence.js"
+import { loadPrompt } from "../prompts/index.js"
+import { estimateTokensBatch, getCurrentParams } from "../token-utils.js"
 import {
     collectContentInRange,
     collectToolIdsInRange,
-} from "./utils"
-import { sendCompressNotification } from "../ui/notification"
+} from "./utils.js"
+import { sendCompressNotification } from "../ui/notification.js"
 import {
     buildContextMap,
     resolveContextMapRange,
     type ResolvedContextMapRange,
-} from "../messages/context-map"
+} from "../messages/context-map.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
 

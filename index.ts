@@ -1,10 +1,10 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { getConfig } from "./lib/config"
-import { Logger } from "./lib/logger"
-import { SessionStateManager } from "./lib/state"
-import { createCompressMapTool, createCompressTool } from "./lib/tools"
-import { createChatMessageTransformHandler, createCommandExecuteHandler, createSessionForkHandler } from "./lib/hooks"
-import { configureClientAuth, isSecureMode } from "./lib/auth"
+import { getConfig } from "./lib/config.js"
+import { Logger } from "./lib/logger.js"
+import { SessionStateManager } from "./lib/state/index.js"
+import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js"
+import { createChatMessageTransformHandler, createCommandExecuteHandler, createSessionForkHandler } from "./lib/hooks.js"
+import { configureClientAuth, isSecureMode } from "./lib/auth.js"
 
 const stateManager = new SessionStateManager()
 

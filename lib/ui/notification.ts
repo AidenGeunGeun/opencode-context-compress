@@ -1,7 +1,7 @@
-import type { Logger } from "../logger"
-import type { SessionState } from "../state"
-import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils"
-import type { PluginConfig } from "../config"
+import type { Logger } from "../logger.js"
+import type { SessionState } from "../state/index.js"
+import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js"
+import type { PluginConfig } from "../config.js"
 
 const TOAST_BODY_MAX_LINES = 12
 const TOAST_SUMMARY_MAX_CHARS = 600
