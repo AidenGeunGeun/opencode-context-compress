@@ -1,5 +1,5 @@
-import { getLastUserMessage, isMessageCompacted } from "./shared-utils";
-import { getCompletedToolOutputText } from "./tools/utils";
+import { getLastUserMessage, isMessageCompacted } from "./shared-utils.js";
+import { getCompletedToolOutputText } from "./tools/utils.js";
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
 import { encodingForModel } from "js-tiktoken";
 // Lazy-initialized tiktoken encoder (created on first non-Anthropic call)

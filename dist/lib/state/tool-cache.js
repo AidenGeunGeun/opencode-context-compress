@@ -1,5 +1,5 @@
-import { isMessageCompacted } from "../shared-utils";
-import { countToolTokens } from "../token-utils";
+import { isMessageCompacted } from "../shared-utils.js";
+import { countToolTokens } from "../token-utils.js";
 const MAX_TOOL_CACHE_SIZE = 1000;
 /**
  * Sync tool parameters from OpenCode's session.messages() API.

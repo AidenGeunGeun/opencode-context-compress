@@ -1,5 +1,5 @@
-import { isMessageCompacted, getLastUserMessage } from "../shared-utils";
-import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX } from "./utils";
+import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js";
+import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js";
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output removed to save context - information superseded or no longer needed]";
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
@@ -10,8 +10,64 @@ export const applyCompressTransforms = (state, logger, messages) => {
     stripToolInputs(state, messages);
     stripToolErrors(state, messages);
 };
+function isVisibleUserMessage(message) {
+    return message.info.role === "user" && !isIgnoredUserMessage(message);
+}
+export function buildManagementTurnSuppressionPlan(state, rawMessages) {
+    const suppressedMessageIds = new Set();
+    const retainedTextByMessageId = new Map();
+    if (!state.managementTurns?.length) {
+        return { suppressedMessageIds, retainedTextByMessageId };
+    }
+    const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]));
+    for (const turn of state.managementTurns) {
+        const triggerIndex = indexByMessageId.get(turn.triggerMessageId);
+        if (triggerIndex === undefined) {
+            continue;
+        }
+        let nextUserIndex = -1;
+        for (let i = triggerIndex + 1; i < rawMessages.length; i++) {
+            if (isVisibleUserMessage(rawMessages[i])) {
+                nextUserIndex = i;
+                break;
+            }
+        }
+        if (nextUserIndex === -1) {
+            continue;
+        }
+        const retainedText = typeof turn.retainedText === "string" && turn.retainedText.trim().length > 0
+            ? turn.retainedText
+            : undefined;
+        for (let i = triggerIndex; i < nextUserIndex; i++) {
+            const message = rawMessages[i];
+            if (i === triggerIndex && retainedText) {
+                retainedTextByMessageId.set(message.info.id, retainedText);
+                continue;
+            }
+            suppressedMessageIds.add(message.info.id);
+        }
+    }
+    return { suppressedMessageIds, retainedTextByMessageId };
+}
+function createRetainedUserMessage(message, retainedText) {
+    const parts = Array.isArray(message.parts) ? message.parts : [];
+    const textPart = parts.find((part) => part.type === "text");
+    const retainedPart = textPart
+        ? { ...textPart, text: retainedText }
+        : {
+            id: `prt_retained_${message.info.id}`,
+            sessionID: message.info.sessionID,
+            messageID: message.info.id,
+            type: "text",
+            text: retainedText,
+        };
+    return {
+        ...message,
+        parts: [retainedPart],
+    };
+}
 export const transformMessagesForSearch = (rawMessages, state, logger) => {
-    if (!state.compressed.messageIds?.size) {
+    if (!state.compressed.messageIds?.size && !state.managementTurns?.length) {
         return {
             transformed: [...rawMessages],
             syntheticMap: new Map(),
@@ -20,6 +76,7 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
     const transformed = [];
     const syntheticMap = new Map();
     const summariesByAnchorId = new Map(state.compressSummaries.map((summary) => [summary.anchorMessageId, summary]));
+    const managementSuppression = buildManagementTurnSuppressionPlan(state, rawMessages);
     for (let i = 0; i < rawMessages.length; i++) {
         const msg = rawMessages[i];
         const msgId = msg.info.id;
@@ -29,7 +86,7 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
             if (userMessage) {
                 const userInfo = userMessage.info;
                 const summaryContent = COMPRESS_SUMMARY_PREFIX + summary.summary;
-                const syntheticMessage = createSyntheticUserMessage(userMessage, summaryContent, userInfo.variant);
+                const syntheticMessage = createSyntheticUserMessage(userMessage, summaryContent, userInfo.variant, summary.anchorMessageId);
                 transformed.push(syntheticMessage);
                 syntheticMap.set(syntheticMessage.info.id, summary);
                 logger.info("Injected compress summary", {
@@ -42,6 +99,14 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
                     anchorMessageId: msgId,
                 });
             }
+        }
+        if (managementSuppression.suppressedMessageIds.has(msgId)) {
+            continue;
+        }
+        const retainedText = managementSuppression.retainedTextByMessageId.get(msgId);
+        if (retainedText && !state.compressed.messageIds.has(msgId)) {
+            transformed.push(createRetainedUserMessage(msg, retainedText));
+            continue;
         }
         if (state.compressed.messageIds.has(msgId)) {
             continue;

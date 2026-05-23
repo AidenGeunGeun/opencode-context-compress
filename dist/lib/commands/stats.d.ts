@@ -2,8 +2,8 @@
  * Compress stats command handler.
  * Shows compression statistics for the current session and all-time totals.
  */
-import type { Logger } from "../logger";
-import type { SessionState, WithParts } from "../state";
+import type { Logger } from "../logger.js";
+import type { SessionState, WithParts } from "../state/index.js";
 export interface StatsCommandContext {
     client: any;
     state: SessionState;

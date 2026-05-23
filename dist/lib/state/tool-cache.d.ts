@@ -1,6 +1,6 @@
-import type { SessionState, WithParts } from "./index";
-import type { Logger } from "../logger";
-import { PluginConfig } from "../config";
+import type { SessionState, WithParts } from "./index.js";
+import type { Logger } from "../logger.js";
+import { PluginConfig } from "../config.js";
 /**
  * Sync tool parameters from OpenCode's session.messages() API.
  */

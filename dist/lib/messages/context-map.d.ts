@@ -1,5 +1,5 @@
-import type { Logger } from "../logger";
-import type { SessionState, WithParts } from "../state";
+import type { Logger } from "../logger.js";
+import type { SessionState, WithParts } from "../state/index.js";
 export type ContextMapKey = number | string;
 export interface ContextMapEntry {
     key: ContextMapKey;

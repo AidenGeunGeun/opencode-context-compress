@@ -1,5 +1,5 @@
-import { SessionState, WithParts } from "./state";
-import { Logger } from "./logger";
+import { SessionState, WithParts } from "./state/index.js";
+import { Logger } from "./logger.js";
 export declare function isAnthropicProvider(providerId: string | undefined): boolean;
 export declare function getCurrentParams(state: SessionState, messages: WithParts[], logger: Logger): {
     providerId: string | undefined;

@@ -1,5 +1,5 @@
-import { loadSessionState } from "./persistence";
-import { isSubAgentSession, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils";
+import { loadSessionState } from "./persistence.js";
+import { isSubAgentSession, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
 function applyPersistedState(state, persisted) {
     if (!persisted || persisted.status !== "loaded") {
         return;
@@ -10,6 +10,7 @@ function applyPersistedState(state, persisted) {
         messageIds: new Set(persistedState.compressed.messageIds || []),
     };
     state.compressSummaries = persistedState.compressSummaries || [];
+    state.managementTurns = persistedState.managementTurns || [];
     state.stats = {
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
@@ -23,6 +24,7 @@ function clearPersistedCompressionState(state) {
         messageIds: new Set(),
     };
     state.compressSummaries = [];
+    state.managementTurns = [];
     state.stats = {
         compressTokenCounter: 0,
         totalCompressTokens: 0,
@@ -132,6 +134,7 @@ export function createSessionState() {
             messageIds: new Set(),
         },
         compressSummaries: [],
+        managementTurns: [],
         stats: {
             compressTokenCounter: 0,
             totalCompressTokens: 0,

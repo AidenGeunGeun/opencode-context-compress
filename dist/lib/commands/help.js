@@ -2,8 +2,8 @@
  * Compress help command handler.
  * Shows available compression commands and their descriptions.
  */
-import { sendIgnoredMessage } from "../ui/notification";
-import { getCurrentParams } from "../token-utils";
+import { sendIgnoredMessage } from "../ui/notification.js";
+import { getCurrentParams } from "../token-utils.js";
 function formatHelpMessage() {
     const lines = [];
     lines.push("╭───────────────────────────────────────────────────────────╮");

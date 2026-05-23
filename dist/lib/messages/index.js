@@ -1,4 +1,4 @@
-export { applyCompressTransforms } from "./compress-transform";
-export { buildCompressContext } from "./inject";
-export { buildContextMap, resolveContextMapRange } from "./context-map";
+export { applyCompressTransforms } from "./compress-transform.js";
+export { buildCompressContext } from "./inject.js";
+export { buildContextMap, resolveContextMapRange } from "./context-map.js";
 //# sourceMappingURL=index.js.map

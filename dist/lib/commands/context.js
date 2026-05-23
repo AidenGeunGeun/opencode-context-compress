@@ -36,11 +36,11 @@
  *   If reasoning tokens persist in context (model-dependent), they semantically
  *   belong with "Assistant" since reasoning IS assistant-generated content.
  */
-import { sendIgnoredMessage } from "../ui/notification";
-import { formatTokenCount } from "../ui/utils";
-import { isMessageCompacted } from "../shared-utils";
-import { isIgnoredUserMessage } from "../messages/utils";
-import { countTokens, getCurrentParams } from "../token-utils";
+import { sendIgnoredMessage } from "../ui/notification.js";
+import { formatTokenCount } from "../ui/utils.js";
+import { isMessageCompacted } from "../shared-utils.js";
+import { isIgnoredUserMessage } from "../messages/utils.js";
+import { countTokens, getCurrentParams } from "../token-utils.js";
 function analyzeTokens(state, messages, providerId) {
     const breakdown = {
         system: 0,

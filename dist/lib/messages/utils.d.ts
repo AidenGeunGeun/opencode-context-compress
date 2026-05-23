@@ -1,6 +1,6 @@
-import type { SessionState, WithParts } from "../state";
+import type { SessionState, WithParts } from "../state/index.js";
 export declare const COMPRESS_SUMMARY_PREFIX = "[Compressed conversation block]\n\n";
-export declare const createSyntheticUserMessage: (baseMessage: WithParts, content: string, variant?: string) => WithParts;
+export declare const createSyntheticUserMessage: (baseMessage: WithParts, content: string, variant?: string, stableSeed?: string) => WithParts;
 export declare const createSyntheticTextPart: (baseMessage: WithParts, content: string) => {
     id: string;
     sessionID: string;

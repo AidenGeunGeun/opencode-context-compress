@@ -2,8 +2,8 @@
  * Compress help command handler.
  * Shows available compression commands and their descriptions.
  */
-import type { Logger } from "../logger";
-import type { SessionState, WithParts } from "../state";
+import type { Logger } from "../logger.js";
+import type { SessionState, WithParts } from "../state/index.js";
 export interface HelpCommandContext {
     client: any;
     state: SessionState;

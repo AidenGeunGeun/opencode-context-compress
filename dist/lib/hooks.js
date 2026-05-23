@@ -1,13 +1,13 @@
-import { syncToolCache } from "./state/tool-cache";
-import { applyCompressTransforms } from "./messages";
-import { buildToolIdList } from "./messages/utils";
-import { checkSession } from "./state";
-import { handleStatsCommand } from "./commands/stats";
-import { handleContextCommand } from "./commands/context";
-import { handleHelpCommand } from "./commands/help";
-import { handleManageCommand } from "./commands/manage";
-import { ensureSessionInitialized } from "./state/state";
-import { forkSessionState } from "./state/persistence";
+import { syncToolCache } from "./state/tool-cache.js";
+import { applyCompressTransforms } from "./messages/index.js";
+import { buildToolIdList } from "./messages/utils.js";
+import { checkSession } from "./state/index.js";
+import { handleStatsCommand } from "./commands/stats.js";
+import { handleContextCommand } from "./commands/context.js";
+import { handleHelpCommand } from "./commands/help.js";
+import { handleManageCommand } from "./commands/manage.js";
+import { ensureSessionInitialized } from "./state/state.js";
+import { forkSessionState } from "./state/persistence.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -84,6 +84,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     logger,
                     sessionId: input.sessionID,
                     messages,
+                    arguments: input.arguments,
                 });
                 throw new Error("__COMPRESS_MANAGE_HANDLED__");
             }

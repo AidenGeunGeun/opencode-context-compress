@@ -2,10 +2,10 @@
  * Compress stats command handler.
  * Shows compression statistics for the current session and all-time totals.
  */
-import { sendIgnoredMessage } from "../ui/notification";
-import { formatTokenCount } from "../ui/utils";
-import { loadAllSessionStats } from "../state/persistence";
-import { getCurrentParams } from "../token-utils";
+import { sendIgnoredMessage } from "../ui/notification.js";
+import { formatTokenCount } from "../ui/utils.js";
+import { loadAllSessionStats } from "../state/persistence.js";
+import { getCurrentParams } from "../token-utils.js";
 function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime) {
     const lines = [];
     lines.push("╭───────────────────────────────────────────────────────────╮");

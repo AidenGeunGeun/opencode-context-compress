@@ -1,4 +1,4 @@
-import { isIgnoredUserMessage } from "./messages/utils";
+import { isIgnoredUserMessage } from "./messages/utils.js";
 export const isMessageCompacted = (state, msg) => {
     if (msg.info.time.created < state.lastCompaction) {
         return true;

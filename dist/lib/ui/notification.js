@@ -1,4 +1,4 @@
-import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils";
+import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js";
 const TOAST_BODY_MAX_LINES = 12;
 const TOAST_SUMMARY_MAX_CHARS = 600;
 function truncateToastBody(body, maxLines = TOAST_BODY_MAX_LINES) {

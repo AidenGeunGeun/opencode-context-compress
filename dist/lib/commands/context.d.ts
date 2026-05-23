@@ -36,8 +36,8 @@
  *   If reasoning tokens persist in context (model-dependent), they semantically
  *   belong with "Assistant" since reasoning IS assistant-generated content.
  */
-import type { Logger } from "../logger";
-import type { SessionState, WithParts } from "../state";
+import type { Logger } from "../logger.js";
+import type { SessionState, WithParts } from "../state/index.js";
 export interface ContextCommandContext {
     client: any;
     state: SessionState;

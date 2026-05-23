@@ -1,4 +1,4 @@
-import { isMessageCompacted } from "../shared-utils";
+import { isMessageCompacted } from "../shared-utils.js";
 export async function isSubAgentSession(client, sessionID) {
     try {
         const result = await client.session.get({ path: { id: sessionID } });
@@ -37,5 +37,6 @@ export function resetOnCompaction(state) {
     state.compressed.toolIds = new Set();
     state.compressed.messageIds = new Set();
     state.compressSummaries = [];
+    state.managementTurns = [];
 }
 //# sourceMappingURL=utils.js.map

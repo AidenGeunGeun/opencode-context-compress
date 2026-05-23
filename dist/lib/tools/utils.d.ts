@@ -1,4 +1,4 @@
-import type { WithParts } from "../state";
+import type { WithParts } from "../state/index.js";
 export declare function getCompletedToolOutputText(part: {
     tool?: unknown;
     callID?: unknown;

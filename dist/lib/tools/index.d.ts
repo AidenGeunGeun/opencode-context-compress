@@ -1,4 +1,4 @@
-export { CompressToolContext } from "./types";
-export { createCompressMapTool } from "./compress-map";
-export { createCompressTool } from "./compress";
+export { CompressToolContext } from "./types.js";
+export { createCompressMapTool } from "./compress-map.js";
+export { createCompressTool } from "./compress.js";
 //# sourceMappingURL=index.d.ts.map

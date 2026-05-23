@@ -1,7 +1,7 @@
 // Generated prompts (from .md files via scripts/generate-prompts.ts)
-import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated";
-import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated";
-import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated";
+import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated.js";
+import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js";
+import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated.js";
 function processConditionals(template, flags) {
     const tools = ["compress", "compress_map"];
     let result = template;

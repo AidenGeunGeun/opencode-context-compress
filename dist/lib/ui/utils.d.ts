@@ -1,4 +1,4 @@
-import { ToolParameterEntry } from "../state";
+import { ToolParameterEntry } from "../state/index.js";
 export declare function formatStatsHeader(totalTokensSaved: number, compressTokenCounter: number): string;
 export declare function formatTokenCount(tokens: number): string;
 export declare function truncate(str: string, maxLen?: number): string;

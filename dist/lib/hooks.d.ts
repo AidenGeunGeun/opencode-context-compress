@@ -1,7 +1,7 @@
-import type { WithParts } from "./state";
-import { SessionStateManager } from "./state";
-import type { Logger } from "./logger";
-import type { PluginConfig } from "./config";
+import type { WithParts } from "./state/index.js";
+import { SessionStateManager } from "./state/index.js";
+import type { Logger } from "./logger.js";
+import type { PluginConfig } from "./config.js";
 export declare function getLastUserSessionId(messages: WithParts[]): string | undefined;
 export declare function createChatMessageTransformHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig, workingDirectory?: string): (_input: {}, output: {
     messages: WithParts[];

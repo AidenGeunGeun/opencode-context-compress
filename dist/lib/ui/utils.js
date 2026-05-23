@@ -1,4 +1,4 @@
-import { extractParameterKey } from "../messages/utils";
+import { extractParameterKey } from "../messages/utils.js";
 export function formatStatsHeader(totalTokensSaved, compressTokenCounter) {
     const totalTokensSavedStr = `~${formatTokenCount(totalTokensSaved + compressTokenCounter)}`;
     return [`▣ Context Compress | ${totalTokensSavedStr} saved total`].join("\n");

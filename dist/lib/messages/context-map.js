@@ -1,6 +1,6 @@
-import { countTokens } from "../token-utils";
-import { transformMessagesForSearch } from "./compress-transform";
-import { extractMessageContent } from "../tools/utils";
+import { countTokens } from "../token-utils.js";
+import { transformMessagesForSearch } from "./compress-transform.js";
+import { extractMessageContent } from "../tools/utils.js";
 const PREVIEW_MAX_CHARS = 90;
 function dedupeMessageIds(ids) {
     const seen = new Set();

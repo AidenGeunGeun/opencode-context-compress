@@ -1,6 +1,6 @@
-import type { Logger } from "../logger";
-import type { SessionState, WithParts } from "../state";
-import type { PluginConfig } from "../config";
+import type { Logger } from "../logger.js";
+import type { SessionState, WithParts } from "../state/index.js";
+import type { PluginConfig } from "../config.js";
 export interface ManageCommandContext {
     client: any;
     state: SessionState;
@@ -8,6 +8,8 @@ export interface ManageCommandContext {
     logger: Logger;
     sessionId: string;
     messages: WithParts[];
+    arguments?: string;
 }
+export declare function extractManageCommandResidual(args: string | undefined): string | undefined;
 export declare function handleManageCommand(ctx: ManageCommandContext): Promise<void>;
 //# sourceMappingURL=manage.d.ts.map

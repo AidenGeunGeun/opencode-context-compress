@@ -1,11 +1,11 @@
-import { tool } from "@opencode-ai/plugin";
-import { ensureSessionInitialized } from "../state";
-import { saveSessionState } from "../state/persistence";
-import { loadPrompt } from "../prompts";
-import { estimateTokensBatch, getCurrentParams } from "../token-utils";
-import { collectContentInRange, collectToolIdsInRange, } from "./utils";
-import { sendCompressNotification } from "../ui/notification";
-import { buildContextMap, resolveContextMapRange, } from "../messages/context-map";
+import { tool } from "@opencode-ai/plugin/tool";
+import { ensureSessionInitialized } from "../state/index.js";
+import { saveSessionState } from "../state/persistence.js";
+import { loadPrompt } from "../prompts/index.js";
+import { estimateTokensBatch, getCurrentParams } from "../token-utils.js";
+import { collectContentInRange, collectToolIdsInRange, } from "./utils.js";
+import { sendCompressNotification } from "../ui/notification.js";
+import { buildContextMap, resolveContextMapRange, } from "../messages/context-map.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 export function removeSubsumedCompressSummaries(summaries, containedMessageIds) {
     const containedIds = new Set(containedMessageIds);

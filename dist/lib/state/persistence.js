@@ -74,12 +74,36 @@ function remapLegacyState(legacy) {
             messageIds: legacy.prune?.messageIds ?? [],
         },
         compressSummaries: legacy.compressSummaries ?? [],
+        managementTurns: [],
         stats: {
             compressTokenCounter: legacy.stats?.pruneTokenCounter ?? 0,
             totalCompressTokens: legacy.stats?.totalPruneTokens ?? 0,
         },
         lastUpdated: legacy.lastUpdated,
     };
+}
+function normalizeManagementTurns(turns) {
+    if (!Array.isArray(turns)) {
+        return [];
+    }
+    const normalized = [];
+    const seen = new Set();
+    for (const turn of turns) {
+        if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
+            continue;
+        }
+        if (seen.has(turn.triggerMessageId)) {
+            continue;
+        }
+        seen.add(turn.triggerMessageId);
+        normalized.push({
+            triggerMessageId: turn.triggerMessageId,
+            ...(typeof turn.retainedText === "string" && turn.retainedText.length > 0
+                ? { retainedText: turn.retainedText }
+                : {}),
+        });
+    }
+    return normalized;
 }
 export function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
     return summaries.map((summary) => {
@@ -118,7 +142,7 @@ export function backfillCompressSummaryMessageIds(summaries, messages, compresse
 export async function saveSessionState(sessionState, logger, sessionName) {
     try {
         if (!sessionState.sessionId) {
-            return;
+            return false;
         }
         await ensureStorageDir();
         const lastUpdated = new Date().toISOString();
@@ -129,6 +153,7 @@ export async function saveSessionState(sessionState, logger, sessionName) {
                 messageIds: [...sessionState.compressed.messageIds],
             },
             compressSummaries: sessionState.compressSummaries,
+            managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,
             lastUpdated,
         };
@@ -141,12 +166,14 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             sessionId: sessionState.sessionId,
             totalTokensSaved: state.stats.totalCompressTokens,
         });
+        return true;
     }
     catch (error) {
         logger.error("Failed to save session state", {
             sessionId: sessionState.sessionId,
             error: error?.message,
         });
+        return false;
     }
 }
 export async function loadSessionState(sessionId, logger, messages) {
@@ -231,6 +258,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         sessionName: state.sessionName,
         compressed: state.compressed,
         compressSummaries,
+        managementTurns: normalizeManagementTurns(state.managementTurns),
         stats: state.stats,
         lastUpdated: state.lastUpdated,
     };
@@ -284,6 +312,12 @@ export async function forkSessionState(input, logger) {
     const migratedSourceMessageIds = new Set();
     const migratedSourceToolIds = new Set();
     const compressSummaries = [];
+    const managementTurns = (sourceState.managementTurns || [])
+        .filter((turn) => messageIdMap.has(turn.triggerMessageId))
+        .map((turn) => ({
+        triggerMessageId: messageIdMap.get(turn.triggerMessageId),
+        ...(turn.retainedText ? { retainedText: turn.retainedText } : {}),
+    }));
     let droppedSummaries = 0;
     for (const summary of sourceState.compressSummaries || []) {
         const sourceMessageIds = [...new Set(summary.messageIds || [])];
@@ -312,7 +346,10 @@ export async function forkSessionState(input, logger) {
         .filter((messageId) => sourceCompressedMessageIds.has(messageId))
         .map((messageId) => messageIdMap.get(messageId));
     const compressedToolIds = [...migratedSourceToolIds];
-    if (compressedMessageIds.length === 0 && compressedToolIds.length === 0 && compressSummaries.length === 0) {
+    if (compressedMessageIds.length === 0 &&
+        compressedToolIds.length === 0 &&
+        compressSummaries.length === 0 &&
+        managementTurns.length === 0) {
         return { status: "skipped", reason: "empty-migrated-state" };
     }
     await ensureStorageDir();
@@ -324,6 +361,7 @@ export async function forkSessionState(input, logger) {
             messageIds: compressedMessageIds,
         },
         compressSummaries,
+        managementTurns,
         stats: scaleStats(sourceState.stats, sourceState.compressed.messageIds.length, compressedMessageIds.length),
         lastUpdated,
     };
@@ -335,6 +373,7 @@ export async function forkSessionState(input, logger) {
         summaries: compressSummaries.length,
         compressedMessages: compressedMessageIds.length,
         compressedTools: compressedToolIds.length,
+        managementTurns: managementTurns.length,
         droppedSummaries,
         droppedMessages,
     });
@@ -343,6 +382,7 @@ export async function forkSessionState(input, logger) {
         summaries: compressSummaries.length,
         compressedMessages: compressedMessageIds.length,
         compressedTools: compressedToolIds.length,
+        managementTurns: managementTurns.length,
         droppedSummaries,
         droppedMessages,
     };

@@ -1,3 +1,3 @@
-export { createCompressMapTool } from "./compress-map";
-export { createCompressTool } from "./compress";
+export { createCompressMapTool } from "./compress-map.js";
+export { createCompressTool } from "./compress.js";
 //# sourceMappingURL=index.js.map

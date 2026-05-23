@@ -1,7 +1,7 @@
-import { tool } from "@opencode-ai/plugin";
-import type { WithParts, CompressSummary } from "../state";
-import type { CompressToolContext } from "./types";
-import { type ResolvedContextMapRange } from "../messages/context-map";
+import { tool } from "@opencode-ai/plugin/tool";
+import type { WithParts, CompressSummary } from "../state/index.js";
+import type { CompressToolContext } from "./types.js";
+import { type ResolvedContextMapRange } from "../messages/context-map.js";
 export declare function removeSubsumedCompressSummaries(summaries: CompressSummary[], containedMessageIds: string[]): CompressSummary[];
 export declare function composeSummaryWithPreservedBlocks(preservedSummaries: string[], newSummary: string): string;
 export interface CompressionRangeMetrics {

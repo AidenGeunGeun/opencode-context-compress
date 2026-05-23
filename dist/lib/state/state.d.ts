@@ -1,5 +1,5 @@
-import type { SessionState, WithParts } from "./types";
-import type { Logger } from "../logger";
+import type { SessionState, WithParts } from "./types.js";
+import type { Logger } from "../logger.js";
 export interface SessionStateSyncResult {
     source: "memory" | "disk-load" | "disk-reload" | "disk-cleared";
     lastUpdated: string | null;
