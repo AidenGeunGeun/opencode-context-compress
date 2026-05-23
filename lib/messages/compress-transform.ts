@@ -1,7 +1,7 @@
-import type { SessionState, WithParts } from "../state"
-import type { Logger } from "../logger"
-import { isMessageCompacted, getLastUserMessage } from "../shared-utils"
-import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX } from "./utils"
+import type { SessionState, WithParts } from "../state/index.js"
+import type { Logger } from "../logger.js"
+import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js"
+import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js"
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT =
@@ -26,12 +26,88 @@ export interface TransformMessagesForSearchResult {
     syntheticMap: Map<string, SessionState["compressSummaries"][number]>
 }
 
+interface ManagementTurnSuppressionPlan {
+    suppressedMessageIds: Set<string>
+    retainedTextByMessageId: Map<string, string>
+}
+
+function isVisibleUserMessage(message: WithParts): boolean {
+    return message.info.role === "user" && !isIgnoredUserMessage(message)
+}
+
+export function buildManagementTurnSuppressionPlan(
+    state: SessionState,
+    rawMessages: WithParts[],
+): ManagementTurnSuppressionPlan {
+    const suppressedMessageIds = new Set<string>()
+    const retainedTextByMessageId = new Map<string, string>()
+
+    if (!state.managementTurns?.length) {
+        return { suppressedMessageIds, retainedTextByMessageId }
+    }
+
+    const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
+
+    for (const turn of state.managementTurns) {
+        const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
+        if (triggerIndex === undefined) {
+            continue
+        }
+
+        let nextUserIndex = -1
+        for (let i = triggerIndex + 1; i < rawMessages.length; i++) {
+            if (isVisibleUserMessage(rawMessages[i])) {
+                nextUserIndex = i
+                break
+            }
+        }
+
+        if (nextUserIndex === -1) {
+            continue
+        }
+
+        const retainedText =
+            typeof turn.retainedText === "string" && turn.retainedText.trim().length > 0
+                ? turn.retainedText
+                : undefined
+        for (let i = triggerIndex; i < nextUserIndex; i++) {
+            const message = rawMessages[i]
+            if (i === triggerIndex && retainedText) {
+                retainedTextByMessageId.set(message.info.id, retainedText)
+                continue
+            }
+            suppressedMessageIds.add(message.info.id)
+        }
+    }
+
+    return { suppressedMessageIds, retainedTextByMessageId }
+}
+
+function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {
+    const parts = Array.isArray(message.parts) ? message.parts : []
+    const textPart = parts.find((part) => part.type === "text") as any
+    const retainedPart = textPart
+        ? { ...textPart, text: retainedText }
+        : {
+              id: `prt_retained_${message.info.id}`,
+              sessionID: message.info.sessionID,
+              messageID: message.info.id,
+              type: "text" as const,
+              text: retainedText,
+          }
+
+    return {
+        ...message,
+        parts: [retainedPart],
+    }
+}
+
 export const transformMessagesForSearch = (
     rawMessages: WithParts[],
     state: SessionState,
     logger: Logger,
 ): TransformMessagesForSearchResult => {
-    if (!state.compressed.messageIds?.size) {
+    if (!state.compressed.messageIds?.size && !state.managementTurns?.length) {
         return {
             transformed: [...rawMessages],
             syntheticMap: new Map(),
@@ -41,6 +117,7 @@ export const transformMessagesForSearch = (
     const transformed: WithParts[] = []
     const syntheticMap = new Map<string, SessionState["compressSummaries"][number]>()
     const summariesByAnchorId = new Map(state.compressSummaries.map((summary) => [summary.anchorMessageId, summary]))
+    const managementSuppression = buildManagementTurnSuppressionPlan(state, rawMessages)
 
     for (let i = 0; i < rawMessages.length; i++) {
         const msg = rawMessages[i]
@@ -57,6 +134,7 @@ export const transformMessagesForSearch = (
                     userMessage,
                     summaryContent,
                     userInfo.variant,
+                    summary.anchorMessageId,
                 )
                 transformed.push(syntheticMessage)
                 syntheticMap.set(syntheticMessage.info.id, summary)
@@ -70,6 +148,16 @@ export const transformMessagesForSearch = (
                     anchorMessageId: msgId,
                 })
             }
+        }
+
+        if (managementSuppression.suppressedMessageIds.has(msgId)) {
+            continue
+        }
+
+        const retainedText = managementSuppression.retainedTextByMessageId.get(msgId)
+        if (retainedText && !state.compressed.messageIds.has(msgId)) {
+            transformed.push(createRetainedUserMessage(msg, retainedText))
+            continue
         }
 
         if (state.compressed.messageIds.has(msgId)) {

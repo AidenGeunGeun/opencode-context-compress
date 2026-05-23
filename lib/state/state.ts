@@ -1,12 +1,12 @@
-import type { SessionState, ToolParameterEntry, WithParts } from "./types"
-import type { Logger } from "../logger"
-import { loadSessionState } from "./persistence"
+import type { SessionState, ToolParameterEntry, WithParts } from "./types.js"
+import type { Logger } from "../logger.js"
+import { loadSessionState } from "./persistence.js"
 import {
     isSubAgentSession,
     findLastCompactionTimestamp,
     countTurns,
     resetOnCompaction,
-} from "./utils"
+} from "./utils.js"
 
 export interface SessionStateSyncResult {
     source: "memory" | "disk-load" | "disk-reload" | "disk-cleared"
@@ -25,6 +25,7 @@ function applyPersistedState(state: SessionState, persisted: Awaited<ReturnType<
         messageIds: new Set(persistedState.compressed.messageIds || []),
     }
     state.compressSummaries = persistedState.compressSummaries || []
+    state.managementTurns = persistedState.managementTurns || []
     state.stats = {
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
@@ -39,6 +40,7 @@ function clearPersistedCompressionState(state: SessionState): void {
         messageIds: new Set<string>(),
     }
     state.compressSummaries = []
+    state.managementTurns = []
     state.stats = {
         compressTokenCounter: 0,
         totalCompressTokens: 0,
@@ -174,6 +176,7 @@ export function createSessionState(): SessionState {
             messageIds: new Set<string>(),
         },
         compressSummaries: [],
+        managementTurns: [],
         stats: {
             compressTokenCounter: 0,
             totalCompressTokens: 0,

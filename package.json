@@ -17,7 +17,7 @@
         "build": "npm run clean && tsc",
         "dev": "opencode plugin dev",
         "typecheck": "npm run generate:prompts && tsc --noEmit",
-        "test": "node --import tsx --test tests/*.test.ts",
+        "test": "npm run build && node --import tsx --test tests/*.test.ts",
         "compress": "tsx scripts/print.ts"
     },
     "author": "Aiden Kim",

@@ -1,11 +1,15 @@
 import { ulid } from "ulid"
-import { isMessageCompacted } from "../shared-utils"
-import type { SessionState, WithParts } from "../state"
+import { createHash } from "crypto"
+import { isMessageCompacted } from "../shared-utils.js"
+import type { SessionState, WithParts } from "../state/index.js"
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 
 export const COMPRESS_SUMMARY_PREFIX = "[Compressed conversation block]\n\n"
 
 const generateUniqueId = (prefix: string): string => `${prefix}_${ulid()}`
+
+const generateStableId = (prefix: string, seed: string): string =>
+    `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`
 
 const isGeminiModel = (modelID: string): boolean => {
     const lowerModelID = modelID.toLowerCase()
@@ -16,11 +20,12 @@ export const createSyntheticUserMessage = (
     baseMessage: WithParts,
     content: string,
     variant?: string,
+    stableSeed?: string,
 ): WithParts => {
     const userInfo = baseMessage.info as UserMessage
-    const now = Date.now()
-    const messageId = generateUniqueId("msg")
-    const partId = generateUniqueId("prt")
+    const now = stableSeed ? userInfo.time.created : Date.now()
+    const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg")
+    const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt")
 
     return {
         info: {

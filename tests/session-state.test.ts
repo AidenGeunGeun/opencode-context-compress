@@ -256,6 +256,12 @@ describe("saveSessionState", () => {
                     summary: "persisted summary",
                 },
             ]
+            state.managementTurns = [
+                {
+                    triggerMessageId: "m4",
+                    retainedText: "unrelated user text",
+                },
+            ]
             state.stats = {
                 compressTokenCounter: 8,
                 totalCompressTokens: 34,
@@ -283,12 +289,63 @@ describe("saveSessionState", () => {
                     summary: "persisted summary",
                 },
             ])
+            assert.deepEqual(loadResult.state.managementTurns, [
+                {
+                    triggerMessageId: "m4",
+                    retainedText: "unrelated user text",
+                },
+            ])
             assert.deepEqual(loadResult.state.stats, {
                 compressTokenCounter: 8,
                 totalCompressTokens: 34,
             })
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
+        } finally {
+            await cleanupSessionFiles(sessionId)
+        }
+    })
+
+    it("loads legacy management turn IDs without crashing", async () => {
+        const sessionId = `session-state-legacy-manage-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFiles(sessionId)
+
+        try {
+            await mkdir(storageDir, { recursive: true })
+            await writeFile(
+                getSessionFilePath(sessionId),
+                JSON.stringify(
+                    {
+                        compressed: {
+                            toolIds: [],
+                            messageIds: [],
+                        },
+                        compressSummaries: [],
+                        managementTurns: [
+                            {
+                                triggerMessageId: "msg_compress_manage_legacy",
+                            },
+                        ],
+                        stats: {
+                            compressTokenCounter: 0,
+                            totalCompressTokens: 0,
+                        },
+                        lastUpdated: new Date().toISOString(),
+                    },
+                    null,
+                    2,
+                ),
+                "utf-8",
+            )
+
+            const loadResult = await loadSessionState(sessionId, logger)
+            assert.equal(loadResult.status, "loaded")
+            if (loadResult.status !== "loaded") throw new Error(`Expected loaded, got ${loadResult.status}`)
+            assert.deepEqual(loadResult.state.managementTurns, [
+                {
+                    triggerMessageId: "msg_compress_manage_legacy",
+                },
+            ])
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -321,6 +378,12 @@ describe("forkSessionState", () => {
                     topic: "dropped",
                 },
             ]
+            source.managementTurns = [
+                {
+                    triggerMessageId: "m1",
+                    retainedText: "forked retained text",
+                },
+            ]
             source.stats = {
                 compressTokenCounter: 20,
                 totalCompressTokens: 100,
@@ -351,6 +414,7 @@ describe("forkSessionState", () => {
             assert.equal(result.summaries, 1)
             assert.equal(result.droppedSummaries, 1)
             assert.equal(result.droppedMessages, 2)
+            assert.equal(result.managementTurns, 1)
 
             const target = await loadSessionState(targetId, logger)
             assert.equal(target.status, "loaded")
@@ -363,6 +427,12 @@ describe("forkSessionState", () => {
                     messageIds: ["n2", "n3"],
                     summary: "kept block",
                     topic: "kept",
+                },
+            ])
+            assert.deepEqual(target.state.managementTurns, [
+                {
+                    triggerMessageId: "n1",
+                    retainedText: "forked retained text",
                 },
             ])
             assert.deepEqual(target.state.stats, {

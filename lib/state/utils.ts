@@ -1,5 +1,5 @@
-import type { SessionState, WithParts } from "./types"
-import { isMessageCompacted } from "../shared-utils"
+import type { SessionState, WithParts } from "./types.js"
+import { isMessageCompacted } from "../shared-utils.js"
 
 export async function isSubAgentSession(client: any, sessionID: string): Promise<boolean> {
     try {
@@ -41,4 +41,5 @@ export function resetOnCompaction(state: SessionState): void {
     state.compressed.toolIds = new Set<string>()
     state.compressed.messageIds = new Set<string>()
     state.compressSummaries = []
+    state.managementTurns = []
 }

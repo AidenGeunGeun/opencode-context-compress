@@ -66,6 +66,7 @@ const createState = (
         messageIds: new Set<string>(compressedMessageIds),
     },
     compressSummaries: summaries,
+    managementTurns: [],
     stats: {
         compressTokenCounter: 0,
         totalCompressTokens: 0,

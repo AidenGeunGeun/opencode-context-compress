@@ -34,7 +34,8 @@ lib/tools/compress.ts
   summaries, and returns a refreshed map snapshot for iterative use.
 
 lib/messages/compress-transform.ts
-  Applies persisted compression decisions to outgoing message context.
+  Applies persisted compression decisions and completed management-turn cleanup
+  to outgoing message context.
 
 lib/messages/context-map.ts
   Builds <compress-context-map> with numeric entries and compressed [bN] blocks,
@@ -58,7 +59,8 @@ lib/state/*
 2. Hooks sync tool cache, apply compression transforms, and route `/compress` commands.
 3. `/compress manage` injects a short reminder; the agent fetches the map with `compress_map`.
 4. `compress` handles one range per call, then returns an updated map for same-turn iteration.
-5. Only raw messages inside a compressed range feed `state.compressed.toolIds`; management-tool outputs are not auto-stripped.
+5. During that management turn, maps and tool results stay visible so the agent can work.
+6. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal inter-compress conversation, and the active tail remain model-visible.
 
 ## Prompt Generation
 
@@ -72,7 +74,7 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
-Each session state tracks: `compressedMsgIds`, `compressedToolIds`, `summaries`, `totalTokensSaved`, `isSubAgent`, `initialized`. State is persisted to disk at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`. The `initialized` flag prevents redundant disk loads.
+Each session state tracks: `compressedMsgIds`, `compressedToolIds`, `summaries`, completed management-turn cleanup markers, `totalTokensSaved`, `isSubAgent`, `initialized`. State is persisted to disk at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`. The `initialized` flag prevents redundant disk loads.
 
 Subagent sessions are detected via `isSubAgent` and skip compression entirely (early return in transform hook).
 
@@ -103,6 +105,7 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 ## Notes
 
 - `compress_map` and `compress` are for explicit user-requested context management only; there is no runtime manage-window guard beyond that prompt contract.
+- Completed `/compress manage` turns leave no model-visible machinery marker; future prompts show blocks, inter-compress normal conversation, and active tail.
 - Context maps no longer emit a hardcoded `Active: [...]` footer. The PM agent decides what counts as the active tail.
 - `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.
 - Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.

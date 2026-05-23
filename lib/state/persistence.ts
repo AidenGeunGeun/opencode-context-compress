@@ -8,8 +8,8 @@ import * as fs from "fs/promises"
 import { existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import type { SessionState, SessionStats, CompressSummary, WithParts } from "./types"
-import type { Logger } from "../logger"
+import type { SessionState, SessionStats, CompressSummary, ManagementTurn, WithParts } from "./types.js"
+import type { Logger } from "../logger.js"
 
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
 export interface PersistedCompressed {
@@ -21,6 +21,7 @@ export interface PersistedSessionState {
     sessionName?: string
     compressed: PersistedCompressed
     compressSummaries: CompressSummary[]
+    managementTurns: ManagementTurn[]
     stats: SessionStats
     lastUpdated: string
 }
@@ -34,6 +35,7 @@ interface PersistedSessionStateFile {
     sessionName?: string
     compressed: PersistedCompressed
     compressSummaries: MaybeBackfilledCompressSummary[]
+    managementTurns?: MaybePersistedManagementTurn[]
     stats: SessionStats
     lastUpdated: string
 }
@@ -137,6 +139,7 @@ function remapLegacyState(legacy: LegacyPersistedSessionStateFile): PersistedSes
             messageIds: legacy.prune?.messageIds ?? [],
         },
         compressSummaries: legacy.compressSummaries ?? [],
+        managementTurns: [],
         stats: {
             compressTokenCounter: legacy.stats?.pruneTokenCounter ?? 0,
             totalCompressTokens: legacy.stats?.totalPruneTokens ?? 0,
@@ -147,6 +150,33 @@ function remapLegacyState(legacy: LegacyPersistedSessionStateFile): PersistedSes
 
 type MaybeBackfilledCompressSummary = Omit<CompressSummary, "messageIds"> & {
     messageIds?: string[]
+}
+
+type MaybePersistedManagementTurn = Partial<ManagementTurn>
+
+function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefined): ManagementTurn[] {
+    if (!Array.isArray(turns)) {
+        return []
+    }
+
+    const normalized: ManagementTurn[] = []
+    const seen = new Set<string>()
+    for (const turn of turns) {
+        if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
+            continue
+        }
+        if (seen.has(turn.triggerMessageId)) {
+            continue
+        }
+        seen.add(turn.triggerMessageId)
+        normalized.push({
+            triggerMessageId: turn.triggerMessageId,
+            ...(typeof turn.retainedText === "string" && turn.retainedText.length > 0
+                ? { retainedText: turn.retainedText }
+                : {}),
+        })
+    }
+    return normalized
 }
 
 export function backfillCompressSummaryMessageIds(
@@ -196,10 +226,10 @@ export async function saveSessionState(
     sessionState: SessionState,
     logger: Logger,
     sessionName?: string,
-): Promise<void> {
+): Promise<boolean> {
     try {
         if (!sessionState.sessionId) {
-            return
+            return false
         }
 
         await ensureStorageDir()
@@ -212,6 +242,7 @@ export async function saveSessionState(
                 messageIds: [...sessionState.compressed.messageIds],
             },
             compressSummaries: sessionState.compressSummaries,
+            managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,
             lastUpdated,
         }
@@ -226,11 +257,13 @@ export async function saveSessionState(
             sessionId: sessionState.sessionId,
             totalTokensSaved: state.stats.totalCompressTokens,
         })
+        return true
     } catch (error: any) {
         logger.error("Failed to save session state", {
             sessionId: sessionState.sessionId,
             error: error?.message,
         })
+        return false
     }
 }
 
@@ -335,6 +368,7 @@ export async function loadSessionState(
         sessionName: state.sessionName,
         compressed: state.compressed,
         compressSummaries,
+        managementTurns: normalizeManagementTurns(state.managementTurns),
         stats: state.stats,
         lastUpdated: state.lastUpdated,
     }
@@ -383,6 +417,7 @@ export type ForkSessionStateResult =
           summaries: number
           compressedMessages: number
           compressedTools: number
+          managementTurns: number
           droppedSummaries: number
           droppedMessages: number
       }
@@ -423,6 +458,12 @@ export async function forkSessionState(
     const migratedSourceMessageIds = new Set<string>()
     const migratedSourceToolIds = new Set<string>()
     const compressSummaries: CompressSummary[] = []
+    const managementTurns = (sourceState.managementTurns || [])
+        .filter((turn) => messageIdMap.has(turn.triggerMessageId))
+        .map((turn) => ({
+            triggerMessageId: messageIdMap.get(turn.triggerMessageId)!,
+            ...(turn.retainedText ? { retainedText: turn.retainedText } : {}),
+        }))
     let droppedSummaries = 0
 
     for (const summary of sourceState.compressSummaries || []) {
@@ -458,7 +499,12 @@ export async function forkSessionState(
 
     const compressedToolIds = [...migratedSourceToolIds]
 
-    if (compressedMessageIds.length === 0 && compressedToolIds.length === 0 && compressSummaries.length === 0) {
+    if (
+        compressedMessageIds.length === 0 &&
+        compressedToolIds.length === 0 &&
+        compressSummaries.length === 0 &&
+        managementTurns.length === 0
+    ) {
         return { status: "skipped", reason: "empty-migrated-state" }
     }
 
@@ -471,6 +517,7 @@ export async function forkSessionState(
             messageIds: compressedMessageIds,
         },
         compressSummaries,
+        managementTurns,
         stats: scaleStats(sourceState.stats, sourceState.compressed.messageIds.length, compressedMessageIds.length),
         lastUpdated,
     }
@@ -484,6 +531,7 @@ export async function forkSessionState(
         summaries: compressSummaries.length,
         compressedMessages: compressedMessageIds.length,
         compressedTools: compressedToolIds.length,
+        managementTurns: managementTurns.length,
         droppedSummaries,
         droppedMessages,
     })
@@ -493,6 +541,7 @@ export async function forkSessionState(
         summaries: compressSummaries.length,
         compressedMessages: compressedMessageIds.length,
         compressedTools: compressedToolIds.length,
+        managementTurns: managementTurns.length,
         droppedSummaries,
         droppedMessages,
     }

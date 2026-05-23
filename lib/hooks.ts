@@ -1,17 +1,17 @@
-import type { WithParts } from "./state"
-import { SessionStateManager } from "./state"
-import type { Logger } from "./logger"
-import type { PluginConfig } from "./config"
-import { syncToolCache } from "./state/tool-cache"
-import { applyCompressTransforms } from "./messages"
-import { buildToolIdList } from "./messages/utils"
-import { checkSession } from "./state"
-import { handleStatsCommand } from "./commands/stats"
-import { handleContextCommand } from "./commands/context"
-import { handleHelpCommand } from "./commands/help"
-import { handleManageCommand } from "./commands/manage"
-import { ensureSessionInitialized } from "./state/state"
-import { forkSessionState } from "./state/persistence"
+import type { WithParts } from "./state/index.js"
+import { SessionStateManager } from "./state/index.js"
+import type { Logger } from "./logger.js"
+import type { PluginConfig } from "./config.js"
+import { syncToolCache } from "./state/tool-cache.js"
+import { applyCompressTransforms } from "./messages/index.js"
+import { buildToolIdList } from "./messages/utils.js"
+import { checkSession } from "./state/index.js"
+import { handleStatsCommand } from "./commands/stats.js"
+import { handleContextCommand } from "./commands/context.js"
+import { handleHelpCommand } from "./commands/help.js"
+import { handleManageCommand } from "./commands/manage.js"
+import { ensureSessionInitialized } from "./state/state.js"
+import { forkSessionState } from "./state/persistence.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -118,6 +118,7 @@ export function createCommandExecuteHandler(
                     logger,
                     sessionId: input.sessionID,
                     messages,
+                    arguments: input.arguments,
                 })
                 throw new Error("__COMPRESS_MANAGE_HANDLED__")
             }

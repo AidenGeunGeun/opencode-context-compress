@@ -20,6 +20,7 @@ It helps the model fold completed conversation phases into durable technical sum
 - No automatic nudges or per-turn injections.
 - Compression runs only when you trigger `/compress manage`.
 - During `/compress manage`, the agent can use `compress_map` and `compress` (subject to permissions).
+- After that management turn completes, its trigger, tool calls, tool outputs, map snapshots, and assistant chatter are hidden from future model prompts.
 
 ## Commands
 
@@ -39,6 +40,8 @@ When `/compress manage` runs, the plugin opens a single model-visible management
 3. Read the refreshed map returned by `compress` and continue iterating in the same turn if needed.
 
 The manual boundary stays absolute: outside a user-triggered `/compress manage` turn, the plugin does not prompt for compression or open any background workflow.
+
+While the management turn is running, the agent can see its own maps and tool results. On later turns, the model-visible context contains only compressed `[bN]` blocks, normal conversation between compression runs, and the active tail. The cleanup leaves no marker or placeholder behind.
 
 ## Context Map
 
@@ -155,9 +158,10 @@ Stored fields include:
 - compressed tool IDs
 - compressed message IDs
 - compression summaries
+- completed management-turn cleanup markers
 - per-session compression stats
 
-Management-turn outputs from `compress_map` and `compress` are left alone. They stay in conversation history like normal tool outputs unless you later compress a range that covers them.
+The raw conversation history still exists in OpenCode storage, but completed `/compress manage` machinery is suppressed from future model prompts. Restarting the session reloads the saved cleanup markers, so old management turns do not reappear in the model-visible stream.
 
 ## Development
 

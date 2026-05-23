@@ -28,6 +28,11 @@ export interface CompressSummary {
     topic?: string
 }
 
+export interface ManagementTurn {
+    triggerMessageId: string
+    retainedText?: string
+}
+
 export interface Compressed {
     toolIds: Set<string>
     messageIds: Set<string>
@@ -41,6 +46,7 @@ export interface SessionState {
     persistedLastUpdated: string | null
     compressed: Compressed
     compressSummaries: CompressSummary[]
+    managementTurns: ManagementTurn[]
     stats: SessionStats
     toolParameters: Map<string, ToolParameterEntry>
     toolIdList: string[]
