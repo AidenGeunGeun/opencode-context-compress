@@ -25,6 +25,7 @@ const plugin = (async (ctx) => {
             logger.debug("Cached variant from chat.message hook", { variant: input.variant });
         },
         "command.execute.before": createCommandExecuteHandler(ctx.client, stateManager, logger, config),
+        // OCO extension hook; ignored safely on upstream OpenCode without session.fork support.
         "session.fork": createSessionForkHandler(stateManager, logger),
         tool: {
             ...(config.tools.compress_map.permission !== "deny" && {

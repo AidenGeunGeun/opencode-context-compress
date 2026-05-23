@@ -2,6 +2,7 @@ import type { Logger } from "../logger.js"
 import type { SessionState } from "../state/index.js"
 import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js"
 import type { PluginConfig } from "../config.js"
+import { promptSession, showToast } from "../sdk/client.js"
 
 const TOAST_BODY_MAX_LINES = 12
 const TOAST_SUMMARY_MAX_CHARS = 600
@@ -122,15 +123,15 @@ export async function sendCompressNotification(
         toastMessage =
             config.notification === "minimal" ? toastMessage : truncateToastBody(toastMessage)
 
-        await client.tui.showToast({
-            body: {
-                title: "Compress Notification",
-                message: toastMessage,
-                variant: "info",
-                duration: 5000,
-            },
+        const shown = await showToast(client, {
+            title: "Compress Notification",
+            message: toastMessage,
+            variant: "info",
+            duration: 5000,
         })
-        return true
+        if (shown) {
+            return true
+        }
     }
 
     await sendIgnoredMessage(client, sessionId, message, params, logger)
@@ -155,23 +156,19 @@ export async function sendIgnoredMessage(
             : undefined
 
     try {
-        await client.session.prompt({
-            path: {
-                id: sessionID,
-            },
-            body: {
-                noReply: true,
-                agent: agent,
-                model: model,
-                variant: variant,
-                parts: [
-                    {
-                        type: "text",
-                        text: text,
-                        ignored: true,
-                    },
-                ],
-            },
+        await promptSession(client, {
+            sessionId: sessionID,
+            noReply: true,
+            agent,
+            model,
+            variant,
+            parts: [
+                {
+                    type: "text",
+                    text: text,
+                    ignored: true,
+                },
+            ],
         })
     } catch (error: any) {
         logger.error("Failed to send notification", { error: error.message })

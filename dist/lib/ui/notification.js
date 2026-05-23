@@ -1,4 +1,5 @@
 import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js";
+import { promptSession, showToast } from "../sdk/client.js";
 const TOAST_BODY_MAX_LINES = 12;
 const TOAST_SUMMARY_MAX_CHARS = 600;
 function truncateToastBody(body, maxLines = TOAST_BODY_MAX_LINES) {
@@ -65,15 +66,15 @@ export async function sendCompressNotification(client, logger, config, state, se
         }
         toastMessage =
             config.notification === "minimal" ? toastMessage : truncateToastBody(toastMessage);
-        await client.tui.showToast({
-            body: {
-                title: "Compress Notification",
-                message: toastMessage,
-                variant: "info",
-                duration: 5000,
-            },
+        const shown = await showToast(client, {
+            title: "Compress Notification",
+            message: toastMessage,
+            variant: "info",
+            duration: 5000,
         });
-        return true;
+        if (shown) {
+            return true;
+        }
     }
     await sendIgnoredMessage(client, sessionId, message, params, logger);
     return true;
@@ -88,23 +89,19 @@ export async function sendIgnoredMessage(client, sessionID, text, params, logger
         }
         : undefined;
     try {
-        await client.session.prompt({
-            path: {
-                id: sessionID,
-            },
-            body: {
-                noReply: true,
-                agent: agent,
-                model: model,
-                variant: variant,
-                parts: [
-                    {
-                        type: "text",
-                        text: text,
-                        ignored: true,
-                    },
-                ],
-            },
+        await promptSession(client, {
+            sessionId: sessionID,
+            noReply: true,
+            agent,
+            model,
+            variant,
+            parts: [
+                {
+                    type: "text",
+                    text: text,
+                    ignored: true,
+                },
+            ],
         });
     }
     catch (error) {

@@ -1,11 +1,12 @@
 import { tool } from "@opencode-ai/plugin/tool"
 
 import { loadPrompt } from "../prompts/index.js"
-import { ensureSessionInitialized } from "../state/index.js"
+import { ensureSessionInitialized, type WithParts } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
 import { getCurrentParams } from "../token-utils.js"
 import { buildContextMap } from "../messages/context-map.js"
 import type { CompressToolContext } from "./types.js"
+import { listSessionMessages } from "../sdk/client.js"
 
 const COMPRESS_MAP_TOOL_DESCRIPTION = loadPrompt("compress-map-tool-spec")
 
@@ -25,10 +26,7 @@ export function createCompressMapTool(ctx: CompressToolContext): ReturnType<type
                 metadata: {},
             })
 
-            const messagesResponse = await client.session.messages({
-                path: { id: sessionId },
-            })
-            const rawMessages = messagesResponse.data || messagesResponse
+            const rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
 
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
 

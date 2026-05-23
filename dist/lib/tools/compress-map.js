@@ -4,6 +4,7 @@ import { ensureSessionInitialized } from "../state/index.js";
 import { saveSessionState } from "../state/persistence.js";
 import { getCurrentParams } from "../token-utils.js";
 import { buildContextMap } from "../messages/context-map.js";
+import { listSessionMessages } from "../sdk/client.js";
 const COMPRESS_MAP_TOOL_DESCRIPTION = loadPrompt("compress-map-tool-spec");
 export function createCompressMapTool(ctx) {
     return tool({
@@ -19,10 +20,7 @@ export function createCompressMapTool(ctx) {
                 always: ["*"],
                 metadata: {},
             });
-            const messagesResponse = await client.session.messages({
-                path: { id: sessionId },
-            });
-            const rawMessages = messagesResponse.data || messagesResponse;
+            const rawMessages = (await listSessionMessages(client, sessionId));
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages);
             const currentParams = getCurrentParams(state, rawMessages, logger);
             const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId);

@@ -10,8 +10,10 @@ import { handleStatsCommand } from "./commands/stats.js"
 import { handleContextCommand } from "./commands/context.js"
 import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
+import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { ensureSessionInitialized } from "./state/state.js"
 import { forkSessionState } from "./state/persistence.js"
+import { listSessionMessages } from "./sdk/client.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -70,7 +72,7 @@ export function createCommandExecuteHandler(
 ) {
     return async (
         input: { command: string; sessionID: string; arguments: string },
-        _output: { parts: any[] },
+        output: CommandExecuteOutput,
     ) => {
         if (!config.commands.enabled) {
             return
@@ -78,10 +80,7 @@ export function createCommandExecuteHandler(
 
         if (input.command === "compress") {
             const state = stateManager.get(input.sessionID)
-            const messagesResponse = await client.session.messages({
-                path: { id: input.sessionID },
-            })
-            const messages = (messagesResponse.data || messagesResponse) as WithParts[]
+            const messages = (await listSessionMessages(client, input.sessionID)) as WithParts[]
 
             await ensureSessionInitialized(client, state, input.sessionID, logger, messages)
 
@@ -96,7 +95,8 @@ export function createCommandExecuteHandler(
                     sessionId: input.sessionID,
                     messages,
                 })
-                throw new Error("__COMPRESS_CONTEXT_HANDLED__")
+                suppressDefaultCommandExecution(output, "__COMPRESS_CONTEXT_HANDLED__")
+                return
             }
 
             if (subcommand === "stats") {
@@ -107,7 +107,8 @@ export function createCommandExecuteHandler(
                     sessionId: input.sessionID,
                     messages,
                 })
-                throw new Error("__COMPRESS_STATS_HANDLED__")
+                suppressDefaultCommandExecution(output, "__COMPRESS_STATS_HANDLED__")
+                return
             }
 
             if (subcommand === "manage") {
@@ -120,7 +121,8 @@ export function createCommandExecuteHandler(
                     messages,
                     arguments: input.arguments,
                 })
-                throw new Error("__COMPRESS_MANAGE_HANDLED__")
+                suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__")
+                return
             }
 
             await handleHelpCommand({
@@ -130,7 +132,7 @@ export function createCommandExecuteHandler(
                 sessionId: input.sessionID,
                 messages,
             })
-            throw new Error("__COMPRESS_HELP_HANDLED__")
+            suppressDefaultCommandExecution(output, "__COMPRESS_HELP_HANDLED__")
         }
     }
 }

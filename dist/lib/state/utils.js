@@ -1,8 +1,9 @@
+import { getSession } from "../sdk/client.js";
 import { isMessageCompacted } from "../shared-utils.js";
 export async function isSubAgentSession(client, sessionID) {
     try {
-        const result = await client.session.get({ path: { id: sessionID } });
-        return !!result.data?.parentID;
+        const result = await getSession(client, sessionID);
+        return !!result?.parentID;
     }
     catch (error) {
         return false;
