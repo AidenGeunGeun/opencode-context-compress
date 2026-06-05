@@ -12,12 +12,4 @@ export declare function createCommandExecuteHandler(client: any, stateManager: S
     sessionID: string;
     arguments: string;
 }, output: CommandExecuteOutput) => Promise<void>;
-export declare function createSessionForkHandler(stateManager: SessionStateManager, logger: Logger): (input: {
-    sourceSessionID: string;
-    targetSessionID: string;
-    cutoffMessageID?: string;
-    messageIDMap: Record<string, string>;
-    toolIDsByMessageID: Record<string, string[]>;
-    childSessionIDMap: Record<string, string>;
-}) => Promise<void>;
 //# sourceMappingURL=hooks.d.ts.map

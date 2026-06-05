@@ -80,33 +80,17 @@ Subagent sessions are detected via `isSubAgent` and skip compression entirely (e
 
 ## Command Suppression
 
-Plugin commands must prevent OpenCode from also running the default slash-command prompt. The handler uses a dual strategy:
-
-1. **Current OpenCode (upstream PR #18559+)**: set `output.cancelled = true` and clear `output.parts` in place.
-2. **Stock OpenCode 1.15.x (default)**: clear `output.parts` in place, set `output.cancelled = true`, and **do not throw** (throwing becomes a desktop 500).
-3. **OCO / legacy hosts**: set `OPENCODE_CONTEXT_COMPRESS_LEGACY_SUPPRESSION=1` to restore sentinel throws that OCO maps to HTTP 204.
-
-```typescript
-suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__")
-```
-
-**Sentinels**: `__COMPRESS_CONTEXT_HANDLED__`, `__COMPRESS_STATS_HANDLED__`, `__COMPRESS_MANAGE_HANDLED__`, `__COMPRESS_HELP_HANDLED__`.
-
-On OCO, `SessionPrompt.command()` catches `_HANDLED__` sentinels and returns HTTP 204. On upstream OpenCode versions with `command.execute.before` cancellation support, no throw is needed.
+Plugin commands must prevent OpenCode from also running the default slash-command prompt. `suppressDefaultCommandExecution(output)` clears `output.parts` in place — mutating the same array `SessionPrompt.command()` holds, since reassignment would not clear it — and sets `output.cancelled = true`. This covers current OpenCode (PR #18559+ honors `cancelled`) and stock OpenCode 1.15.x (clearing parts in place suppresses the default prompt without throwing; throwing would surface as a desktop 500).
 
 ## SDK Client Adapter
 
 OpenCode plugin hosts still expose the v1 nested SDK client (`{ path, body }`). External callers and tests may use the v2 flat client (`{ sessionID, parts, ... }`). All session/TUI calls go through `lib/sdk/client.ts`, which detects the client generation via runtime `_client` vs `client` markers.
 
-## Session Fork Support
+## Publishing & Loading
 
-`session.fork` is an OCO extension hook. Current upstream OpenCode plugin types do not expose it, so forked sessions on stock upstream OpenCode do **not** receive migrated compression state. This is safe degradation: the fork shows the uncompressed transcript instead of silently corrupting IDs. OCO and future upstream builds that add the hook keep full fork migration via `forkSessionState()`.
+The repo's git origin is `github.com/AidenGeunGeun/opencode-context-compress`. The canonical local install loads the built plugin directly from this checkout via a `file://` path in `~/.config/opencode/opencode.jsonc`, e.g. `"file:///Users/<you>/projects/opencode-context-compress/dist/index.js"`.
 
-## Publishing & GitHub Loading
-
-The plugin is published at `github:AidenGeunGeun/opencode-context-compress`. Config reference: `"github:AidenGeunGeun/opencode-context-compress"` in `~/.config/opencode/opencode.jsonc`.
-
-**`dist/` is committed to the repo** — required because `bun add github:...` does NOT run lifecycle scripts (prepare/postinstall) for git dependencies. Always run `npm run build` and commit `dist/` before pushing.
+**`dist/` is committed to the repo** — so a prebuilt plugin is always present (and `bun add github:...` would not run lifecycle scripts for git deps anyway). Always run `npm run build` and commit `dist/` before pushing.
 
 For local development, switch the config to `file:///path/to/dist/index.js` for fast iteration without pushing to GitHub.
 

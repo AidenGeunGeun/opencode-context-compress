@@ -8,7 +8,6 @@ import { handleHelpCommand } from "./commands/help.js";
 import { handleManageCommand } from "./commands/manage.js";
 import { suppressDefaultCommandExecution } from "./commands/suppress.js";
 import { ensureSessionInitialized } from "./state/state.js";
-import { forkSessionState } from "./state/persistence.js";
 import { listSessionMessages } from "./sdk/client.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -63,7 +62,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     sessionId: input.sessionID,
                     messages,
                 });
-                suppressDefaultCommandExecution(output, "__COMPRESS_CONTEXT_HANDLED__");
+                suppressDefaultCommandExecution(output);
                 return;
             }
             if (subcommand === "stats") {
@@ -74,7 +73,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     sessionId: input.sessionID,
                     messages,
                 });
-                suppressDefaultCommandExecution(output, "__COMPRESS_STATS_HANDLED__");
+                suppressDefaultCommandExecution(output);
                 return;
             }
             if (subcommand === "manage") {
@@ -87,7 +86,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     messages,
                     arguments: input.arguments,
                 });
-                suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__");
+                suppressDefaultCommandExecution(output);
                 return;
             }
             await handleHelpCommand({
@@ -97,28 +96,8 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 sessionId: input.sessionID,
                 messages,
             });
-            suppressDefaultCommandExecution(output, "__COMPRESS_HELP_HANDLED__");
+            suppressDefaultCommandExecution(output);
         }
-    };
-}
-export function createSessionForkHandler(stateManager, logger) {
-    return async (input) => {
-        const result = await forkSessionState({
-            sourceSessionId: input.sourceSessionID,
-            targetSessionId: input.targetSessionID,
-            messageIdMap: input.messageIDMap,
-            toolIdsByMessageId: input.toolIDsByMessageID,
-        }, logger);
-        if (result.status === "migrated") {
-            stateManager.delete(input.targetSessionID);
-        }
-        logger.info("Handled session fork compression state", {
-            sourceSessionID: input.sourceSessionID,
-            targetSessionID: input.targetSessionID,
-            cutoffMessageID: input.cutoffMessageID,
-            childSessions: Object.keys(input.childSessionIDMap || {}).length,
-            result,
-        });
     };
 }
 //# sourceMappingURL=hooks.js.map

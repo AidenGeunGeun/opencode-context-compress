@@ -3,7 +3,7 @@ import { getConfig } from "./lib/config.js"
 import { Logger } from "./lib/logger.js"
 import { SessionStateManager } from "./lib/state/index.js"
 import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js"
-import { createChatMessageTransformHandler, createCommandExecuteHandler, createSessionForkHandler } from "./lib/hooks.js"
+import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks.js"
 import { configureClientAuth, isSecureMode } from "./lib/auth.js"
 
 const stateManager = new SessionStateManager()
@@ -53,8 +53,6 @@ const plugin: Plugin = (async (ctx) => {
             logger,
             config,
         ),
-        // OCO extension hook; ignored safely on upstream OpenCode without session.fork support.
-        "session.fork": createSessionForkHandler(stateManager, logger),
         tool: {
             ...(config.tools.compress_map.permission !== "deny" && {
                 compress_map: createCompressMapTool({

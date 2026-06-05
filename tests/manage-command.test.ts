@@ -149,7 +149,7 @@ describe("handleManageCommand", () => {
         }
     })
 
-    it("uses the OCO-assigned prompt ID that preserves live-render ordering", async () => {
+    it("uses the assigned prompt ID that preserves live-render ordering", async () => {
         const sessionId = `session-manage-render-order-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()

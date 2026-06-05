@@ -70,7 +70,6 @@ function assertHookContract(hooks: Hooks) {
     assert.equal(typeof hooks["experimental.chat.messages.transform"], "function")
     assert.equal(typeof hooks["chat.message"], "function")
     assert.equal(typeof hooks["command.execute.before"], "function")
-    assert.equal(typeof hooks["session.fork"], "function")
     assert.equal(typeof hooks.config, "function")
 
     assert.equal(typeof hooks.tool, "object")
@@ -161,13 +160,6 @@ describe("built Node ESM package", () => {
                 { command: "unrelated", sessionID: "contract-session", arguments: "" },
                 { parts: [] },
             )
-            await hooks["session.fork"]?.({
-                sourceSessionID: "missing-source",
-                targetSessionID: "target-session",
-                messageIDMap: {},
-                toolIDsByMessageID: {},
-                childSessionIDMap: {},
-            })
         })
     })
 })

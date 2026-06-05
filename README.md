@@ -74,7 +74,6 @@ Then add it to your config:
 | Platform | Global | Project-level |
 | --- | --- | --- |
 | OpenCode | `~/.config/opencode/opencode.jsonc` | `.opencode/opencode.jsonc` |
-| [OpenCodeOrchestra](https://github.com/AidenGeunGeun/OpenCodeOrchestra) | `~/.config/oco/oco.jsonc` | `oco.jsonc` or `.oco/oco.jsonc` |
 
 ```jsonc
 {

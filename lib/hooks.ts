@@ -12,7 +12,6 @@ import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { ensureSessionInitialized } from "./state/state.js"
-import { forkSessionState } from "./state/persistence.js"
 import { listSessionMessages } from "./sdk/client.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
@@ -95,7 +94,7 @@ export function createCommandExecuteHandler(
                     sessionId: input.sessionID,
                     messages,
                 })
-                suppressDefaultCommandExecution(output, "__COMPRESS_CONTEXT_HANDLED__")
+                suppressDefaultCommandExecution(output)
                 return
             }
 
@@ -107,7 +106,7 @@ export function createCommandExecuteHandler(
                     sessionId: input.sessionID,
                     messages,
                 })
-                suppressDefaultCommandExecution(output, "__COMPRESS_STATS_HANDLED__")
+                suppressDefaultCommandExecution(output)
                 return
             }
 
@@ -121,7 +120,7 @@ export function createCommandExecuteHandler(
                     messages,
                     arguments: input.arguments,
                 })
-                suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__")
+                suppressDefaultCommandExecution(output)
                 return
             }
 
@@ -132,40 +131,7 @@ export function createCommandExecuteHandler(
                 sessionId: input.sessionID,
                 messages,
             })
-            suppressDefaultCommandExecution(output, "__COMPRESS_HELP_HANDLED__")
+            suppressDefaultCommandExecution(output)
         }
-    }
-}
-
-export function createSessionForkHandler(stateManager: SessionStateManager, logger: Logger) {
-    return async (input: {
-        sourceSessionID: string
-        targetSessionID: string
-        cutoffMessageID?: string
-        messageIDMap: Record<string, string>
-        toolIDsByMessageID: Record<string, string[]>
-        childSessionIDMap: Record<string, string>
-    }) => {
-        const result = await forkSessionState(
-            {
-                sourceSessionId: input.sourceSessionID,
-                targetSessionId: input.targetSessionID,
-                messageIdMap: input.messageIDMap,
-                toolIdsByMessageId: input.toolIDsByMessageID,
-            },
-            logger,
-        )
-
-        if (result.status === "migrated") {
-            stateManager.delete(input.targetSessionID)
-        }
-
-        logger.info("Handled session fork compression state", {
-            sourceSessionID: input.sourceSessionID,
-            targetSessionID: input.targetSessionID,
-            cutoffMessageID: input.cutoffMessageID,
-            childSessions: Object.keys(input.childSessionIDMap || {}).length,
-            result,
-        })
     }
 }
