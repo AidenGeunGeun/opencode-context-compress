@@ -12,9 +12,9 @@ import { COMPRESS_MAP } from "../lib/prompts/_codegen/compress-map.generated.ts"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const COMPRESS_GUIDANCE = "CONTEXT MANAGEMENT REQUESTED"
-const DENSITY_GUIDANCE = "Older or less-relevant completed work should be terse."
+const APPEND_ONLY_GUIDANCE = "One new block this turn"
 const COMPRESS_MAP_GUIDANCE = "Use `compress_map` to read the current context map."
-const COMPRESS_SINGLE_RANGE_GUIDANCE = "One range per call; if more completed work needs compression, call `compress` again using the returned map."
+const COMPRESS_SINGLE_BLOCK_GUIDANCE = "Use `compress` once to fold the completed working context into a single new block."
 
 describe("renderSystemPrompt", () => {
     it("includes compress section when flag is true", () => {
@@ -22,7 +22,7 @@ describe("renderSystemPrompt", () => {
 
         assert.match(output, /system-reminder/)
         assert.equal(output.includes(COMPRESS_GUIDANCE), true)
-        assert.equal(output.includes(DENSITY_GUIDANCE), true)
+        assert.equal(output.includes(APPEND_ONLY_GUIDANCE), true)
         assert.equal(output.includes(COMPRESS_MAP_GUIDANCE), true)
         assert.match(output, /\/compress manage/)
         assert.doesNotMatch(output, /<compress-context-map>/)
@@ -69,7 +69,7 @@ describe("loadPrompt", () => {
 
         assert.equal(typeof output, "string")
         assert.ok(output.length > 0)
-        assert.match(output, /One range per call/)
+        assert.match(output, /One new block per turn/)
         assert.doesNotMatch(output, /`ranges` is an array/)
     })
 
@@ -104,11 +104,13 @@ describe("loadPrompt", () => {
         assert.equal(COMPRESS_MAP, compressMapSource)
     })
 
-    it("system guidance reflects iterative single-range compression", () => {
+    it("system guidance reflects single-block append-only compression", () => {
         const output = renderSystemPrompt({ compress: true, compress_map: true })
 
-        assert.equal(output.includes(COMPRESS_SINGLE_RANGE_GUIDANCE), true)
+        assert.equal(output.includes(COMPRESS_SINGLE_BLOCK_GUIDANCE), true)
         assert.doesNotMatch(output, /single call constraint/i)
         assert.doesNotMatch(output, /submit all ranges/i)
+        assert.doesNotMatch(output, /2 blocks, 3 max/i)
+        assert.doesNotMatch(output, /fold the newest/i)
     })
 })

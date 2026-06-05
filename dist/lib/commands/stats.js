@@ -8,22 +8,18 @@ import { loadAllSessionStats } from "../state/persistence.js";
 import { getCurrentParams } from "../token-utils.js";
 function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime) {
     const lines = [];
-    lines.push("╭───────────────────────────────────────────────────────────╮");
-    lines.push("│                 Compress Statistics                       │");
-    lines.push("╰───────────────────────────────────────────────────────────╯");
+    lines.push("**Compress statistics**");
     lines.push("");
-    lines.push("Session:");
-    lines.push("─".repeat(60));
-    lines.push(`  Tokens saved:    ~${formatTokenCount(sessionTokens)}`);
-    lines.push(`  Tools compressed: ${sessionTools}`);
-    lines.push(`  Messages compressed: ${sessionMessages}`);
+    lines.push("**Session**");
+    lines.push(`- Tokens saved: ~${formatTokenCount(sessionTokens)}`);
+    lines.push(`- Tools compressed: ${sessionTools}`);
+    lines.push(`- Messages compressed: ${sessionMessages}`);
     lines.push("");
-    lines.push("All-time:");
-    lines.push("─".repeat(60));
-    lines.push(`  Tokens saved:    ~${formatTokenCount(allTime.totalTokens)}`);
-    lines.push(`  Tools compressed: ${allTime.totalTools}`);
-    lines.push(`  Messages compressed: ${allTime.totalMessages}`);
-    lines.push(`  Sessions:         ${allTime.sessionCount}`);
+    lines.push("**All-time**");
+    lines.push(`- Tokens saved: ~${formatTokenCount(allTime.totalTokens)}`);
+    lines.push(`- Tools compressed: ${allTime.totalTools}`);
+    lines.push(`- Messages compressed: ${allTime.totalMessages}`);
+    lines.push(`- Sessions: ${allTime.sessionCount}`);
     return lines.join("\n");
 }
 export async function handleStatsCommand(ctx) {

@@ -19,15 +19,12 @@ export interface HelpCommandContext {
 function formatHelpMessage(): string {
     const lines: string[] = []
 
-    lines.push("╭───────────────────────────────────────────────────────────╮")
-    lines.push("│                   Compress Commands                       │")
-    lines.push("╰───────────────────────────────────────────────────────────╯")
+    lines.push("**Compress commands**")
     lines.push("")
-    lines.push("  /compress context   Show token usage breakdown for current session")
-    lines.push("  /compress stats     Show context compression statistics")
-    lines.push("  /compress manage    Instruct the agent to manage context now")
-    lines.push("  /compress help      Show this command list")
-    lines.push("")
+    lines.push("- `/compress context` — Show token usage breakdown for current session")
+    lines.push("- `/compress stats` — Show context compression statistics")
+    lines.push("- `/compress manage` — Instruct the agent to manage context now")
+    lines.push("- `/compress help` — Show this command list")
 
     return lines.join("\n")
 }

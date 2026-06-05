@@ -1,28 +1,23 @@
 // AUTO-GENERATED FILE - DO NOT EDIT
 // Generated from compress.md by scripts/generate-prompts.ts
 // To modify, edit compress.md and run `npm run generate:prompts`
-export const COMPRESS = `Use this tool during a user-initiated \`/compress manage\` turn to replace completed conversation ranges with stored summaries.
+export const COMPRESS = `Use this tool during a user-initiated \`/compress manage\` turn to fold the completed working context into a single stored summary block.
 
-One range per call.
+One new block per turn. Append it as the newest \`[bN]\`; never touch existing blocks.
 
 Args:
-\`from\`: Start entry from the latest \`<compress-context-map>\` or returned map snapshot. Accepts numeric indexes, grouped numeric labels like \`"2-4"\`, or block ids like \`"b1"\`.
+\`from\`: Start entry from the latest \`<compress-context-map>\` or returned map snapshot. Use a numeric index or a grouped numeric label like \`"2-4"\`.
 \`to\`: End entry from the latest \`<compress-context-map>\` or returned map snapshot. Inclusive.
-\`summary\`: Replacement summary for the NEW material in that selected span.
-\`topic\`: Short display label for the resulting block.
+\`summary\`: The summary that replaces the selected span. Capture the WHY plus any load-bearing details — decisions, constraints, gotchas, working commands, key paths — and drop only noise. Detail is cheap; when in doubt, keep more.
+\`topic\`: Short display label for the new block.
 
-- A range covers whole map entries from \`from\` through \`to\`.
-- Existing \`[bN]\` blocks in the range are already preserved — write \`summary\` only for what you're adding or condensing now.
-- Stack new topical blocks; reuse an existing \`[bN]\` only when it's outdated or needs to merge with adjacent same-topic work.
-- Don't merge unrelated phases just because they're nearby.
-- Turn budget: 2 blocks, 3 max.
-- No \`[bN]\` blocks yet → compress completed conversation into 1-2 new blocks.
-- \`[bN]\` blocks exist → leave older ones alone, fold the newest narrow blocks into one, then compress the rest into 1-2 new blocks.
-- Older or less-relevant completed work should be terse.
-- Recent completed work should keep more fidelity.
-- Leave the active tail alone.
-- Each call invalidates cache from that point — use as few calls as possible.
-- After each call, use the fresh \`<compress-context-map>\` returned by the tool for the next decision.
+- The range covers only new, uncompressed entries — the completed work that piled up since the last block (or, on the first compression, all completed conversation before the active tail). Compress the oldest uncompressed content first.
+- Produce exactly ONE new block this turn. Don't split the range across multiple calls.
+- By default, never include or rewrite an existing \`[bN]\` block — older blocks stay immutable and keep their cache warm.
+- Exception — ONLY when the user explicitly asks you to consolidate/compress older blocks: you may select a contiguous run of existing \`[bN]\` blocks and condense them into one. This deliberately invalidates cache from that point, so never do it on a normal turn.
+- Leave the active tail alone — the work you're still in the middle of.
+- Why append-only by default: each older block stays byte-identical across turns, so its cached tokens survive. Reaching back to rewrite a block invalidates everything after that point.
+- After the call, use the fresh \`<compress-context-map>\` returned by the tool to confirm the result.
 - Do not use outside explicit user-requested context management.
 `;
 //# sourceMappingURL=compress.generated.js.map

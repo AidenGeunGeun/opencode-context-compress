@@ -4,6 +4,6 @@ The result is a compact `<compress-context-map>` snapshot with numeric entries, 
 
 Use it at the start of context management or any time you want a fresh snapshot. After a `compress` call, prefer the refreshed map returned by that tool as the next source of truth. The map does not mark an active tail for you; decide what to leave uncompressed from the conversation itself.
 
-Follow the same sparse-block protocol for the turn: aim for 2 blocks total, 3 max.
+This turn: by default, produce exactly one new block from the completed working context, appended as the newest `[bN]`, and leave existing `[bN]` blocks untouched. Only reselect existing `[bN]` blocks if the user explicitly asked you to consolidate older blocks.
 
 Do not use this tool outside explicit user-requested context management.
