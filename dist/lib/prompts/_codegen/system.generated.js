@@ -5,7 +5,7 @@ export const SYSTEM = `<system-reminder>
 CONTEXT MANAGEMENT REQUESTED
 The user explicitly ran \`/compress manage\`.
 
-This rewrites what the model sees on every future turn until the session reloads. Folded content won't be visible in detail again — be deliberate.
+This rewrites what the model sees on every future turn. While the compress plugin is active, the folded original is never shown in detail again (the fold persists across reloads) — be deliberate.
 
 <compress_map>Use \`compress_map\` to read the current context map.</compress_map>
 <compress>Use \`compress\` once to fold the completed working context into a single new block.</compress>
