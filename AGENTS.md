@@ -82,8 +82,9 @@ Subagent sessions are detected via `isSubAgent` and skip compression entirely (e
 
 Plugin commands must prevent OpenCode from also running the default slash-command prompt. The handler uses a dual strategy:
 
-1. **Current OpenCode (upstream PR #18559+)**: set `output.cancelled = true` and clear `output.parts`.
-2. **OCO / legacy hosts**: throw a sentinel error ending in `_HANDLED__`.
+1. **Current OpenCode (upstream PR #18559+)**: set `output.cancelled = true` and clear `output.parts` in place.
+2. **Stock OpenCode 1.15.x (default)**: clear `output.parts` in place, set `output.cancelled = true`, and **do not throw** (throwing becomes a desktop 500).
+3. **OCO / legacy hosts**: set `OPENCODE_CONTEXT_COMPRESS_LEGACY_SUPPRESSION=1` to restore sentinel throws that OCO maps to HTTP 204.
 
 ```typescript
 suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__")
