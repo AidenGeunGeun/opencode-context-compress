@@ -6,8 +6,10 @@ import { handleStatsCommand } from "./commands/stats.js";
 import { handleContextCommand } from "./commands/context.js";
 import { handleHelpCommand } from "./commands/help.js";
 import { handleManageCommand } from "./commands/manage.js";
+import { suppressDefaultCommandExecution } from "./commands/suppress.js";
 import { ensureSessionInitialized } from "./state/state.js";
 import { forkSessionState } from "./state/persistence.js";
+import { listSessionMessages } from "./sdk/client.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -43,16 +45,13 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
     };
 }
 export function createCommandExecuteHandler(client, stateManager, logger, config) {
-    return async (input, _output) => {
+    return async (input, output) => {
         if (!config.commands.enabled) {
             return;
         }
         if (input.command === "compress") {
             const state = stateManager.get(input.sessionID);
-            const messagesResponse = await client.session.messages({
-                path: { id: input.sessionID },
-            });
-            const messages = (messagesResponse.data || messagesResponse);
+            const messages = (await listSessionMessages(client, input.sessionID));
             await ensureSessionInitialized(client, state, input.sessionID, logger, messages);
             const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean);
             const subcommand = args[0]?.toLowerCase() || "";
@@ -64,7 +63,8 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     sessionId: input.sessionID,
                     messages,
                 });
-                throw new Error("__COMPRESS_CONTEXT_HANDLED__");
+                suppressDefaultCommandExecution(output, "__COMPRESS_CONTEXT_HANDLED__");
+                return;
             }
             if (subcommand === "stats") {
                 await handleStatsCommand({
@@ -74,7 +74,8 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     sessionId: input.sessionID,
                     messages,
                 });
-                throw new Error("__COMPRESS_STATS_HANDLED__");
+                suppressDefaultCommandExecution(output, "__COMPRESS_STATS_HANDLED__");
+                return;
             }
             if (subcommand === "manage") {
                 await handleManageCommand({
@@ -86,7 +87,8 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                     messages,
                     arguments: input.arguments,
                 });
-                throw new Error("__COMPRESS_MANAGE_HANDLED__");
+                suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__");
+                return;
             }
             await handleHelpCommand({
                 client,
@@ -95,7 +97,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 sessionId: input.sessionID,
                 messages,
             });
-            throw new Error("__COMPRESS_HELP_HANDLED__");
+            suppressDefaultCommandExecution(output, "__COMPRESS_HELP_HANDLED__");
         }
     };
 }

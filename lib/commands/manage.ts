@@ -7,6 +7,7 @@ import { syncToolCache } from "../state/tool-cache.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { ulid } from "ulid"
+import { promptSession, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
     client: any
@@ -112,20 +113,13 @@ async function sendManageFailureFeedback(
     message: string,
     params: any,
 ): Promise<void> {
-    if (typeof client?.tui?.showToast === "function") {
-        try {
-            await client.tui.showToast({
-                body: {
-                    title: "Compression Management",
-                    message,
-                    variant: "error",
-                    duration: 8000,
-                },
-            })
-            return
-        } catch (error: any) {
-            logger.error("Failed to show compression management error toast", { error: error?.message })
-        }
+    if (await showToast(client, {
+        title: "Compression Management",
+        message,
+        variant: "error",
+        duration: 8000,
+    })) {
+        return
     }
 
     if (typeof client?.session?.prompt === "function") {
@@ -194,16 +188,12 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
 
     let promptResult: any
     try {
-        promptResult = await client.session.prompt({
-            path: {
-                id: sessionId,
-            },
-            body: {
-                agent: currentParams.agent,
-                model,
-                variant: currentParams.variant,
-                parts: [{ type: "text", text: payload }],
-            },
+        promptResult = await promptSession(client, {
+            sessionId,
+            agent: currentParams.agent,
+            model,
+            variant: currentParams.variant,
+            parts: [{ type: "text", text: payload }],
         })
     } catch (err: any) {
         removeManagementTurn(state, pendingManagementTurnId)

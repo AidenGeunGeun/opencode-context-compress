@@ -3,6 +3,7 @@ import { join, dirname } from "path"
 import { homedir } from "os"
 import { parse } from "jsonc-parser"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { showToast } from "./sdk/client.js"
 
 export interface CompressTool {
     permission: "ask" | "allow" | "deny"
@@ -293,16 +294,12 @@ function showConfigValidationWarnings(
     }
 
     setTimeout(() => {
-        try {
-            ctx.client.tui.showToast({
-                    body: {
-                        title: `Context Compress: Invalid ${configType}`,
-                        message: `${configPath}\n${messages.join("\n")}`,
-                        variant: "warning",
-                    duration: 7000,
-                },
-            })
-        } catch {}
+        void showToast(ctx.client, {
+            title: `Context Compress: Invalid ${configType}`,
+            message: `${configPath}\n${messages.join("\n")}`,
+            variant: "warning",
+            duration: 7000,
+        })
     }, 7000)
 }
 
@@ -501,16 +498,12 @@ export function getConfig(ctx: PluginInput): PluginConfig {
         const result = loadConfigFile(configPaths.global)
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid config",
-                            message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    })
-                } catch {}
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid config",
+                    message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
+                    variant: "warning",
+                    duration: 7000,
+                })
             }, 7000)
         } else if (result.data) {
             // Validate config keys and types
@@ -544,16 +537,12 @@ export function getConfig(ctx: PluginInput): PluginConfig {
         const result = loadConfigFile(configPaths.configDir)
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid configDir config",
-                            message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    })
-                } catch {}
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid configDir config",
+                    message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
+                    variant: "warning",
+                    duration: 7000,
+                })
             }, 7000)
         } else if (result.data) {
             // Validate config keys and types
@@ -584,16 +573,12 @@ export function getConfig(ctx: PluginInput): PluginConfig {
         const result = loadConfigFile(configPaths.project)
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid project config",
-                            message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    })
-                } catch {}
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid project config",
+                    message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
+                    variant: "warning",
+                    duration: 7000,
+                })
             }, 7000)
         } else if (result.data) {
             // Validate config keys and types

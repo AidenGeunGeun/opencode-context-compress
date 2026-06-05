@@ -4,6 +4,7 @@ import { syncToolCache } from "../state/tool-cache.js";
 import { saveSessionState } from "../state/persistence.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { ulid } from "ulid";
+import { promptSession, showToast } from "../sdk/client.js";
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i;
 const LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i;
 const LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i;
@@ -77,21 +78,13 @@ function extractPromptTriggerMessageId(promptResult) {
     return undefined;
 }
 async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
-    if (typeof client?.tui?.showToast === "function") {
-        try {
-            await client.tui.showToast({
-                body: {
-                    title: "Compression Management",
-                    message,
-                    variant: "error",
-                    duration: 8000,
-                },
-            });
-            return;
-        }
-        catch (error) {
-            logger.error("Failed to show compression management error toast", { error: error?.message });
-        }
+    if (await showToast(client, {
+        title: "Compression Management",
+        message,
+        variant: "error",
+        duration: 8000,
+    })) {
+        return;
     }
     if (typeof client?.session?.prompt === "function") {
         await sendIgnoredMessage(client, sessionId, message, params, logger);
@@ -140,16 +133,12 @@ export async function handleManageCommand(ctx) {
         : undefined;
     let promptResult;
     try {
-        promptResult = await client.session.prompt({
-            path: {
-                id: sessionId,
-            },
-            body: {
-                agent: currentParams.agent,
-                model,
-                variant: currentParams.variant,
-                parts: [{ type: "text", text: payload }],
-            },
+        promptResult = await promptSession(client, {
+            sessionId,
+            agent: currentParams.agent,
+            model,
+            variant: currentParams.variant,
+            parts: [{ type: "text", text: payload }],
         });
     }
     catch (err) {

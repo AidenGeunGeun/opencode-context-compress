@@ -2,6 +2,7 @@ import type { WithParts } from "./state/index.js";
 import { SessionStateManager } from "./state/index.js";
 import type { Logger } from "./logger.js";
 import type { PluginConfig } from "./config.js";
+import { type CommandExecuteOutput } from "./commands/suppress.js";
 export declare function getLastUserSessionId(messages: WithParts[]): string | undefined;
 export declare function createChatMessageTransformHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig, workingDirectory?: string): (_input: {}, output: {
     messages: WithParts[];
@@ -10,9 +11,7 @@ export declare function createCommandExecuteHandler(client: any, stateManager: S
     command: string;
     sessionID: string;
     arguments: string;
-}, _output: {
-    parts: any[];
-}) => Promise<void>;
+}, output: CommandExecuteOutput) => Promise<void>;
 export declare function createSessionForkHandler(stateManager: SessionStateManager, logger: Logger): (input: {
     sourceSessionID: string;
     targetSessionID: string;

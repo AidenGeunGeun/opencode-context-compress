@@ -78,17 +78,28 @@ Each session state tracks: `compressedMsgIds`, `compressedToolIds`, `summaries`,
 
 Subagent sessions are detected via `isSubAgent` and skip compression entirely (early return in transform hook).
 
-## Command Sentinel Pattern
+## Command Suppression
 
-Plugin commands throw sentinel errors to prevent default prompt flow:
+Plugin commands must prevent OpenCode from also running the default slash-command prompt. The handler uses a dual strategy:
+
+1. **Current OpenCode (upstream PR #18559+)**: set `output.cancelled = true` and clear `output.parts`.
+2. **OCO / legacy hosts**: throw a sentinel error ending in `_HANDLED__`.
 
 ```typescript
-throw new Error("__COMPRESS_MANAGE_HANDLED__")
+suppressDefaultCommandExecution(output, "__COMPRESS_MANAGE_HANDLED__")
 ```
 
-The OCO server catches errors ending with `_HANDLED__` in `SessionPrompt.command()` and returns `undefined` → HTTP 204. The Desktop client must call `sync.session.sync(sessionId, { force: true })` after receiving 204 to pick up server-side messages.
+**Sentinels**: `__COMPRESS_CONTEXT_HANDLED__`, `__COMPRESS_STATS_HANDLED__`, `__COMPRESS_MANAGE_HANDLED__`, `__COMPRESS_HELP_HANDLED__`.
 
-**All four sentinels**: `__COMPRESS_CONTEXT_HANDLED__`, `__COMPRESS_STATS_HANDLED__`, `__COMPRESS_MANAGE_HANDLED__`, `__COMPRESS_HELP_HANDLED__`.
+On OCO, `SessionPrompt.command()` catches `_HANDLED__` sentinels and returns HTTP 204. On upstream OpenCode versions with `command.execute.before` cancellation support, no throw is needed.
+
+## SDK Client Adapter
+
+OpenCode plugin hosts still expose the v1 nested SDK client (`{ path, body }`). External callers and tests may use the v2 flat client (`{ sessionID, parts, ... }`). All session/TUI calls go through `lib/sdk/client.ts`, which detects the client generation via runtime `_client` vs `client` markers.
+
+## Session Fork Support
+
+`session.fork` is an OCO extension hook. Current upstream OpenCode plugin types do not expose it, so forked sessions on stock upstream OpenCode do **not** receive migrated compression state. This is safe degradation: the fork shows the uncompressed transcript instead of silently corrupting IDs. OCO and future upstream builds that add the hook keep full fork migration via `forkSessionState()`.
 
 ## Publishing & GitHub Loading
 

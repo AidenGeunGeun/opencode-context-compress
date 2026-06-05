@@ -15,17 +15,15 @@ export function configureClientAuth(client) {
     if (!authHeader) {
         return client;
     }
-    // The SDK client has an internal client with request interceptors
-    // Access the underlying client to add the interceptor
     const innerClient = client._client || client.client;
     if (innerClient?.interceptors?.request) {
         innerClient.interceptors.request.use((request) => {
-            // Only add auth header if not already present
             if (!request.headers.has("Authorization")) {
                 request.headers.set("Authorization", authHeader);
             }
             return request;
         });
+        return client;
     }
     return client;
 }

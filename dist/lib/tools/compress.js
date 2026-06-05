@@ -6,6 +6,7 @@ import { estimateTokensBatch, getCurrentParams } from "../token-utils.js";
 import { collectContentInRange, collectToolIdsInRange, } from "./utils.js";
 import { sendCompressNotification } from "../ui/notification.js";
 import { buildContextMap, resolveContextMapRange, } from "../messages/context-map.js";
+import { listSessionMessages } from "../sdk/client.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 export function removeSubsumedCompressSummaries(summaries, containedMessageIds) {
     const containedIds = new Set(containedMessageIds);
@@ -133,10 +134,7 @@ export function createCompressTool(ctx) {
                 (typeof range.to !== "number" && typeof range.to !== "string")) {
                 throw new Error("compress requires valid from/to range boundaries");
             }
-            const messagesResponse = await client.session.messages({
-                path: { id: sessionId },
-            });
-            const rawMessages = messagesResponse.data || messagesResponse;
+            const rawMessages = (await listSessionMessages(client, sessionId));
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages);
             const currentParams = getCurrentParams(state, rawMessages, logger);
             const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId);

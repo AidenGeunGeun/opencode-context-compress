@@ -53,6 +53,7 @@ const plugin: Plugin = (async (ctx) => {
             logger,
             config,
         ),
+        // OCO extension hook; ignored safely on upstream OpenCode without session.fork support.
         "session.fork": createSessionForkHandler(stateManager, logger),
         tool: {
             ...(config.tools.compress_map.permission !== "deny" && {

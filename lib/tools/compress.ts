@@ -15,6 +15,7 @@ import {
     resolveContextMapRange,
     type ResolvedContextMapRange,
 } from "../messages/context-map.js"
+import { listSessionMessages } from "../sdk/client.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
 
@@ -199,10 +200,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 throw new Error("compress requires valid from/to range boundaries")
             }
 
-            const messagesResponse = await client.session.messages({
-                path: { id: sessionId },
-            })
-            const rawMessages: WithParts[] = messagesResponse.data || messagesResponse
+            const rawMessages: WithParts[] = (await listSessionMessages(client, sessionId)) as WithParts[]
 
             await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
 

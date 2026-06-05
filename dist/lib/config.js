@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { parse } from "jsonc-parser";
+import { showToast } from "./sdk/client.js";
 const DEFAULT_PROTECTED_TOOLS = [
     "task",
     "todowrite",
@@ -216,17 +217,12 @@ function showConfigValidationWarnings(ctx, configPath, configData, isProject) {
         }
     }
     setTimeout(() => {
-        try {
-            ctx.client.tui.showToast({
-                body: {
-                    title: `Context Compress: Invalid ${configType}`,
-                    message: `${configPath}\n${messages.join("\n")}`,
-                    variant: "warning",
-                    duration: 7000,
-                },
-            });
-        }
-        catch { }
+        void showToast(ctx.client, {
+            title: `Context Compress: Invalid ${configType}`,
+            message: `${configPath}\n${messages.join("\n")}`,
+            variant: "warning",
+            duration: 7000,
+        });
     }, 7000);
 }
 const defaultConfig = {
@@ -400,17 +396,12 @@ export function getConfig(ctx) {
         const result = loadConfigFile(configPaths.global);
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid config",
-                            message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    });
-                }
-                catch { }
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid config",
+                    message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
+                    variant: "warning",
+                    duration: 7000,
+                });
             }, 7000);
         }
         else if (result.data) {
@@ -445,17 +436,12 @@ export function getConfig(ctx) {
         const result = loadConfigFile(configPaths.configDir);
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid configDir config",
-                            message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    });
-                }
-                catch { }
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid configDir config",
+                    message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
+                    variant: "warning",
+                    duration: 7000,
+                });
             }, 7000);
         }
         else if (result.data) {
@@ -486,17 +472,12 @@ export function getConfig(ctx) {
         const result = loadConfigFile(configPaths.project);
         if (result.parseError) {
             setTimeout(async () => {
-                try {
-                    ctx.client.tui.showToast({
-                        body: {
-                            title: "Context Compress: Invalid project config",
-                            message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
-                            variant: "warning",
-                            duration: 7000,
-                        },
-                    });
-                }
-                catch { }
+                await showToast(ctx.client, {
+                    title: "Context Compress: Invalid project config",
+                    message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
+                    variant: "warning",
+                    duration: 7000,
+                });
             }, 7000);
         }
         else if (result.data) {
