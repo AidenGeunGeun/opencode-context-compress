@@ -30,10 +30,75 @@ export interface TransformMessagesForSearchResult {
 interface ManagementTurnSuppressionPlan {
     suppressedMessageIds: Set<string>
     retainedTextByMessageId: Map<string, string>
+    redactToolCallsByMessageId: Map<string, Set<string>>
 }
 
 function isVisibleUserMessage(message: WithParts): boolean {
     return message.info.role === "user" && !isIgnoredUserMessage(message)
+}
+
+/**
+ * Finds the session's currently open management turn, if any: a turn that is not yet
+ * marked completed by a successful `compress` call AND has no later visible user message
+ * bounding it. At most one such turn should normally exist - starting a new `/compress
+ * manage` (itself a visible user message) or any ordinary reply always bounds the previous
+ * one. Picks the most recently triggered candidate defensively in case state is corrupt.
+ */
+export function findActiveManagementTurn(
+    state: SessionState,
+    rawMessages: WithParts[],
+): { turn: SessionState["managementTurns"][number]; triggerIndex: number } | undefined {
+    if (!state.managementTurns?.length) {
+        return undefined
+    }
+
+    const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
+    let best: { turn: SessionState["managementTurns"][number]; triggerIndex: number } | undefined
+
+    for (const turn of state.managementTurns) {
+        if (turn.completedAt) {
+            continue
+        }
+        const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
+        if (triggerIndex === undefined) {
+            continue
+        }
+
+        let bounded = false
+        for (let i = triggerIndex + 1; i < rawMessages.length; i++) {
+            if (isVisibleUserMessage(rawMessages[i])) {
+                bounded = true
+                break
+            }
+        }
+        if (bounded) {
+            continue
+        }
+
+        if (!best || triggerIndex > best.triggerIndex) {
+            best = { turn, triggerIndex }
+        }
+    }
+
+    return best
+}
+
+function collectSuppressedOrRetainedSpan(
+    rawMessages: WithParts[],
+    triggerIndex: number,
+    endExclusive: number,
+    retainedText: string | undefined,
+    suppressedMessageIds: Set<string>,
+    retainedTextByMessageId: Map<string, string>,
+): void {
+    for (let i = triggerIndex; i < endExclusive; i++) {
+        const message = rawMessages[i]
+        if (i === triggerIndex && retainedText) {
+            retainedTextByMessageId.set(message.info.id, retainedText)
+            continue
+        }
+        suppressedMessageIds.add(message.info.id)
+    }
 }
 
 export function buildManagementTurnSuppressionPlan(
@@ -42,9 +107,10 @@ export function buildManagementTurnSuppressionPlan(
 ): ManagementTurnSuppressionPlan {
     const suppressedMessageIds = new Set<string>()
     const retainedTextByMessageId = new Map<string, string>()
+    const redactToolCallsByMessageId = new Map<string, Set<string>>()
 
     if (!state.managementTurns?.length) {
-        return { suppressedMessageIds, retainedTextByMessageId }
+        return { suppressedMessageIds, retainedTextByMessageId, redactToolCallsByMessageId }
     }
 
     const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
@@ -55,6 +121,11 @@ export function buildManagementTurnSuppressionPlan(
             continue
         }
 
+        const retainedText =
+            typeof turn.retainedText === "string" && turn.retainedText.trim().length > 0
+                ? turn.retainedText
+                : undefined
+
         let nextUserIndex = -1
         for (let i = triggerIndex + 1; i < rawMessages.length; i++) {
             if (isVisibleUserMessage(rawMessages[i])) {
@@ -63,25 +134,106 @@ export function buildManagementTurnSuppressionPlan(
             }
         }
 
-        if (nextUserIndex === -1) {
+        if (nextUserIndex !== -1) {
+            // Bounded by a real subsequent user turn: this is now history, so the whole
+            // span (including any completed compress tool call) can be dropped outright -
+            // no provider-protocol pair needs to survive once it is no longer the tail.
+            collectSuppressedOrRetainedSpan(
+                rawMessages,
+                triggerIndex,
+                nextUserIndex,
+                retainedText,
+                suppressedMessageIds,
+                retainedTextByMessageId,
+            )
             continue
         }
 
-        const retainedText =
-            typeof turn.retainedText === "string" && turn.retainedText.trim().length > 0
-                ? turn.retainedText
+        // Not yet bounded by a real user message. If a successful `compress` call already
+        // completed this turn, apply the atomic-finalize boundary immediately at that tool
+        // call's own message instead of waiting for a future user turn.
+        const completedIndex =
+            turn.completedAt && turn.completedMessageId
+                ? indexByMessageId.get(turn.completedMessageId)
                 : undefined
-        for (let i = triggerIndex; i < nextUserIndex; i++) {
-            const message = rawMessages[i]
-            if (i === triggerIndex && retainedText) {
-                retainedTextByMessageId.set(message.info.id, retainedText)
-                continue
+
+        if (completedIndex === undefined || completedIndex <= triggerIndex) {
+            // Still genuinely in-flight (or an unresolved/foreign marker) - leave the whole
+            // turn visible so the agent's own mid-turn tool calls remain usable.
+            continue
+        }
+
+        collectSuppressedOrRetainedSpan(
+            rawMessages,
+            triggerIndex,
+            completedIndex,
+            retainedText,
+            suppressedMessageIds,
+            retainedTextByMessageId,
+        )
+
+        if (turn.completedCallId) {
+            const existing = redactToolCallsByMessageId.get(turn.completedMessageId!) ?? new Set<string>()
+            existing.add(turn.completedCallId)
+            redactToolCallsByMessageId.set(turn.completedMessageId!, existing)
+        } else if (!redactToolCallsByMessageId.has(turn.completedMessageId!)) {
+            // No callID was available from the runtime - fall back to redacting any
+            // `compress` tool part on the completing message (see below).
+            redactToolCallsByMessageId.set(turn.completedMessageId!, new Set<string>())
+        }
+
+        // Anything strictly after the completion point and before the eventual next real
+        // user turn is either the agent's genuine reply (left untouched) or a plugin status
+        // notification (ignored user message) that must not linger either.
+        for (let i = completedIndex + 1; i < rawMessages.length; i++) {
+            const candidate = rawMessages[i]
+            if (isVisibleUserMessage(candidate)) {
+                break
             }
-            suppressedMessageIds.add(message.info.id)
+            if (candidate.info.role === "user" && isIgnoredUserMessage(candidate)) {
+                suppressedMessageIds.add(candidate.info.id)
+            }
         }
     }
 
-    return { suppressedMessageIds, retainedTextByMessageId }
+    return { suppressedMessageIds, retainedTextByMessageId, redactToolCallsByMessageId }
+}
+
+const COMPRESS_INPUT_SUMMARY_REDACTED = "[summary stored in compressed block]"
+
+/**
+ * Compacts a completed `compress` tool call's input so the full submitted summary is not
+ * duplicated in provider-visible context (it already lives in the stored `[bN]` block). An
+ * empty `callIds` set means no callID was available from the runtime - redact any `compress`
+ * tool part on the message instead, since a message normally carries at most one.
+ */
+function redactCompressToolCallSummary(message: WithParts, callIds: Set<string>): WithParts {
+    const parts = Array.isArray(message.parts) ? message.parts : []
+    const nextParts = parts.map((part: any) => {
+        if (part.type !== "tool") {
+            return part
+        }
+        const matches = callIds.size > 0 ? callIds.has(part.callID) : part.tool === "compress"
+        if (!matches) {
+            return part
+        }
+        const state = part.state
+        if (!state || typeof state !== "object" || !state.input || typeof state.input.summary !== "string") {
+            return part
+        }
+        return {
+            ...part,
+            state: {
+                ...state,
+                input: {
+                    ...state.input,
+                    summary: COMPRESS_INPUT_SUMMARY_REDACTED,
+                },
+            },
+        }
+    })
+
+    return { ...message, parts: nextParts }
 }
 
 function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {
@@ -175,6 +327,12 @@ export const transformMessagesForSearch = (
         }
 
         if (managementSuppression.suppressedMessageIds.has(msgId)) {
+            continue
+        }
+
+        const redactCallIds = managementSuppression.redactToolCallsByMessageId.get(msgId)
+        if (redactCallIds) {
+            transformed.push(redactCompressToolCallSummary(msg, redactCallIds))
             continue
         }
 

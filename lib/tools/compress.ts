@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import type { WithParts, CompressSummary } from "../state/index.js"
+import type { WithParts, CompressSummary, SessionState } from "../state/index.js"
 import type { CompressToolContext } from "./types.js"
 import { ensureSessionInitialized } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
@@ -15,6 +15,7 @@ import {
     resolveContextMapRange,
     type ResolvedContextMapRange,
 } from "../messages/context-map.js"
+import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import { listSessionMessages } from "../sdk/client.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
@@ -154,6 +155,12 @@ export function selectFinalSummary(
     return composeSummaryWithPreservedBlocks(preservedSummaries, newSummary)
 }
 
+function buildCompressReceipt(topic: string, blockId?: string): string {
+    return blockId
+        ? `Compression complete. Stored [${blockId}] "${topic}".`
+        : `Compression complete. Stored "${topic}".`
+}
+
 export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof tool> {
     return tool({
         description: COMPRESS_TOOL_DESCRIPTION,
@@ -239,32 +246,84 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
             )
             const containedToolIds = rangeMetrics.toolIds
 
-            for (const id of containedToolIds) {
-                state.compressed.toolIds.add(id)
-            }
-            for (const id of containedMessageIds) {
-                state.compressed.messageIds.add(id)
-            }
-
-            state.compressSummaries = removeSubsumedCompressSummaries(
-                state.compressSummaries,
-                containedMessageIds,
-            )
-
             const startEntry = contextMap.entries[resolvedRange.startPosition]
             const anchorMessageId =
                 startEntry?.kind === "block" && startEntry.anchorMessageId
                     ? startEntry.anchorMessageId
                     : containedMessageIds[0]
 
-            state.compressSummaries.push({
+            // This management turn, if any, is the one this call is completing. Found
+            // against the active turn's baseline (pre-mutation) state - never a stale or
+            // unrelated turn, since a genuinely open turn is at most one per session.
+            const activeManagementTurn = findActiveManagementTurn(state, rawMessages)
+
+            const candidateCompressed = {
+                toolIds: new Set(state.compressed.toolIds),
+                messageIds: new Set(state.compressed.messageIds),
+            }
+            for (const id of containedToolIds) {
+                candidateCompressed.toolIds.add(id)
+            }
+            for (const id of containedMessageIds) {
+                candidateCompressed.messageIds.add(id)
+            }
+
+            const candidateSummaries = removeSubsumedCompressSummaries(
+                state.compressSummaries,
+                containedMessageIds,
+            )
+            candidateSummaries.push({
                 anchorMessageId,
                 messageIds: containedMessageIds,
                 summary: finalSummary,
                 topic: range.topic,
             })
 
-            state.stats.compressTokenCounter = rangeMetrics.incrementalCompressTokens
+            const completedAt = new Date().toISOString()
+            const candidateManagementTurns = activeManagementTurn
+                ? state.managementTurns.map((turn) =>
+                      turn === activeManagementTurn.turn
+                          ? {
+                                ...turn,
+                                completedAt,
+                                ...(typeof (toolCtx as any).callID === "string" && (toolCtx as any).callID
+                                    ? { completedCallId: (toolCtx as any).callID }
+                                    : {}),
+                                completedMessageId: toolCtx.messageID,
+                            }
+                          : turn,
+                  )
+                : [...state.managementTurns]
+
+            const candidateStats = {
+                compressTokenCounter: 0,
+                totalCompressTokens: state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
+            }
+
+            const candidateState: SessionState = {
+                ...state,
+                compressed: candidateCompressed,
+                compressSummaries: candidateSummaries,
+                managementTurns: candidateManagementTurns,
+                stats: candidateStats,
+            }
+
+            const persisted = await saveSessionState(candidateState, logger)
+            if (!persisted) {
+                throw new Error(
+                    "compress could not persist compression state - the range was not compressed",
+                )
+            }
+
+            // Commit only now that the new state is durable, so a failed save leaves the
+            // live in-memory state exactly as it was and no transform hides content as if
+            // compression had succeeded.
+            state.compressed = candidateState.compressed
+            state.compressSummaries = candidateState.compressSummaries
+            state.managementTurns = candidateState.managementTurns
+            state.stats = candidateState.stats
+            state.hasPersistedState = candidateState.hasPersistedState
+            state.persistedLastUpdated = candidateState.persistedLastUpdated
 
             await sendCompressNotification(
                 client,
@@ -283,21 +342,12 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 rangeMetrics.estimatedCompressedTokens,
             )
 
-            state.stats.totalCompressTokens += rangeMetrics.incrementalCompressTokens
-            state.stats.compressTokenCounter = 0
-
-            try {
-                await saveSessionState(state, logger)
-            } catch (err: any) {
-                logger.error("Failed to persist state", { error: err.message })
-            }
-
             const updatedContextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
+            const storedBlockId = updatedContextMap.entries.find(
+                (entry) => entry.kind === "block" && entry.anchorMessageId === anchorMessageId,
+            )?.key as string | undefined
 
-            return [
-                `Compressed range (${rangeMetrics.mapEntryCount} entries, ${containedToolIds.length} tool calls) into summary.`,
-                updatedContextMap.mapText,
-            ].join("\n\n")
+            return buildCompressReceipt(range.topic, storedBlockId)
         },
     })
 }

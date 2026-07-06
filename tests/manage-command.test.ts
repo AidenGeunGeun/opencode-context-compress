@@ -104,20 +104,18 @@ const insertLiveMessageById = <T extends { id: string }>(messages: T[], message:
 }
 
 describe("handleManageCommand", () => {
-    it("sends a lean reminder and anchors cleanup to the generated prompt message ID", async () => {
+    it("sends a lean reminder plus the injected map, and anchors cleanup to the generated prompt message ID", async () => {
         const sessionId = `session-manage-command-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
 
-        let payload = ""
         let promptBody: any
         const generatedAssistantId = "msg_01900000000000000000000002"
         const client = {
             session: {
                 prompt: async (input: any) => {
-                    payload = input.body.parts[0].text
                     promptBody = input.body
                     // Real OpenCode threads the assistant reply's parentID to the
                     // literal messageID we supplied here.
@@ -137,16 +135,29 @@ describe("handleManageCommand", () => {
                 arguments: "manage",
             })
 
-            const nonEmptyLines = payload.split("\n").filter((line) => line.trim().length > 0)
+            const parts: any[] = promptBody.parts
+            const reminderText = parts[0].text
+            const fullPayload = parts.map((part) => part.text).join("\n\n")
+            const nonEmptyReminderLines = reminderText.split("\n").filter((line: string) => line.trim().length > 0)
 
-            assert.match(payload, /<system-reminder>/)
-            assert.match(payload, /compress_map/)
-            assert.match(payload, /compress/)
-            assert.doesNotMatch(payload, /<compress-context-map>/)
+            assert.match(reminderText, /<system-reminder>/)
+            assert.match(reminderText, /compress_map/)
+            assert.match(reminderText, /compress/)
+            assert.doesNotMatch(reminderText, /<compress-context-map>/)
+            assert.ok(
+                nonEmptyReminderLines.length <= 18,
+                `expected <= 18 non-empty reminder lines, got ${nonEmptyReminderLines.length}`,
+            )
+
+            // The map snapshot is injected as its own part, built from the pre-management
+            // conversation only (one prior user message here, no management turn yet).
+            assert.match(fullPayload, /<compress-context-map>/)
+            assert.match(fullPayload, /\[1\] user: "Please manage context"/)
+            assert.match(fullPayload, /Total: 1 messages \+ 0 blocks/)
+
             assert.match(promptBody.messageID, /^msg_[0-9A-HJKMNP-TV-Z]{26}$/)
             assert.equal(state.managementTurns.length, 1)
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
-            assert.ok(nonEmptyLines.length <= 18, `expected <= 18 non-empty lines, got ${nonEmptyLines.length}`)
         } finally {
             await cleanupSessionFile(sessionId)
         }

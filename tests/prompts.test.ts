@@ -13,7 +13,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const COMPRESS_GUIDANCE = "CONTEXT MANAGEMENT REQUESTED"
 const APPEND_ONLY_GUIDANCE = "One new block this turn"
-const COMPRESS_MAP_GUIDANCE = "Use `compress_map` to read the current context map."
+const MAP_ALREADY_PROVIDED_GUIDANCE = "already included with this reminder"
+const COMPRESS_MAP_FALLBACK_GUIDANCE = "Only call `compress_map` again if"
 const COMPRESS_SINGLE_BLOCK_GUIDANCE = "Use `compress` once to fold the completed working context into a single new block."
 
 describe("renderSystemPrompt", () => {
@@ -23,10 +24,20 @@ describe("renderSystemPrompt", () => {
         assert.match(output, /system-reminder/)
         assert.equal(output.includes(COMPRESS_GUIDANCE), true)
         assert.equal(output.includes(APPEND_ONLY_GUIDANCE), true)
-        assert.equal(output.includes(COMPRESS_MAP_GUIDANCE), true)
+        assert.equal(output.includes(MAP_ALREADY_PROVIDED_GUIDANCE), true)
+        assert.equal(output.includes(COMPRESS_MAP_FALLBACK_GUIDANCE), true)
         assert.match(output, /\/compress manage/)
         assert.doesNotMatch(output, /<compress-context-map>/)
         assert.doesNotMatch(output, /EXHAUSTIVE/)
+    })
+
+    it("does not describe same-turn iteration or a refreshed map returned by compress", () => {
+        const output = renderSystemPrompt({ compress: true, compress_map: true })
+
+        assert.doesNotMatch(output, /use `compress_map` to read the current context map/i)
+        assert.doesNotMatch(output, /refreshed map returned by `compress`/i)
+        assert.doesNotMatch(output, /returned map snapshot/i)
+        assert.doesNotMatch(output, /same-turn iteration/i)
     })
 
     it("still renders system prompt when tool flags are false", () => {
@@ -73,11 +84,27 @@ describe("loadPrompt", () => {
         assert.doesNotMatch(output, /`ranges` is an array/)
     })
 
+    it("compress-tool-spec rejects stale returned-map same-turn iteration guidance", () => {
+        const output = loadPrompt("compress-tool-spec")
+
+        assert.doesNotMatch(output, /returned map snapshot/i)
+        assert.doesNotMatch(output, /use the fresh `<compress-context-map>` returned by the tool/i)
+        assert.match(output, /short receipt/i)
+    })
+
     it("returns non-empty content for compress-map-tool-spec", () => {
         const output = loadPrompt("compress-map-tool-spec")
 
         assert.equal(typeof output, "string")
         assert.ok(output.length > 0)
+    })
+
+    it("compress-map-tool-spec frames itself as a fallback, not the default source of truth", () => {
+        const output = loadPrompt("compress-map-tool-spec")
+
+        assert.match(output, /fallback/i)
+        assert.doesNotMatch(output, /prefer the refreshed map returned by that tool/i)
+        assert.doesNotMatch(output, /after a `compress` call/i)
     })
 
     it("throws when prompt key does not exist", () => {

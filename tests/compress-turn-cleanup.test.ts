@@ -674,3 +674,153 @@ describe("legacy residue repair by content signature", () => {
         )
     })
 })
+
+describe("atomic compress completion cleanup", () => {
+    it("hides the manage prompt, injected map, and notification immediately once compress completes, with no next visible user message yet", () => {
+        const sessionId = "session-atomic-completion"
+        const state = createState(sessionId)
+        state.compressed.messageIds = new Set(["work-user", "work-assistant"])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "work-user",
+                messageIds: ["work-user", "work-assistant"],
+                summary: "Durable block summary.",
+                topic: "Durable Block",
+            },
+        ]
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-1",
+                completedAt: new Date().toISOString(),
+                completedCallId: "call-compress-1",
+                completedMessageId: "compress-msg-1",
+            },
+        ]
+
+        const messages = [
+            textMessage("work-user", sessionId, "Old request"),
+            textMessage("work-assistant", sessionId, "Old answer", "assistant"),
+            textMessage(
+                "manage-1",
+                sessionId,
+                REALISTIC_MANAGE_PROMPT_TEXT + "\n\n<compress-context-map>stale</compress-context-map>",
+            ),
+            toolMessage(
+                "compress-msg-1",
+                sessionId,
+                "compress",
+                'Compression complete. Stored [b1] "New Work".',
+                "call-compress-1",
+            ),
+            statusNotificationMessage("notif-1", sessionId, "5.0K tokens"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.equal(messages.length, 2)
+        assert.equal(messages[0].parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
+        assert.equal(messages[1].info.id, "compress-msg-1")
+
+        const compressPart = messages[1].parts[0]
+        assert.equal(compressPart.callID, "call-compress-1")
+        assert.equal(compressPart.state.input.summary, "[summary stored in compressed block]")
+        assert.equal(compressPart.state.output, 'Compression complete. Stored [b1] "New Work".')
+
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED/)
+        assert.doesNotMatch(serialized, /compress-context-map/)
+        assert.doesNotMatch(serialized, /▣ Context Compress/)
+    })
+
+    it("keeps the agent's genuine final reply after the completed compress call, without sweeping it as chatter", () => {
+        const sessionId = "session-atomic-completion-reply"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-2",
+                completedAt: new Date().toISOString(),
+                completedCallId: "call-compress-2",
+                completedMessageId: "compress-msg-2",
+            },
+        ]
+
+        const messages = [
+            textMessage("pre", sessionId, "Before this turn"),
+            textMessage(
+                "manage-2",
+                sessionId,
+                REALISTIC_MANAGE_PROMPT_TEXT + "\n\n<compress-context-map>stale</compress-context-map>",
+            ),
+            toolMessage(
+                "compress-msg-2",
+                sessionId,
+                "compress",
+                'Compression complete. Stored [b0] "Prior Work".',
+                "call-compress-2",
+            ),
+            textMessage("final-reply-2", sessionId, "All set! Let me know what's next.", "assistant"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "pre",
+            "compress-msg-2",
+            "final-reply-2",
+        ])
+        assert.equal(messages[1].parts[0].state.input.summary, "[summary stored in compressed block]")
+        assert.match(messageTexts(messages), /All set! Let me know what's next\./)
+        assert.doesNotMatch(messageTexts(messages), /CONTEXT MANAGEMENT REQUESTED|compress-context-map/)
+    })
+
+    it("cleans up a historical bounded turn and the just-completed unbounded turn independently in the same pass", () => {
+        const sessionId = "session-atomic-mixed-turns"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            { triggerMessageId: "old-manage" },
+            {
+                triggerMessageId: "new-manage",
+                completedAt: new Date().toISOString(),
+                completedCallId: "call-new-compress",
+                completedMessageId: "new-compress-msg",
+            },
+        ]
+
+        const messages = [
+            textMessage("old-work-user", sessionId, "Old phase request"),
+            textMessage("old-work-assistant", sessionId, "Old phase answer", "assistant"),
+            textMessage("old-manage", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage("old-compress-msg", sessionId, "compress", "Compressed range old"),
+            statusNotificationMessage("old-notif", sessionId, "1.0K tokens"),
+            textMessage("between-user", sessionId, "Normal follow-up between compressions"),
+            textMessage("between-assistant", sessionId, "Normal follow-up answer", "assistant"),
+            textMessage(
+                "new-manage",
+                sessionId,
+                REALISTIC_MANAGE_PROMPT_TEXT + "\n\n<compress-context-map>fresh</compress-context-map>",
+            ),
+            toolMessage(
+                "new-compress-msg",
+                sessionId,
+                "compress",
+                'Compression complete. Stored [b1] "New Work".',
+                "call-new-compress",
+            ),
+            statusNotificationMessage("new-notif", sessionId, "2.0K tokens"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "old-work-user",
+            "old-work-assistant",
+            "between-user",
+            "between-assistant",
+            "new-compress-msg",
+        ])
+        assert.equal(messages[4].parts[0].state.input.summary, "[summary stored in compressed block]")
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED|compress-context-map|▣ Context Compress|Compressed range old/)
+        assert.match(serialized, /Normal follow-up between compressions/)
+    })
+})

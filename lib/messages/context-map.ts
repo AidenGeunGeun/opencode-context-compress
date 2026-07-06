@@ -1,7 +1,7 @@
 import type { Logger } from "../logger.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import { countTokens } from "../token-utils.js"
-import { transformMessagesForSearch } from "./compress-transform.js"
+import { transformMessagesForSearch, findActiveManagementTurn } from "./compress-transform.js"
 import { extractMessageContent } from "../tools/utils.js"
 
 const PREVIEW_MAX_CHARS = 90
@@ -159,7 +159,15 @@ function buildContextMapEntries(
     keyOrder: Array<number | string>
     keyToPosition: Map<number | string, number>
 } {
-    const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger)
+    const { transformed: transformedMessages, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger)
+    // The active management turn's own trigger message (system reminder + injected map) is
+    // not yet suppressed by the transform above - a still-open turn's own tail stays fully
+    // visible in the transcript by design. But it is never a meaningful selectable entry for
+    // range compression, so exclude it from the map specifically while the turn is open.
+    const activeTurn = findActiveManagementTurn(state, rawMessages)
+    const transformed = activeTurn
+        ? transformedMessages.filter((msg) => msg.info.id !== activeTurn.turn.triggerMessageId)
+        : transformedMessages
     const blockIdByAnchor = buildBlockIdByAnchor(rawMessages, state)
 
     const entries: ContextMapEntry[] = []

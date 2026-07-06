@@ -101,6 +101,15 @@ function normalizeManagementTurns(turns) {
             ...(typeof turn.retainedText === "string" && turn.retainedText.length > 0
                 ? { retainedText: turn.retainedText }
                 : {}),
+            ...(typeof turn.completedAt === "string" && turn.completedAt.length > 0
+                ? { completedAt: turn.completedAt }
+                : {}),
+            ...(typeof turn.completedCallId === "string" && turn.completedCallId.length > 0
+                ? { completedCallId: turn.completedCallId }
+                : {}),
+            ...(typeof turn.completedMessageId === "string" && turn.completedMessageId.length > 0
+                ? { completedMessageId: turn.completedMessageId }
+                : {}),
         });
     }
     return normalized;

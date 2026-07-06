@@ -31,6 +31,12 @@ export interface CompressSummary {
 export interface ManagementTurn {
     triggerMessageId: string
     retainedText?: string
+    /** ISO timestamp set once a `compress` call completes this turn. Presence marks completion. */
+    completedAt?: string
+    /** The completing `compress` tool call's ID, if the runtime provided one. */
+    completedCallId?: string
+    /** The assistant message ID that carried the completing `compress` tool call. */
+    completedMessageId?: string
 }
 
 export interface Compressed {

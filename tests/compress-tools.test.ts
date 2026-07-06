@@ -168,6 +168,189 @@ describe("compression management tools", () => {
         }
     })
 
+    it("excludes the active management turn's own trigger message from compress_map's entries", async () => {
+        const sessionId = `session-compress-map-active-turn-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+
+        try {
+            const rawMessages = [
+                textMessage("m1", sessionId, "Do the actual work"),
+                textMessage("m2", sessionId, "Work done", "assistant"),
+                textMessage(
+                    "manage-trigger",
+                    sessionId,
+                    "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\n</system-reminder>\n\n<compress-context-map>stale injected map</compress-context-map>",
+                ),
+            ]
+            const stateManager = new SessionStateManager()
+            const state = stateManager.get(sessionId)
+            state.sessionId = sessionId
+            state.initialized = true
+            // Not yet completed and not bounded by a later visible user message - this is
+            // the currently open management turn.
+            state.managementTurns = [{ triggerMessageId: "manage-trigger" }]
+
+            const tool = createCompressMapTool({
+                client: createClient(rawMessages),
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+
+            const output = await tool.execute({} as any, createToolContext(sessionId, "call-map-fallback-1") as any)
+
+            assert.doesNotMatch(output, /CONTEXT MANAGEMENT REQUESTED/)
+            assert.doesNotMatch(output, /stale injected map/)
+            assert.match(output, /\[1\] user: "Do the actual work"/)
+            assert.match(output, /Total: 2 messages \+ 0 blocks/)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("marks the active management turn completed with a tiny receipt when compress runs mid-manage", async () => {
+        const sessionId = `session-compress-marks-turn-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+
+        try {
+            const rawMessages = [
+                textMessage("m1", sessionId, "Do the actual work"),
+                textMessage("m2", sessionId, "Work done", "assistant"),
+                textMessage(
+                    "manage-trigger",
+                    sessionId,
+                    "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\n</system-reminder>\n\n<compress-context-map>injected map</compress-context-map>",
+                ),
+            ]
+            const stateManager = new SessionStateManager()
+            const state = stateManager.get(sessionId)
+            state.sessionId = sessionId
+            state.initialized = true
+            state.managementTurns = [{ triggerMessageId: "manage-trigger" }]
+
+            const tool = createCompressTool({
+                client: createClient(rawMessages),
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+
+            const output = await tool.execute(
+                { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                createToolContext(sessionId, "call-manage-compress-1") as any,
+            )
+
+            assert.equal(output, 'Compression complete. Stored [b0] "Prior Work".')
+            assert.equal(state.managementTurns.length, 1)
+            const turn = state.managementTurns[0]
+            assert.equal(typeof turn.completedAt, "string")
+            assert.equal(turn.completedCallId, "call-manage-compress-1")
+            assert.equal(turn.completedMessageId, "message-call-manage-compress-1")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("only completes the relevant active management turn, leaving unrelated stale turns untouched", async () => {
+        const sessionId = `session-compress-stale-turns-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+
+        try {
+            const rawMessages = [
+                textMessage("stale-old-user", sessionId, "Older phase request"),
+                textMessage("stale-manage", sessionId, "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\n</system-reminder>"),
+                toolMessage("stale-compress", sessionId, "compress", "Compressed range old"),
+                textMessage("real-between", sessionId, "Normal follow-up between compressions"),
+                textMessage("m1", sessionId, "Do the actual work"),
+                textMessage("m2", sessionId, "Work done", "assistant"),
+                textMessage(
+                    "manage-trigger",
+                    sessionId,
+                    "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\n</system-reminder>\n\n<compress-context-map>injected map</compress-context-map>",
+                ),
+            ]
+            const stateManager = new SessionStateManager()
+            const state = stateManager.get(sessionId)
+            state.sessionId = sessionId
+            state.initialized = true
+            // A stale, already-historical turn (bounded by "real-between") sits alongside
+            // the genuinely open one. Only the latter should ever be marked completed.
+            state.managementTurns = [
+                { triggerMessageId: "stale-manage" },
+                { triggerMessageId: "manage-trigger" },
+            ]
+
+            const tool = createCompressTool({
+                client: createClient(rawMessages),
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+
+            await tool.execute(
+                { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                createToolContext(sessionId, "call-manage-compress-2") as any,
+            )
+
+            const [staleTurn, activeTurn] = state.managementTurns
+            assert.equal(staleTurn.triggerMessageId, "stale-manage")
+            assert.equal(staleTurn.completedAt, undefined)
+            assert.equal(activeTurn.triggerMessageId, "manage-trigger")
+            assert.equal(typeof activeTurn.completedAt, "string")
+            assert.equal(activeTurn.completedCallId, "call-manage-compress-2")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("fails honestly and leaves state untouched when persistence fails", async () => {
+        // A "/" in the session ID forces writeFileAtomic to fail (no nested directory
+        // exists), deterministically simulating a disk save failure without mocking fs.
+        const sessionId = `session-compress-save-fails/${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+        const rawMessages = [
+            textMessage("m1", sessionId, "Do the actual work"),
+            textMessage("m2", sessionId, "Work done", "assistant"),
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.sessionId = sessionId
+        state.initialized = true
+
+        const baselineCompressedMessageIds = [...state.compressed.messageIds]
+        const baselineCompressedToolIds = [...state.compressed.toolIds]
+        const baselineSummaries = [...state.compressSummaries]
+        const baselineManagementTurns = [...state.managementTurns]
+        const baselineStats = { ...state.stats }
+
+        const tool = createCompressTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        await assert.rejects(
+            () =>
+                tool.execute(
+                    { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                    createToolContext(sessionId, "call-fails-1") as any,
+                ),
+            /could not persist/i,
+        )
+
+        assert.deepEqual([...state.compressed.messageIds], baselineCompressedMessageIds)
+        assert.deepEqual([...state.compressed.toolIds], baselineCompressedToolIds)
+        assert.deepEqual(state.compressSummaries, baselineSummaries)
+        assert.deepEqual(state.managementTurns, baselineManagementTurns)
+        assert.deepEqual(state.stats, baselineStats)
+        assert.equal(state.hasPersistedState, false)
+    })
+
     it("supports iterative compress calls and keeps block numbering stable when recompressing the middle block", async () => {
         const sessionId = `session-compress-iterative-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
@@ -207,9 +390,9 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-1") as any,
             )
 
-            assert.match(firstOutput, /^Compressed range/)
-            assert.match(firstOutput, /<compress-context-map>/)
-            assert.match(firstOutput, /\[b0\] \[compressed\] "Phase A"/)
+            assert.match(firstOutput, /^Compression complete\./)
+            assert.doesNotMatch(firstOutput, /<compress-context-map>/)
+            assert.equal(firstOutput, 'Compression complete. Stored [b0] "Phase A".')
 
             const secondOutput = await tool.execute(
                 {
@@ -221,9 +404,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-2") as any,
             )
 
-            assert.match(secondOutput, /^Compressed range/)
-            assert.match(secondOutput, /\[b0\] \[compressed\] "Phase A"/)
-            assert.match(secondOutput, /\[b1\] \[compressed\] "Phase B"/)
+            assert.equal(secondOutput, 'Compression complete. Stored [b1] "Phase B".')
 
             const thirdOutput = await tool.execute(
                 {
@@ -235,9 +416,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-3") as any,
             )
 
-            assert.match(thirdOutput, /\[b0\] \[compressed\] "Phase A"/)
-            assert.match(thirdOutput, /\[b1\] \[compressed\] "Phase B"/)
-            assert.match(thirdOutput, /\[b2\] \[compressed\] "Phase C"/)
+            assert.equal(thirdOutput, 'Compression complete. Stored [b2] "Phase C".')
 
             const fourthOutput = await tool.execute(
                 {
@@ -249,10 +428,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-4") as any,
             )
 
-            assert.match(
-                fourthOutput,
-                /\[b0\] \[compressed\] "Phase A"[\s\S]*\[b1\] \[compressed\] "Phase B Updated"[\s\S]*\[b2\] \[compressed\] "Phase C"/,
-            )
+            assert.equal(fourthOutput, 'Compression complete. Stored [b1] "Phase B Updated".')
             const finalMap = buildContextMap(rawMessages as any, state, logger)
 
             assert.deepEqual(finalMap.lookup.get("b0"), ["m1", "m2"])
@@ -311,7 +487,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-b") as any,
             )
 
-            assert.match(secondOutput, /\[b0\] \[compressed\] "Older Phase Condensed"/)
+            assert.equal(secondOutput, 'Compression complete. Stored [b0] "Older Phase Condensed".')
             assert.equal(state.compressSummaries.length, 1)
             assert.equal(state.compressSummaries[0].anchorMessageId, "m1")
             assert.equal(state.compressSummaries[0].summary, "Much terser condensed summary.")
@@ -365,7 +541,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-mixed-2") as any,
             )
 
-            assert.match(secondOutput, /\[b0\] \[compressed\] "Combined A\+B"/)
+            assert.equal(secondOutput, 'Compression complete. Stored [b0] "Combined A+B".')
             assert.equal(state.compressSummaries.length, 1)
             assert.equal(state.compressSummaries[0].anchorMessageId, "m1")
             assert.match(state.compressSummaries[0].summary, /^\[Preserved context\]/)

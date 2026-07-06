@@ -31,19 +31,29 @@ lib/tools/compress-map.ts
 lib/tools/compress.ts
   Compression tool implementation. Validates one range at a time, requests
   permission, calculates range metrics, tracks compressed IDs, stores
-  summaries, and returns a refreshed map snapshot for iterative use.
+  summaries, atomically persists state, and marks the active management turn
+  completed. Success is a tiny receipt, not a refreshed map.
 
 lib/messages/compress-transform.ts
   Applies persisted compression decisions and completed management-turn cleanup
-  to outgoing message context.
+  to outgoing message context. `findActiveManagementTurn` identifies the
+  session's still-open management turn (not yet completed by `compress`, not
+  yet bounded by a later visible user message). Once a turn is completed, its
+  span is hidden immediately - no next user message is required - except the
+  completing `compress` tool call, which stays but with its input summary
+  redacted (protocol-valid tool-call/result pair).
 
 lib/messages/context-map.ts
   Builds <compress-context-map> with numeric entries and compressed [bN] blocks,
-  and resolves map boundaries to raw message IDs.
+  and resolves map boundaries to raw message IDs. Excludes the active
+  management turn's own trigger message (reminder + injected map) from
+  selectable entries while that turn is still open.
 
 lib/commands/manage.ts
-  Implements /compress manage: renders a lean reminder and sends one
-  model-visible management turn without embedding the map.
+  Implements /compress manage: builds the current context map from the
+  pre-management conversation and sends it with the reminder in one
+  model-visible management turn, so the agent normally never needs to call
+  `compress_map` itself.
 
 lib/config.ts
   Config schema + layered loading/merge (global/config-dir/project), defaults,
@@ -57,10 +67,17 @@ lib/state/*
 
 1. Startup loads config and initializes state.
 2. Hooks sync tool cache, apply compression transforms, and route `/compress` commands.
-3. `/compress manage` injects a short reminder; the agent fetches the map with `compress_map`.
-4. `compress` handles one range per call, then returns an updated map for same-turn iteration.
-5. During that management turn, maps and tool results stay visible so the agent can work.
-6. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal inter-compress conversation, and the active tail remain model-visible.
+3. `/compress manage` injects a short reminder plus the current `<compress-context-map>`
+   snapshot in the same turn; the agent normally calls `compress` once directly.
+   `compress_map` remains available as a fallback/debug/explicit-use path.
+4. On a successful `compress` call, persistence is atomic and the management turn is marked
+   completed immediately - the fold takes effect for the very next model continuation, with
+   no need to wait for a further visible user message.
+5. While the management turn is still open (before `compress` succeeds), its own prompt/map
+   and tool results stay visible so the agent can work; the completing `compress` tool call
+   itself remains afterward too, but with its input summary compacted to a placeholder.
+6. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
+   inter-compress conversation, and the active tail remain model-visible.
 
 ## Prompt Generation
 

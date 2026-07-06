@@ -3,6 +3,7 @@ import { getCurrentParams } from "../token-utils.js";
 import { syncToolCache } from "../state/tool-cache.js";
 import { saveSessionState } from "../state/persistence.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
+import { buildContextMap } from "../messages/context-map.js";
 import { ulid } from "ulid";
 import { promptSession, showToast } from "../sdk/client.js";
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i;
@@ -73,17 +74,24 @@ export async function handleManageCommand(ctx) {
         compress: config.tools.compress.permission !== "deny",
         compress_map: config.tools.compress_map.permission !== "deny",
     };
-    const parts = [];
+    const currentParams = getCurrentParams(state, messages, logger);
+    // Built from the pre-management conversation only, before the trigger message or
+    // anything else about this turn exists - the agent gets the map it needs up front and
+    // normally never has to call `compress_map` itself.
+    const contextMap = buildContextMap(messages, state, logger, currentParams.providerId);
+    const messageParts = [];
     const systemPrompt = renderSystemPrompt(flags);
     if (systemPrompt) {
-        parts.push(systemPrompt);
+        messageParts.push({ type: "text", text: systemPrompt });
     }
+    messageParts.push({ type: "text", text: contextMap.mapText });
     const retainedText = extractManageCommandResidual(ctx.arguments);
     if (retainedText) {
-        parts.push(["<user-message>", retainedText, "</user-message>"].join("\n"));
+        messageParts.push({
+            type: "text",
+            text: ["<user-message>", retainedText, "</user-message>"].join("\n"),
+        });
     }
-    const currentParams = getCurrentParams(state, messages, logger);
-    const payload = parts.join("\n\n");
     const triggerMessageId = generateManagePromptMessageId();
     state.managementTurns.push({
         triggerMessageId,
@@ -112,7 +120,7 @@ export async function handleManageCommand(ctx) {
             agent: currentParams.agent,
             model,
             variant: currentParams.variant,
-            parts: [{ type: "text", text: payload }],
+            parts: messageParts,
             messageId: triggerMessageId,
         });
     }

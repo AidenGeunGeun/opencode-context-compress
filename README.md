@@ -19,13 +19,17 @@ It helps the model fold completed conversation phases into durable technical sum
 - No autonomous context management loops.
 - No automatic nudges or per-turn injections.
 - Compression runs only when you trigger `/compress manage`.
-- During `/compress manage`, the agent can use `compress_map` and `compress` (subject to permissions).
-- After that management turn completes, its trigger, tool calls, tool outputs, map snapshots, and assistant chatter are hidden from future model prompts.
+- `/compress manage` sends the reminder plus the current `<compress-context-map>` snapshot
+  together, so the agent normally goes straight to one `compress` call (subject to permissions).
+- A successful `compress` call is the finish line: the fold takes effect immediately for the
+  next model turn, with no need to wait for a further user message.
+- After that management turn completes, its trigger, injected map, tool calls, tool outputs,
+  map snapshots, and assistant chatter are hidden from future model prompts.
 
 ## Commands
 
 - `/compress` or `/compress help`: show command help.
-- `/compress manage`: send a lean context-management reminder to the active agent.
+- `/compress manage`: send a lean context-management reminder plus the current context map to the active agent.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
 
@@ -33,15 +37,17 @@ It helps the model fold completed conversation phases into durable technical sum
 
 ## Agentic Workflow
 
-When `/compress manage` runs, the plugin opens a single model-visible management turn with a short reminder. Inside that turn the agent can:
+When `/compress manage` runs, the plugin opens a single model-visible management turn with a short reminder plus the current `<compress-context-map>` snapshot, already built from the conversation so far. Inside that turn the agent normally:
 
-1. Call `compress_map` to fetch the current `<compress-context-map>` snapshot.
-2. Call `compress` with one range at a time to replace completed phases with topical blocks.
-3. Read the refreshed map returned by `compress` and continue iterating in the same turn if needed.
+1. Reads the provided map — no `compress_map` call needed in the ordinary path.
+2. Calls `compress` once with a range to replace completed phases with a topical block.
+3. Gets back a tiny receipt (e.g. `Compression complete. Stored [b4] "..."`), not a refreshed map — the fold is already in effect.
+
+`compress_map` remains available as a fallback for an explicit refresh, a stale/missing map, or debugging. Explicitly consolidating older `[bN]` blocks is still supported as a single `compress` call when the user asks for it.
 
 The manual boundary stays absolute: outside a user-triggered `/compress manage` turn, the plugin does not prompt for compression or open any background workflow.
 
-While the management turn is running, the agent can see its own maps and tool results. On later turns, the model-visible context contains only compressed `[bN]` blocks, normal conversation between compression runs, and the active tail. The cleanup leaves no marker or placeholder behind.
+While the management turn is still open, the agent can see its own map and tool results. The instant `compress` succeeds, the manage prompt, injected map, any fallback `compress_map` output, and status notifications are hidden from the very next model turn — no further user message is needed. The completed `compress` tool call itself stays (protocol requires the pair), but its submitted summary is compacted since it is already stored in the `[bN]` block. On later turns, the model-visible context contains only compressed `[bN]` blocks, normal conversation between compression runs, and the active tail. The cleanup leaves no marker or placeholder behind.
 
 ## Context Map
 
