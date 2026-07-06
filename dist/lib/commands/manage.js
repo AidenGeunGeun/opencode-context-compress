@@ -30,52 +30,26 @@ export function extractManageCommandResidual(args) {
     }
     return residual;
 }
-function createPendingManagementTurnId() {
-    return `pending_compress_manage_${ulid()}`;
+function generateManagePromptMessageId() {
+    return `msg_${ulid()}`;
 }
 function removeManagementTurn(state, triggerMessageId) {
     state.managementTurns = state.managementTurns.filter((turn) => turn.triggerMessageId !== triggerMessageId);
 }
-function finalizeManagementTurnId(state, pendingId, triggerMessageId) {
-    let finalized = false;
-    state.managementTurns = state.managementTurns.map((turn) => {
-        if (turn.triggerMessageId !== pendingId) {
-            return turn;
-        }
-        finalized = true;
-        return {
-            ...turn,
-            triggerMessageId,
-        };
-    });
-    if (!finalized) {
-        state.managementTurns.push({ triggerMessageId });
-    }
-    let keptFinalTurn = false;
-    state.managementTurns = state.managementTurns.filter((turn) => {
-        if (turn.triggerMessageId !== triggerMessageId) {
-            return true;
-        }
-        if (keptFinalTurn) {
-            return false;
-        }
-        keptFinalTurn = true;
-        return true;
-    });
-}
-function extractPromptTriggerMessageId(promptResult) {
+/**
+ * Best-effort sanity check only. The generated trigger ID passed via `messageID` on the
+ * prompt call is the source of truth for cleanup anchoring - the assistant response's
+ * `parentID` is not trusted, since OpenCode can bind it to whatever user message was most
+ * recently created in the session (e.g. a mid-turn ignored status notification), not
+ * necessarily the message that actually started this turn.
+ */
+function extractPromptParentIdForLogging(promptResult) {
     const result = promptResult?.data ?? promptResult;
     const info = result?.info;
     if (!info || typeof info !== "object") {
         return undefined;
     }
-    if (typeof info.parentID === "string" && info.parentID.length > 0) {
-        return info.parentID;
-    }
-    if (info.role === "user" && typeof info.id === "string" && info.id.length > 0) {
-        return info.id;
-    }
-    return undefined;
+    return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined;
 }
 async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
     if (await showToast(client, {
@@ -110,17 +84,17 @@ export async function handleManageCommand(ctx) {
     }
     const currentParams = getCurrentParams(state, messages, logger);
     const payload = parts.join("\n\n");
-    const pendingManagementTurnId = createPendingManagementTurnId();
+    const triggerMessageId = generateManagePromptMessageId();
     state.managementTurns.push({
-        triggerMessageId: pendingManagementTurnId,
+        triggerMessageId,
         ...(retainedText ? { retainedText } : {}),
     });
     const statePersisted = await saveSessionState(state, logger);
     if (!statePersisted) {
-        removeManagementTurn(state, pendingManagementTurnId);
+        removeManagementTurn(state, triggerMessageId);
         logger.error("Manage command aborted because cleanup state could not be persisted", {
             sessionId,
-            pendingManagementTurnId,
+            triggerMessageId,
         });
         await sendManageFailureFeedback(client, logger, sessionId, "Compression management could not start: cleanup state could not be saved.", currentParams);
         return;
@@ -139,29 +113,23 @@ export async function handleManageCommand(ctx) {
             model,
             variant: currentParams.variant,
             parts: [{ type: "text", text: payload }],
+            messageId: triggerMessageId,
         });
     }
     catch (err) {
-        removeManagementTurn(state, pendingManagementTurnId);
+        removeManagementTurn(state, triggerMessageId);
         await saveSessionState(state, logger);
         logger.error("Manage command failed", { error: err?.message });
         await sendManageFailureFeedback(client, logger, sessionId, `Compression management could not start: ${err?.message || "the prompt failed."}`, currentParams);
         return;
     }
-    const triggerMessageId = extractPromptTriggerMessageId(promptResult);
-    if (!triggerMessageId) {
-        removeManagementTurn(state, pendingManagementTurnId);
-        await saveSessionState(state, logger);
-        logger.error("Manage command could not capture generated message ID", { sessionId });
-        await sendManageFailureFeedback(client, logger, sessionId, "Compression management started, but cleanup bookkeeping could not identify the message ID.", currentParams);
-        return;
-    }
-    finalizeManagementTurnId(state, pendingManagementTurnId, triggerMessageId);
-    const finalStatePersisted = await saveSessionState(state, logger);
-    if (!finalStatePersisted) {
-        logger.error("Manage command cleanup state could not be finalized", { sessionId, triggerMessageId });
-        await sendManageFailureFeedback(client, logger, sessionId, "Compression management started, but cleanup bookkeeping could not be saved. Cleanup may not survive restart.", currentParams);
-        return;
+    const returnedParentId = extractPromptParentIdForLogging(promptResult);
+    if (returnedParentId && returnedParentId !== triggerMessageId) {
+        logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
+            sessionId,
+            triggerMessageId,
+            returnedParentId,
+        });
     }
     logger.info("Manage command: sent compression context to agent", { sessionId, triggerMessageId });
 }

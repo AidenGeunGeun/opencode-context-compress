@@ -5,6 +5,8 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
+import { ulid } from "ulid"
+
 import { extractManageCommandResidual, handleManageCommand } from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
 import { createSessionState } from "../lib/state/state.ts"
@@ -102,7 +104,7 @@ const insertLiveMessageById = <T extends { id: string }>(messages: T[], message:
 }
 
 describe("handleManageCommand", () => {
-    it("sends a lean reminder without embedding the context map", async () => {
+    it("sends a lean reminder and anchors cleanup to the generated prompt message ID", async () => {
         const sessionId = `session-manage-command-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()
@@ -111,14 +113,15 @@ describe("handleManageCommand", () => {
 
         let payload = ""
         let promptBody: any
-        const generatedUserId = "msg_01900000000000000000000001"
         const generatedAssistantId = "msg_01900000000000000000000002"
         const client = {
             session: {
                 prompt: async (input: any) => {
                     payload = input.body.parts[0].text
                     promptBody = input.body
-                    return createPromptResponse(generatedAssistantId, generatedUserId)
+                    // Real OpenCode threads the assistant reply's parentID to the
+                    // literal messageID we supplied here.
+                    return createPromptResponse(generatedAssistantId, input.body.messageID)
                 },
             },
         }
@@ -140,10 +143,53 @@ describe("handleManageCommand", () => {
             assert.match(payload, /compress_map/)
             assert.match(payload, /compress/)
             assert.doesNotMatch(payload, /<compress-context-map>/)
-            assert.equal(promptBody.messageID, undefined)
+            assert.match(promptBody.messageID, /^msg_[0-9A-HJKMNP-TV-Z]{26}$/)
             assert.equal(state.managementTurns.length, 1)
-            assert.equal(state.managementTurns[0].triggerMessageId, generatedUserId)
+            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
             assert.ok(nonEmptyLines.length <= 18, `expected <= 18 non-empty lines, got ${nonEmptyLines.length}`)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("persists the generated trigger ID even when the prompt result's parentID points at a later notification", async () => {
+        // Reproduces the `Slice 3 dashboard shell handoff` failure pattern: the assistant
+        // reply's parentID ends up pointing at a mid-turn ignored status notification
+        // instead of the actual manage prompt that started the turn. The generated
+        // messageID we pass through must remain the source of truth regardless.
+        const sessionId = `session-manage-slice3-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const state = createSessionState()
+        state.sessionId = sessionId
+        state.initialized = true
+
+        const misleadingNotificationId = "msg_01900000000000000000000099"
+        const generatedAssistantId = "msg_01900000000000000000000011"
+        let promptBody: any
+        const client = {
+            session: {
+                prompt: async (input: any) => {
+                    promptBody = input.body
+                    return createPromptResponse(generatedAssistantId, misleadingNotificationId)
+                },
+            },
+        }
+
+        try {
+            await handleManageCommand({
+                client,
+                state,
+                config,
+                logger,
+                sessionId,
+                messages: [createUserMessage(sessionId)] as any,
+                arguments: "manage",
+            })
+
+            assert.equal(state.managementTurns.length, 1)
+            assert.ok(promptBody.messageID, "expected a generated messageID to be sent")
+            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
+            assert.notEqual(state.managementTurns[0].triggerMessageId, misleadingNotificationId)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -156,15 +202,15 @@ describe("handleManageCommand", () => {
         state.sessionId = sessionId
         state.initialized = true
 
-        const generatedUserId = "msg_01900000000000000000000010"
-        const generatedAssistantId = "msg_01900000000000000000000011"
+        // Force a strictly-later seed time so the assistant reply's ID sorts after the
+        // trigger ID even when generated within the same test process tick.
+        const generatedAssistantId = `msg_${ulid(Date.now() + 60_000)}`
         let promptBody: any
         const client = {
             session: {
                 prompt: async (input: any) => {
                     promptBody = input.body
-                    const userId = input.body.messageID ?? generatedUserId
-                    return createPromptResponse(generatedAssistantId, userId)
+                    return createPromptResponse(generatedAssistantId, input.body.messageID)
                 },
             },
         }
@@ -181,6 +227,8 @@ describe("handleManageCommand", () => {
             })
 
             const triggerMessageId = state.managementTurns[0].triggerMessageId
+            assert.equal(promptBody.messageID, triggerMessageId)
+
             const liveMessages: Array<{ id: string; role: "user" | "assistant"; parentID?: string }> = []
             insertLiveMessageById(liveMessages, { id: triggerMessageId, role: "user" })
             insertLiveMessageById(liveMessages, {
@@ -191,9 +239,8 @@ describe("handleManageCommand", () => {
 
             assert.deepEqual(
                 liveMessages.map((message) => message.id),
-                [generatedUserId, generatedAssistantId],
+                [triggerMessageId, generatedAssistantId],
             )
-            assert.equal(promptBody.messageID, undefined)
         } finally {
             await cleanupSessionFile(sessionId)
         }

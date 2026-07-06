@@ -108,6 +108,7 @@ describe("compress command smoke flow", () => {
         state.initialized = true
 
         let promptCalls = 0
+        let capturedMessageId: string | undefined
         const client = {
             session: {
                 messages: async () => [createUserMessage(sessionId)],
@@ -115,12 +116,16 @@ describe("compress command smoke flow", () => {
                     promptCalls++
                     const text = input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? ""
                     assert.match(text, /CONTEXT MANAGEMENT REQUESTED/)
+                    capturedMessageId = input.body?.messageID
+                    // Simulate the observed Slice-3 bug: the assistant reply's parentID
+                    // ends up pointing at a mid-turn notification, not the manage prompt.
+                    // The generated messageID we sent must still be the cleanup anchor.
                     return {
                         data: {
                             info: {
                                 id: "assistant-1",
                                 role: "assistant",
-                                parentID: "user-manage-1",
+                                parentID: "user-later-notification-1",
                             },
                         },
                     }
@@ -140,7 +145,9 @@ describe("compress command smoke flow", () => {
             assert.equal(output.cancelled, true)
             assert.equal(promptCalls, 1)
             assert.equal(state.managementTurns.length, 1)
-            assert.equal(state.managementTurns[0].triggerMessageId, "user-manage-1")
+            assert.ok(capturedMessageId, "expected a generated messageID to be sent")
+            assert.equal(state.managementTurns[0].triggerMessageId, capturedMessageId)
+            assert.notEqual(state.managementTurns[0].triggerMessageId, "user-later-notification-1")
         } finally {
             await cleanupSessionFile(sessionId)
         }

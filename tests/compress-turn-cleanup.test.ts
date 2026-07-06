@@ -421,3 +421,256 @@ describe("compress-turn machinery cleanup", () => {
         assert.equal(state.toolParameters.size, 0)
     })
 })
+
+const REALISTIC_MANAGE_PROMPT_TEXT =
+    "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\nThe user explicitly ran `/compress manage`.\n</system-reminder>"
+
+const statusNotificationMessage = (id: string, sessionID: string, tokensSaved: string) =>
+    ignoredUserMessage(id, sessionID, `▣ Context Compress | ~${tokensSaved} saved total`)
+
+describe("legacy residue repair by content signature", () => {
+    it("repairs Slice-3-style residue when the persisted trigger points at a later status notification", () => {
+        const sessionId = "session-cleanup-slice3"
+        const state = createState(sessionId)
+        // Reproduces the observed bug: the persisted trigger is anchored at the LATER
+        // ignored notification instead of the actual manage prompt that started the turn.
+        state.managementTurns = [{ triggerMessageId: "slice3-notification" }]
+
+        const messages = [
+            textMessage("slice3-real-user", sessionId, "Finish the dashboard shell handoff"),
+            textMessage("slice3-real-answer", sessionId, "Handoff notes written.", "assistant"),
+            textMessage("slice3-manage", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            textMessage("slice3-reason", sessionId, "I will inspect the map and fold completed work.", "assistant"),
+            toolMessage("slice3-map", sessionId, "compress_map", "<compress-context-map>stale</compress-context-map>"),
+            toolMessage(
+                "slice3-compress",
+                sessionId,
+                "compress",
+                "Compressed range\n\n<compress-context-map>updated</compress-context-map>",
+            ),
+            textMessage("slice3-close", sessionId, "Compression complete.", "assistant"),
+            statusNotificationMessage("slice3-notification", sessionId, "12.0K tokens"),
+            textMessage("slice3-next", sessionId, "Continue with the next dashboard task"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "slice3-real-user",
+            "slice3-real-answer",
+            "slice3-next",
+        ])
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED/)
+        assert.doesNotMatch(serialized, /compress-context-map/)
+        assert.doesNotMatch(serialized, /▣ Context Compress/)
+        assert.doesNotMatch(serialized, /I will inspect the map/)
+        assert.doesNotMatch(serialized, /Compression complete/)
+    })
+
+    it("retains real mixed-content user text from a legacy manage prompt with no managementTurns state", () => {
+        const sessionId = "session-cleanup-legacy-mixed"
+        const state = createState(sessionId)
+        // No managementTurns recorded at all - this legacy history must be repaired by
+        // content signature alone, and the embedded real instruction must survive.
+        state.managementTurns = []
+
+        const messages = [
+            textMessage("legacy-mixed-manage", sessionId, [
+                REALISTIC_MANAGE_PROMPT_TEXT,
+                "",
+                "<user-message>",
+                "The launch window is June.",
+                "</user-message>",
+            ].join("\n")),
+            toolMessage("legacy-mixed-map", sessionId, "compress_map", "<compress-context-map>stale</compress-context-map>"),
+            textMessage("legacy-mixed-next", sessionId, "Continue with the launch checklist"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "legacy-mixed-manage",
+            "legacy-mixed-next",
+        ])
+        assert.equal(messages[0].parts.length, 1)
+        assert.equal(messages[0].parts[0].text, "The launch window is June.")
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED|compress-context-map|<user-message>/)
+        assert.match(serialized, /The launch window is June\./)
+    })
+
+    it("retains real mixed-content user text even when managementTurns has an incomplete entry for it", () => {
+        const sessionId = "session-cleanup-legacy-mixed-incomplete"
+        const state = createState(sessionId)
+        // Incomplete legacy bookkeeping: the trigger IS recorded (unlike the fully-missing
+        // case above), but without the `retainedText` field, as would happen if an older
+        // plugin version persisted the turn before this repair existed. The state-based plan
+        // alone would suppress the whole message; legacy-signature retention must still win.
+        state.managementTurns = [{ triggerMessageId: "legacy-incomplete-manage" }]
+
+        const messages = [
+            textMessage("legacy-incomplete-manage", sessionId, [
+                REALISTIC_MANAGE_PROMPT_TEXT,
+                "",
+                "<user-message>",
+                "The launch window is June.",
+                "</user-message>",
+            ].join("\n")),
+            toolMessage(
+                "legacy-incomplete-map",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>stale</compress-context-map>",
+            ),
+            textMessage("legacy-incomplete-next", sessionId, "Continue with the launch checklist"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "legacy-incomplete-manage",
+            "legacy-incomplete-next",
+        ])
+        assert.equal(messages[0].parts.length, 1)
+        assert.equal(messages[0].parts[0].text, "The launch window is June.")
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED|compress-context-map|<user-message>/)
+        assert.match(serialized, /The launch window is June\./)
+    })
+
+    it("repairs WIPS-style orphaned compress_map/compress residue without relying on managementTurns", () => {
+        const sessionId = "session-cleanup-wips"
+        const state = createState(sessionId)
+        // Legacy/incomplete persisted state: nothing recorded in managementTurns at all.
+        state.managementTurns = []
+
+        const messages = [
+            textMessage("wips-real-user", sessionId, "Split orchestrator into phase 1A slices"),
+            textMessage("wips-real-answer", sessionId, "Slice plan drafted.", "assistant"),
+            textMessage("wips-manage", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage("wips-map", sessionId, "compress_map", "<compress-context-map>stale</compress-context-map>"),
+            toolMessage(
+                "wips-compress",
+                sessionId,
+                "compress",
+                "Compressed range\n\n<compress-context-map>updated</compress-context-map>",
+            ),
+            statusNotificationMessage("wips-notification", sessionId, "4.0K tokens"),
+            textMessage("wips-next", sessionId, "Continue phase 1A work"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "wips-real-user",
+            "wips-real-answer",
+            "wips-next",
+        ])
+        const serialized = messageTexts(messages)
+        assert.doesNotMatch(serialized, /compress-context-map/)
+        assert.doesNotMatch(serialized, /▣ Context Compress/)
+        assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED/)
+    })
+
+    it("keeps the compress tool's refreshed map visible for the same in-flight turn with no next user message yet", () => {
+        const sessionId = "session-cleanup-inflight-compress"
+        const state = createState(sessionId)
+        state.managementTurns = [{ triggerMessageId: "inflight-manage" }]
+        const messages = [
+            textMessage("inflight-pre", sessionId, "Before this turn"),
+            textMessage("inflight-manage", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage("inflight-map", sessionId, "compress_map", "<compress-context-map>current</compress-context-map>"),
+            toolMessage(
+                "inflight-compress",
+                sessionId,
+                "compress",
+                "Compressed range\n\n<compress-context-map>updated</compress-context-map>",
+            ),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "inflight-pre",
+            "inflight-manage",
+            "inflight-map",
+            "inflight-compress",
+        ])
+        assert.match(messageTexts(messages), /compress-context-map/)
+    })
+
+    it("keeps ordinary conversation that merely mentions compress with no plugin signatures", () => {
+        const sessionId = "session-cleanup-negative"
+        const state = createState(sessionId)
+        const messages = [
+            textMessage("neg-user-1", sessionId, "Can you compress these launch photos before we ship them?"),
+            textMessage("neg-answer-1", sessionId, "Sure, I'll compress the images and report file sizes.", "assistant"),
+            textMessage("neg-user-2", sessionId, "Compress again please, but this time keep the metadata."),
+            textMessage("neg-answer-2", sessionId, "Compressing with metadata retained now.", "assistant"),
+            textMessage("neg-user-3", sessionId, "Compress again."),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "neg-user-1",
+            "neg-answer-1",
+            "neg-user-2",
+            "neg-answer-2",
+            "neg-user-3",
+        ])
+    })
+
+    it("prevents residue drift across repeated cycles even when managementTurns bookkeeping is wrong or missing", () => {
+        const sessionId = "session-cleanup-many-legacy"
+        const state = createState(sessionId)
+        const messages: any[] = []
+
+        for (let i = 0; i < 5; i++) {
+            const workUser = `legacy-work-u-${i}`
+            const workAssistant = `legacy-work-a-${i}`
+            const manage = `legacy-manage-${i}`
+            messages.push(textMessage(workUser, sessionId, `Completed phase ${i} request`))
+            messages.push(textMessage(workAssistant, sessionId, `Completed phase ${i} answer`, "assistant"))
+            messages.push(textMessage(manage, sessionId, REALISTIC_MANAGE_PROMPT_TEXT))
+            messages.push(
+                toolMessage(`legacy-map-${i}`, sessionId, "compress_map", `<compress-context-map>${i}</compress-context-map>`),
+            )
+            messages.push(toolMessage(`legacy-compress-${i}`, sessionId, "compress", `Compressed range ${i}`))
+            messages.push(statusNotificationMessage(`legacy-notification-${i}`, sessionId, `${i}.0K tokens`))
+            messages.push(textMessage(`legacy-between-u-${i}`, sessionId, `Inter-compress user ${i}`))
+            messages.push(textMessage(`legacy-between-a-${i}`, sessionId, `Inter-compress assistant ${i}`, "assistant"))
+
+            state.compressed.messageIds.add(workUser)
+            state.compressed.messageIds.add(workAssistant)
+            state.compressSummaries.push({
+                anchorMessageId: workUser,
+                messageIds: [workUser, workAssistant],
+                summary: `Block summary ${i}`,
+                topic: `Block ${i}`,
+            })
+
+            // Deliberately leave the bookkeeping broken: only every other cycle gets a
+            // managementTurns entry, and that entry points at the later notification
+            // rather than the real manage prompt - mirroring both observed patterns at once.
+            if (i % 2 === 0) {
+                state.managementTurns.push({ triggerMessageId: `legacy-notification-${i}` })
+            }
+        }
+
+        applyCompressTransforms(state, logger, messages)
+
+        const serialized = messageTexts(messages)
+        assert.equal(
+            messages.filter((message: WithParts) => message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX)).length,
+            5,
+        )
+        assert.match(serialized, /Inter-compress user 0/)
+        assert.match(serialized, /Inter-compress assistant 4/)
+        assert.doesNotMatch(
+            serialized,
+            /compress-context-map|CONTEXT MANAGEMENT REQUESTED|▣ Context Compress|Compressed range/,
+        )
+    })
+})

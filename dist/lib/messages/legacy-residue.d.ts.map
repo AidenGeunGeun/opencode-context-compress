@@ -1,0 +1,1 @@
+{"version":3,"file":"legacy-residue.d.ts","sourceRoot":"","sources":["../../../lib/messages/legacy-residue.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,mBAAmB,CAAA;AA2GlD,MAAM,WAAW,4BAA4B;IACzC,oBAAoB,EAAE,GAAG,CAAC,MAAM,CAAC,CAAA;IACjC,uBAAuB,EAAE,GAAG,CAAC,MAAM,EAAE,MAAM,CAAC,CAAA;CAC/C;AAED,wBAAgB,iCAAiC,CAAC,WAAW,EAAE,SAAS,EAAE,GAAG,4BAA4B,CAwDxG"}

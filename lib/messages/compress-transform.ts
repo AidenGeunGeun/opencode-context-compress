@@ -2,6 +2,7 @@ import type { SessionState, WithParts } from "../state/index.js"
 import type { Logger } from "../logger.js"
 import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js"
 import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js"
+import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js"
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT =
@@ -107,7 +108,13 @@ export const transformMessagesForSearch = (
     state: SessionState,
     logger: Logger,
 ): TransformMessagesForSearchResult => {
-    if (!state.compressed.messageIds?.size && !state.managementTurns?.length) {
+    // Legacy residue repair runs by content signature alone, independent of persisted
+    // `managementTurns`, so it must be checked even when that state is empty, wrong, or
+    // incomplete - it is the only thing that can find orphaned artifacts in that case.
+    const legacyPlan = buildLegacyResidueSuppressionPlan(rawMessages)
+    const hasLegacyFindings = legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0
+
+    if (!state.compressed.messageIds?.size && !state.managementTurns?.length && !hasLegacyFindings) {
         return {
             transformed: [...rawMessages],
             syntheticMap: new Map(),
@@ -118,6 +125,23 @@ export const transformMessagesForSearch = (
     const syntheticMap = new Map<string, SessionState["compressSummaries"][number]>()
     const summariesByAnchorId = new Map(state.compressSummaries.map((summary) => [summary.anchorMessageId, summary]))
     const managementSuppression = buildManagementTurnSuppressionPlan(state, rawMessages)
+    for (const [messageId, retainedText] of legacyPlan.retainedTextByMessageId) {
+        if (!managementSuppression.retainedTextByMessageId.has(messageId)) {
+            managementSuppression.retainedTextByMessageId.set(messageId, retainedText)
+        }
+    }
+    for (const messageId of legacyPlan.suppressedMessageIds) {
+        if (!managementSuppression.retainedTextByMessageId.has(messageId)) {
+            managementSuppression.suppressedMessageIds.add(messageId)
+        }
+    }
+    // Retained text always wins, regardless of which side (state-based or legacy-signature)
+    // recorded it, or the order the two plans were merged in - an incomplete state-based
+    // entry (trigger recorded with no `retainedText`) must not pre-suppress a message that
+    // legacy signature scanning later determines has real embedded user text to keep.
+    for (const messageId of managementSuppression.retainedTextByMessageId.keys()) {
+        managementSuppression.suppressedMessageIds.delete(messageId)
+    }
 
     for (let i = 0; i < rawMessages.length; i++) {
         const msg = rawMessages[i]
