@@ -1,5 +1,6 @@
 // Generated prompts (from .md files via scripts/generate-prompts.ts)
 import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated.js"
+import { AUTOMATIC_SYSTEM as AUTOMATIC_SYSTEM_PROMPT } from "./_codegen/automatic-system.generated.js"
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js"
 import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated.js"
 
@@ -24,6 +25,20 @@ function processConditionals(template: string, flags: ToolFlags & Record<string,
 
 export function renderSystemPrompt(flags: ToolFlags): string {
     return processConditionals(SYSTEM_PROMPT, flags as ToolFlags & Record<string, boolean>)
+}
+
+export function renderAutomaticSystemPrompt(
+    flags: ToolFlags,
+    vars: Record<string, string>,
+): string {
+    let prompt = processConditionals(
+        AUTOMATIC_SYSTEM_PROMPT,
+        flags as ToolFlags & Record<string, boolean>,
+    )
+    for (const [key, value] of Object.entries(vars)) {
+        prompt = prompt.replaceAll(`{{${key}}}`, value)
+    }
+    return prompt
 }
 
 const PROMPTS: Record<string, string> = {

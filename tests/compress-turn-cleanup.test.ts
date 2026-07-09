@@ -25,6 +25,12 @@ const config: PluginConfig = {
         enabled: true,
         protectedTools: [],
     },
+    autoCompression: {
+        enabled: true,
+        contextWindowRatio: 0.9,
+        tokenThreshold: 300_000,
+        protectedTurns: 3,
+    },
     turnProtection: {
         enabled: false,
         turns: 0,
@@ -723,7 +729,7 @@ describe("atomic compress completion cleanup", () => {
 
         const compressPart = messages[1].parts[0]
         assert.equal(compressPart.callID, "call-compress-1")
-        assert.equal(compressPart.state.input.summary, "[summary stored in compressed block]")
+        assert.equal(compressPart.state.input.summary, "summary")
         assert.equal(compressPart.state.output, 'Compression complete. Stored [b1] "New Work".')
 
         const serialized = messageTexts(messages)
@@ -768,7 +774,7 @@ describe("atomic compress completion cleanup", () => {
             "compress-msg-2",
             "final-reply-2",
         ])
-        assert.equal(messages[1].parts[0].state.input.summary, "[summary stored in compressed block]")
+        assert.equal(messages[1].parts[0].state.input.summary, "summary")
         assert.match(messageTexts(messages), /All set! Let me know what's next\./)
         assert.doesNotMatch(messageTexts(messages), /CONTEXT MANAGEMENT REQUESTED|compress-context-map/)
     })
@@ -818,9 +824,42 @@ describe("atomic compress completion cleanup", () => {
             "between-assistant",
             "new-compress-msg",
         ])
-        assert.equal(messages[4].parts[0].state.input.summary, "[summary stored in compressed block]")
+        assert.equal(messages[4].parts[0].state.input.summary, "summary")
         const serialized = messageTexts(messages)
         assert.doesNotMatch(serialized, /CONTEXT MANAGEMENT REQUESTED|compress-context-map|▣ Context Compress|Compressed range old/)
         assert.match(serialized, /Normal follow-up between compressions/)
+    })
+
+    it("keeps the completed compress tool input literal so the next model pass cannot mistake a transcript marker for its submitted summary", () => {
+        const sessionId = "session-atomic-completion-keeps-input"
+        const state = createState(sessionId)
+        const submittedSummary = "Real submitted summary with concrete facts, files, commands, and decisions."
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-keep-input",
+                completedAt: new Date().toISOString(),
+                completedCallId: "call-keep-input",
+                completedMessageId: "compress-keep-input",
+            },
+        ]
+
+        const messages = [
+            textMessage("pre", sessionId, "Before this turn"),
+            textMessage("manage-keep-input", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage(
+                "compress-keep-input",
+                sessionId,
+                "compress",
+                'Compression complete. Stored [b0] "Kept Input".',
+                "call-keep-input",
+            ),
+        ] as any
+        messages[2].parts[0].state.input.summary = submittedSummary
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), ["pre", "compress-keep-input"])
+        assert.equal(messages[1].parts[0].state.input.summary, submittedSummary)
+        assert.doesNotMatch(messageTexts(messages), /summary content stored|transcript copy omitted|placeholder/i)
     })
 })

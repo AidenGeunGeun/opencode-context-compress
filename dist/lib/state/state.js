@@ -144,6 +144,8 @@ export function createSessionState() {
         lastCompaction: 0,
         currentTurn: 0,
         variant: undefined,
+        autoCompressionStarting: false,
+        lastAutoTriggeredMessageId: undefined,
     };
 }
 export async function ensureSessionInitialized(client, state, sessionId, logger, messages) {

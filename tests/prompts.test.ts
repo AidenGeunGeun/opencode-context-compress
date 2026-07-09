@@ -4,18 +4,23 @@ import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { loadPrompt, renderSystemPrompt } from "../lib/prompts/index.ts"
+import {
+    loadPrompt,
+    renderAutomaticSystemPrompt,
+    renderSystemPrompt,
+} from "../lib/prompts/index.ts"
 import { SYSTEM } from "../lib/prompts/_codegen/system.generated.ts"
+import { AUTOMATIC_SYSTEM } from "../lib/prompts/_codegen/automatic-system.generated.ts"
 import { COMPRESS } from "../lib/prompts/_codegen/compress.generated.ts"
 import { COMPRESS_MAP } from "../lib/prompts/_codegen/compress-map.generated.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const COMPRESS_GUIDANCE = "CONTEXT MANAGEMENT REQUESTED"
-const APPEND_ONLY_GUIDANCE = "One new block this turn"
-const MAP_ALREADY_PROVIDED_GUIDANCE = "already included with this reminder"
-const COMPRESS_MAP_FALLBACK_GUIDANCE = "Only call `compress_map` again if"
-const COMPRESS_SINGLE_BLOCK_GUIDANCE = "Use `compress` once to fold the completed working context into a single new block."
+const APPEND_ONLY_GUIDANCE = "Default append-only"
+const MAP_ALREADY_PROVIDED_GUIDANCE = "Use the included map snapshot."
+const COMPRESS_MAP_FALLBACK_GUIDANCE = "Do not call `compress_map` in the normal path"
+const COMPRESS_SINGLE_BLOCK_GUIDANCE = "Call `compress` exactly once to fold completed, no-longer-active context into one durable block."
 
 describe("renderSystemPrompt", () => {
     it("includes compress section when flag is true", () => {
@@ -74,6 +79,31 @@ describe("renderSystemPrompt", () => {
     })
 })
 
+describe("renderAutomaticSystemPrompt", () => {
+    it("preserves the active task, protected tail, and immediate continuation contract", () => {
+        const output = renderAutomaticSystemPrompt(
+            { compress: true, compress_map: true },
+            {
+                context_tokens: "310,000",
+                threshold_tokens: "300,000",
+                threshold_reason: "the system-wide absolute token limit",
+            },
+        )
+
+        assert.match(output, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
+        assert.match(output, /middle of an ongoing task/)
+        assert.match(output, /very high information density and breadth/)
+        assert.match(output, /no load-bearing information/)
+        assert.match(output, /310,000 tokens/)
+        assert.match(output, /300,000 tokens/)
+        assert.match(output, /protected active tail/)
+        assert.match(output, /exact user objective/)
+        assert.match(output, /immediately continue the original task/i)
+        assert.match(output, /make no further context-management calls/i)
+        assert.doesNotMatch(output, /\{\{/)
+    })
+})
+
 describe("loadPrompt", () => {
     it("returns non-empty content for compress-tool-spec", () => {
         const output = loadPrompt("compress-tool-spec")
@@ -90,6 +120,9 @@ describe("loadPrompt", () => {
         assert.doesNotMatch(output, /returned map snapshot/i)
         assert.doesNotMatch(output, /use the fresh `<compress-context-map>` returned by the tool/i)
         assert.match(output, /short receipt/i)
+        assert.match(output, /automatic reminder initiated the turn/i)
+        assert.match(output, /immediately resume the original task/i)
+        assert.doesNotMatch(output, /nothing further to call or check this turn/i)
     })
 
     it("returns non-empty content for compress-map-tool-spec", () => {
@@ -123,10 +156,12 @@ describe("loadPrompt", () => {
 
     it("generated prompt code matches the markdown sources", () => {
         const systemSource = readFileSync(join(__dirname, "../lib/prompts/system.md"), "utf-8")
+        const automaticSystemSource = readFileSync(join(__dirname, "../lib/prompts/automatic-system.md"), "utf-8")
         const compressSource = readFileSync(join(__dirname, "../lib/prompts/compress.md"), "utf-8")
         const compressMapSource = readFileSync(join(__dirname, "../lib/prompts/compress-map.md"), "utf-8")
 
         assert.equal(SYSTEM, systemSource)
+        assert.equal(AUTOMATIC_SYSTEM, automaticSystemSource)
         assert.equal(COMPRESS, compressSource)
         assert.equal(COMPRESS_MAP, compressMapSource)
     })

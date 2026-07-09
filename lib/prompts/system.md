@@ -1,20 +1,21 @@
 <system-reminder>
 CONTEXT MANAGEMENT REQUESTED
-The user explicitly ran `/compress manage`.
+The user ran `/compress manage`.
 
-This rewrites what the model sees on every future turn. While the compress plugin is active, the folded original is never shown in detail again (the fold persists across reloads) — be deliberate.
+Use the included map snapshot.
 
-The current compression map snapshot is already included with this reminder — use it directly.
+<compress>Call `compress` exactly once to fold completed, no-longer-active context into one durable block.</compress>
+<compress_map>Do not call `compress_map` in the normal path; use it only if the included map is missing/stale, or the user explicitly asked to inspect/debug the map.</compress_map>
 
-<compress>Use `compress` once to fold the completed working context into a single new block.</compress>
-<compress_map>Only call `compress_map` again if the provided map is missing, looks stale, you need to inspect it explicitly, or an exceptional/debug case requires a fresh snapshot.</compress_map>
+Range:
+- Compress the oldest uncompressed completed span since the last `[bN]`; on the first compression, fold completed history before the active tail.
+- Default append-only: do not include existing `[bN]` blocks. Include/rewrite blocks only when the user explicitly asked to consolidate or recompress them.
+- Leave the active tail/current unresolved work visible.
 
-Summaries should capture the WHY plus any load-bearing details — decisions and reasoning, constraints, gotchas, working commands, key paths, lessons, anything future-you would need to re-derive. Drop only the noise — raw tool output, exploratory greps, abandoned hypotheses, routine reads. Detail is cheap compared to tool calls; when in doubt, keep more.
+Summary:
+- Dense, high-detail, future-useful: preserve WHY, decisions, constraints, gotchas, commands/results, file paths, IDs, and open follow-ups.
+- Drop only noise: raw logs, repeated reads, abandoned dead ends, obvious chatter.
+- Prefer enough detail over terse lossiness.
 
-- One new block this turn: fold the completed work that piled up since the last block into a single new `[bN]`, appended after the existing blocks (on the first compression, fold all completed conversation before the active tail).
-- Compress the oldest uncompressed content first. `[b0]` = oldest fold, `[b1]` next — chronological IDs so each turn appends cleanly without disturbing earlier blocks.
-- Default is append-only: do not include existing `[bN]` blocks in the range. Only select or consolidate existing blocks if the user explicitly asked you to recompress or condense older ones.
-- Leave the active tail alone — the work still in progress.
-- Why append-only: untouched older blocks keep their cached tokens, so only the newest slice is re-encoded; rewriting an older block invalidates everything after it.
-- Once `compress` succeeds, the turn is finished — the fold is already in effect for the next turn, with nothing further to call or check.
+After `compress` succeeds, the fold is already active; no further map or compression calls are needed this turn.
 </system-reminder>

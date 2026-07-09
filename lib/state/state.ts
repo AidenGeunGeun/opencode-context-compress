@@ -186,6 +186,8 @@ export function createSessionState(): SessionState {
         lastCompaction: 0,
         currentTurn: 0,
         variant: undefined,
+        autoCompressionStarting: false,
+        lastAutoTriggeredMessageId: undefined,
     }
 }
 

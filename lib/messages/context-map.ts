@@ -19,6 +19,7 @@ export interface ContextMapEntry {
     tokenEstimate: number
     toolCallCount: number
     toolTypes: string[]
+    protected?: boolean
 }
 
 export interface ContextMapResult {
@@ -27,6 +28,14 @@ export interface ContextMapResult {
     entries: ContextMapEntry[]
     keyOrder: Array<number | string>
     keyToPosition: Map<number | string, number>
+    protectedMessageIds: string[]
+}
+
+export interface ContextMapOptions {
+    /** Derive and mark the newest N OpenCode execution turns as an unselectable tail. */
+    protectedTurns?: number
+    /** Reapply a previously persisted automatic-turn tail to a fresh map snapshot. */
+    protectedMessageIds?: string[]
 }
 
 export interface ResolvedContextMapRange {
@@ -232,6 +241,62 @@ function buildContextMapEntries(
     }
 }
 
+function countStepStarts(entry: ContextMapEntry, messageById: Map<string, WithParts>): number {
+    return entry.rawMessageIds.reduce((count, messageId) => {
+        const message = messageById.get(messageId)
+        if (!message || !Array.isArray(message.parts)) return count
+        return count + message.parts.filter((part) => part.type === "step-start").length
+    }, 0)
+}
+
+function deriveProtectedTailMessageIds(
+    entries: ContextMapEntry[],
+    rawMessages: WithParts[],
+    protectedTurns: number,
+): string[] {
+    if (protectedTurns <= 0) return []
+
+    const messagePositions = entries
+        .map((entry, position) => ({ entry, position }))
+        .filter(({ entry }) => entry.kind === "message")
+    if (messagePositions.length === 0) return []
+
+    const messageById = new Map(rawMessages.map((message) => [message.info.id, message]))
+    let protectedStart = messagePositions[0].position
+    let turnCount = 0
+
+    for (let i = messagePositions.length - 1; i >= 0; i--) {
+        const current = messagePositions[i]
+        protectedStart = current.position
+        turnCount += countStepStarts(current.entry, messageById)
+        if (turnCount >= protectedTurns) break
+    }
+
+    // Synthetic test histories and imported sessions can lack step-start parts. In that
+    // case, treating the last N visible messages as the tail is the least surprising
+    // approximation and still leaves older context selectable.
+    if (turnCount === 0) {
+        protectedStart = messagePositions[Math.max(0, messagePositions.length - protectedTurns)].position
+    }
+
+    return dedupeMessageIds(
+        entries
+            .slice(protectedStart)
+            .filter((entry) => entry.kind === "message")
+            .flatMap((entry) => entry.rawMessageIds),
+    )
+}
+
+function markProtectedEntries(
+    entries: ContextMapEntry[],
+    protectedMessageIds: string[],
+): void {
+    const protectedIds = new Set(protectedMessageIds)
+    for (const entry of entries) {
+        entry.protected = entry.rawMessageIds.some((messageId) => protectedIds.has(messageId))
+    }
+}
+
 function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, string[]>): string {
     const lines: string[] = ["<compress-context-map>"]
 
@@ -240,15 +305,17 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
         const current = entries[i]
 
         if (current.kind === "block") {
+            const protection = current.protected ? " [protected active tail]" : ""
             lines.push(
-                `[${current.key}] [compressed] "${current.preview}" (~${current.tokenEstimate.toLocaleString()} tokens)`,
+                `[${current.key}]${protection} [compressed] "${current.preview}" (~${current.tokenEstimate.toLocaleString()} tokens)`,
             )
             i += 1
             continue
         }
 
         if (current.role === "user") {
-            lines.push(`[${current.key}] user: "${current.preview}"`)
+            const protection = current.protected ? " [protected active tail]" : ""
+            lines.push(`[${current.key}]${protection} user: "${current.preview}"`)
             i += 1
             continue
         }
@@ -260,6 +327,9 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
                 break
             }
             if (next.role === "user") {
+                break
+            }
+            if (next.protected !== current.protected) {
                 break
             }
             end += 1
@@ -282,8 +352,9 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
         const toolDetails =
             toolCallCount > 0 ? `${toolCallCount} tool calls` : `messages grouped for context`
 
+        const protection = current.protected ? " [protected active tail]" : ""
         lines.push(
-            `[${rangeLabel}] assistant: ${toolDetails} - ${firstPreview} (~${tokenEstimate.toLocaleString()} tokens)`,
+            `[${rangeLabel}]${protection} assistant: ${toolDetails} - ${firstPreview} (~${tokenEstimate.toLocaleString()} tokens)`,
         )
 
         i = end + 1
@@ -298,6 +369,10 @@ function buildMapText(entries: ContextMapEntry[], lookup: Map<number | string, s
     lines.push(
         `Total: ${numericEntries.length} messages + ${blockEntries.length} ${blockEntries.length === 1 ? "block" : "blocks"} | ~${totalTokens.toLocaleString()} tokens`,
     )
+    const protectedCount = numericEntries.filter((entry) => entry.protected).length
+    if (protectedCount > 0) {
+        lines.push(`Protected active tail: ${protectedCount} messages`)
+    }
     lines.push("</compress-context-map>")
 
     return lines.join("\n")
@@ -308,8 +383,14 @@ export function buildContextMap(
     state: SessionState,
     logger: Logger,
     providerId?: string,
+    options?: ContextMapOptions,
 ): ContextMapResult {
     const { entries, lookup, keyOrder, keyToPosition } = buildContextMapEntries(rawMessages, state, logger, providerId)
+    const activeTurn = findActiveManagementTurn(state, rawMessages)
+    const protectedMessageIds = options?.protectedMessageIds ??
+        activeTurn?.turn.protectedMessageIds ??
+        deriveProtectedTailMessageIds(entries, rawMessages, options?.protectedTurns ?? 0)
+    markProtectedEntries(entries, protectedMessageIds)
     const mapText = buildMapText(entries, lookup)
     return {
         mapText,
@@ -317,6 +398,7 @@ export function buildContextMap(
         entries,
         keyOrder,
         keyToPosition,
+        protectedMessageIds,
     }
 }
 

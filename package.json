@@ -3,7 +3,7 @@
     "name": "@skybluejacket/opencode-context-compress",
     "version": "0.4.7",
     "type": "module",
-    "description": "Manual context compression plugin for OpenCode sessions",
+    "description": "Model-directed manual and automatic context compression for OpenCode sessions",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "files": [

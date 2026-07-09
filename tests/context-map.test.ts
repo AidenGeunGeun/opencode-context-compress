@@ -210,4 +210,29 @@ describe("buildContextMap", () => {
         assert.deepEqual(result.lookup.get("b1"), ["m3", "m4"])
         assert.deepEqual(result.lookup.get("b2"), ["m5", "m6"])
     })
+
+    it("labels only the derived automatic active tail and keeps older entries selectable", () => {
+        const rawMessages = [
+            textMessage("m1", "Old request"),
+            textMessage("m2", "Old result", "assistant"),
+            textMessage("m3", "Middle request"),
+            textMessage("m4", "Current request"),
+            textMessage("m5", "Current work", "assistant"),
+            textMessage("m6", "Latest work", "assistant"),
+        ]
+
+        const result = buildContextMap(
+            rawMessages as any,
+            createState(),
+            logger,
+            undefined,
+            { protectedTurns: 3 },
+        )
+
+        assert.deepEqual(result.protectedMessageIds, ["m4", "m5", "m6"])
+        assert.equal(result.entries.find((entry) => entry.key === 3)?.protected, false)
+        assert.equal(result.entries.find((entry) => entry.key === 4)?.protected, true)
+        assert.match(result.mapText, /\[4\] \[protected active tail\] user:/)
+        assert.match(result.mapText, /Protected active tail: 3 messages/)
+    })
 })

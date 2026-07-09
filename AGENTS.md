@@ -2,13 +2,15 @@
 
 ## Overview
 
-`opencode-context-compress` is a TypeScript OpenCode plugin for explicit, user-triggered context compression.
+`opencode-context-compress` is a TypeScript OpenCode plugin for model-directed manual and automatic context compression.
 
 Core contract:
 
-- No autonomous context-management loops.
-- Compression workflow is triggered by `/compress manage`.
-- During that management turn, the PM agent can use `compress_map` and `compress`.
+- `/compress manage` remains the explicit manual workflow.
+- Automatic compression can initiate the same one-turn workflow after completed provider usage
+  reaches the configured relative or absolute threshold.
+- The active agent chooses the range and writes the summary; there is no separate summarizer loop.
+- During either management turn, the primary agent can use `compress_map` and `compress`.
 
 ## Build and Test
 
@@ -25,6 +27,11 @@ index.ts
   Plugin entrypoint. Loads config, initializes logger/state, wires hooks,
   conditionally registers tool surfaces, and updates OpenCode config metadata.
 
+lib/auto-compression.ts
+  Reads completed assistant usage events, resolves the relative/absolute trigger,
+  deduplicates per-session starts, skips subagents, and opens an asynchronous
+  automatic management turn.
+
 lib/tools/compress-map.ts
   Returns the current `<compress-context-map>` snapshot.
 
@@ -40,19 +47,21 @@ lib/messages/compress-transform.ts
   session's still-open management turn (not yet completed by `compress`, not
   yet bounded by a later visible user message). Once a turn is completed, its
   span is hidden immediately - no next user message is required - except the
-  completing `compress` tool call, which stays but with its input summary
-  redacted (protocol-valid tool-call/result pair).
+  completing `compress` tool call, which stays briefly with its literal input
+  intact to preserve a protocol-valid tool-call/result pair without synthetic
+  placeholder text.
 
 lib/messages/context-map.ts
   Builds <compress-context-map> with numeric entries and compressed [bN] blocks,
-  and resolves map boundaries to raw message IDs. Excludes the active
+  resolves map boundaries to raw message IDs, and labels the automatic active
+  tail. Excludes the active
   management turn's own trigger message (reminder + injected map) from
   selectable entries while that turn is still open.
 
 lib/commands/manage.ts
-  Implements /compress manage: builds the current context map from the
-  pre-management conversation and sends it with the reminder in one
-  model-visible management turn, so the agent normally never needs to call
+  Starts both manual and automatic management turns: builds the current context
+  map from the pre-management conversation, persists the cleanup anchor, and
+  sends the reminder and map together so the agent normally never needs to call
   `compress_map` itself.
 
 lib/config.ts
@@ -66,17 +75,21 @@ lib/state/*
 ## Runtime Flow
 
 1. Startup loads config and initializes state.
-2. Hooks sync tool cache, apply compression transforms, and route `/compress` commands.
+2. Hooks cache model limits, observe completed assistant usage, sync tool cache, apply
+   compression transforms, and route `/compress` commands.
 3. `/compress manage` injects a short reminder plus the current `<compress-context-map>`
    snapshot in the same turn; the agent normally calls `compress` once directly.
    `compress_map` remains available as a fallback/debug/explicit-use path.
-4. On a successful `compress` call, persistence is atomic and the management turn is marked
+4. Automatic compression starts the same workflow once usage reaches the earlier of the
+   configured context-window ratio and absolute token threshold. Its persisted map protects
+   the configured recent execution tail, and the success receipt instructs task continuation.
+5. On a successful `compress` call, persistence is atomic and the management turn is marked
    completed immediately - the fold takes effect for the very next model continuation, with
    no need to wait for a further visible user message.
-5. While the management turn is still open (before `compress` succeeds), its own prompt/map
+6. While the management turn is still open (before `compress` succeeds), its own prompt/map
    and tool results stay visible so the agent can work; the completing `compress` tool call
-   itself remains afterward too, but with its input summary compacted to a placeholder.
-6. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
+   itself remains afterward too, with its literal input intact until the turn is historical.
+7. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
    inter-compress conversation, and the active tail remain model-visible.
 
 ## Prompt Generation
@@ -91,7 +104,10 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
-Each session state tracks: `compressedMsgIds`, `compressedToolIds`, `summaries`, completed management-turn cleanup markers, `totalTokensSaved`, `isSubAgent`, `initialized`. State is persisted to disk at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`. The `initialized` flag prevents redundant disk loads.
+Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
+markers, compression stats, subagent status, initialization, and runtime-only threshold metadata.
+Durable fields are persisted at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`.
+The `initialized` flag prevents redundant disk loads.
 
 Subagent sessions are detected via `isSubAgent` and skip compression entirely (early return in transform hook).
 
@@ -117,9 +133,11 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 ## Notes
 
-- `compress_map` and `compress` are for explicit user-requested context management only; there is no runtime manage-window guard beyond that prompt contract.
+- `compress_map` and `compress` are for manual or plugin-initiated management turns. Automatic
+  protected-tail enforcement lives in `compress`; manual range choice remains model-directed.
 - Completed `/compress manage` turns leave no model-visible machinery marker; future prompts show blocks, inter-compress normal conversation, and active tail.
-- Context maps no longer emit a hardcoded `Active: [...]` footer. The PM agent decides what counts as the active tail.
+- Manual context maps do not emit a hardcoded active footer. Automatic maps label only the
+  configured recent tail as `[protected active tail]`.
 - `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.
 - Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.

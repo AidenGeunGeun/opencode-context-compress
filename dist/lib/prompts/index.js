@@ -1,5 +1,6 @@
 // Generated prompts (from .md files via scripts/generate-prompts.ts)
 import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated.js";
+import { AUTOMATIC_SYSTEM as AUTOMATIC_SYSTEM_PROMPT } from "./_codegen/automatic-system.generated.js";
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js";
 import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated.js";
 function processConditionals(template, flags) {
@@ -17,6 +18,13 @@ function processConditionals(template, flags) {
 }
 export function renderSystemPrompt(flags) {
     return processConditionals(SYSTEM_PROMPT, flags);
+}
+export function renderAutomaticSystemPrompt(flags, vars) {
+    let prompt = processConditionals(AUTOMATIC_SYSTEM_PROMPT, flags);
+    for (const [key, value] of Object.entries(vars)) {
+        prompt = prompt.replaceAll(`{{${key}}}`, value);
+    }
+    return prompt;
 }
 const PROMPTS = {
     "compress-tool-spec": COMPRESS_TOOL_SPEC,

@@ -8,7 +8,6 @@ export interface TransformMessagesForSearchResult {
 interface ManagementTurnSuppressionPlan {
     suppressedMessageIds: Set<string>;
     retainedTextByMessageId: Map<string, string>;
-    redactToolCallsByMessageId: Map<string, Set<string>>;
 }
 /**
  * Finds the session's currently open management turn, if any: a turn that is not yet

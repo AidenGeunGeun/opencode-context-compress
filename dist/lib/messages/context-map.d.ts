@@ -12,6 +12,7 @@ export interface ContextMapEntry {
     tokenEstimate: number;
     toolCallCount: number;
     toolTypes: string[];
+    protected?: boolean;
 }
 export interface ContextMapResult {
     mapText: string;
@@ -19,6 +20,13 @@ export interface ContextMapResult {
     entries: ContextMapEntry[];
     keyOrder: Array<number | string>;
     keyToPosition: Map<number | string, number>;
+    protectedMessageIds: string[];
+}
+export interface ContextMapOptions {
+    /** Derive and mark the newest N OpenCode execution turns as an unselectable tail. */
+    protectedTurns?: number;
+    /** Reapply a previously persisted automatic-turn tail to a fresh map snapshot. */
+    protectedMessageIds?: string[];
 }
 export interface ResolvedContextMapRange {
     fromKey: ContextMapKey;
@@ -31,6 +39,6 @@ export interface ResolvedContextMapRange {
     nonBlockMessageIds: string[];
     blockIds: string[];
 }
-export declare function buildContextMap(rawMessages: WithParts[], state: SessionState, logger: Logger, providerId?: string): ContextMapResult;
+export declare function buildContextMap(rawMessages: WithParts[], state: SessionState, logger: Logger, providerId?: string, options?: ContextMapOptions): ContextMapResult;
 export declare function resolveContextMapRange(contextMap: ContextMapResult, from: number | string, to: number | string): ResolvedContextMapRange;
 //# sourceMappingURL=context-map.d.ts.map

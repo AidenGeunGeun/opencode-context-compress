@@ -67,7 +67,9 @@ function sandboxEnv(sandbox: Awaited<ReturnType<typeof createSandbox>>): NodeJS.
 
 function assertHookContract(hooks: Hooks) {
     assert.equal(typeof hooks, "object")
+    assert.equal(typeof hooks.event, "function")
     assert.equal(typeof hooks["experimental.chat.messages.transform"], "function")
+    assert.equal(typeof hooks["chat.params"], "function")
     assert.equal(typeof hooks["chat.message"], "function")
     assert.equal(typeof hooks["command.execute.before"], "function")
     assert.equal(typeof hooks.config, "function")
@@ -146,6 +148,7 @@ describe("built Node ESM package", () => {
 
             const opencodeConfig: Record<string, any> = {}
             await hooks.config?.(opencodeConfig as any)
+            assert.equal(opencodeConfig.compaction.auto, false)
             assert.equal(opencodeConfig.command.compress.description, "Show available context compression commands")
             assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress_map", "compress"])
             assert.equal(opencodeConfig.permission.compress_map, "allow")

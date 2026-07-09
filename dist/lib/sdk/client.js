@@ -74,6 +74,42 @@ export async function promptSession(client, input) {
         },
     });
 }
+export async function promptSessionAsync(client, input) {
+    const sessionClient = client?.session;
+    if (typeof sessionClient?.promptAsync !== "function") {
+        return promptSession(client, input);
+    }
+    const model = input.model
+        ? {
+            providerID: input.model.providerID,
+            modelID: input.model.modelID,
+        }
+        : undefined;
+    if (usesFlatRequestShape(client)) {
+        return sessionClient.promptAsync({
+            sessionID: input.sessionId,
+            parts: input.parts,
+            agent: input.agent,
+            model,
+            variant: input.variant,
+            noReply: input.noReply,
+            messageID: input.messageId,
+        });
+    }
+    return sessionClient.promptAsync({
+        path: {
+            id: input.sessionId,
+        },
+        body: {
+            parts: input.parts,
+            agent: input.agent,
+            model,
+            variant: input.variant,
+            noReply: input.noReply,
+            messageID: input.messageId,
+        },
+    });
+}
 export async function showToast(client, input) {
     const tuiClient = client?.tui;
     if (typeof tuiClient?.showToast !== "function") {

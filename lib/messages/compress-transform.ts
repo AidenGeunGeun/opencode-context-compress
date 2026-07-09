@@ -30,7 +30,6 @@ export interface TransformMessagesForSearchResult {
 interface ManagementTurnSuppressionPlan {
     suppressedMessageIds: Set<string>
     retainedTextByMessageId: Map<string, string>
-    redactToolCallsByMessageId: Map<string, Set<string>>
 }
 
 function isVisibleUserMessage(message: WithParts): boolean {
@@ -107,10 +106,9 @@ export function buildManagementTurnSuppressionPlan(
 ): ManagementTurnSuppressionPlan {
     const suppressedMessageIds = new Set<string>()
     const retainedTextByMessageId = new Map<string, string>()
-    const redactToolCallsByMessageId = new Map<string, Set<string>>()
 
     if (!state.managementTurns?.length) {
-        return { suppressedMessageIds, retainedTextByMessageId, redactToolCallsByMessageId }
+        return { suppressedMessageIds, retainedTextByMessageId }
     }
 
     const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
@@ -172,16 +170,6 @@ export function buildManagementTurnSuppressionPlan(
             retainedTextByMessageId,
         )
 
-        if (turn.completedCallId) {
-            const existing = redactToolCallsByMessageId.get(turn.completedMessageId!) ?? new Set<string>()
-            existing.add(turn.completedCallId)
-            redactToolCallsByMessageId.set(turn.completedMessageId!, existing)
-        } else if (!redactToolCallsByMessageId.has(turn.completedMessageId!)) {
-            // No callID was available from the runtime - fall back to redacting any
-            // `compress` tool part on the completing message (see below).
-            redactToolCallsByMessageId.set(turn.completedMessageId!, new Set<string>())
-        }
-
         // Anything strictly after the completion point and before the eventual next real
         // user turn is either the agent's genuine reply (left untouched) or a plugin status
         // notification (ignored user message) that must not linger either.
@@ -196,44 +184,7 @@ export function buildManagementTurnSuppressionPlan(
         }
     }
 
-    return { suppressedMessageIds, retainedTextByMessageId, redactToolCallsByMessageId }
-}
-
-const COMPRESS_INPUT_SUMMARY_REDACTED = "[summary stored in compressed block]"
-
-/**
- * Compacts a completed `compress` tool call's input so the full submitted summary is not
- * duplicated in provider-visible context (it already lives in the stored `[bN]` block). An
- * empty `callIds` set means no callID was available from the runtime - redact any `compress`
- * tool part on the message instead, since a message normally carries at most one.
- */
-function redactCompressToolCallSummary(message: WithParts, callIds: Set<string>): WithParts {
-    const parts = Array.isArray(message.parts) ? message.parts : []
-    const nextParts = parts.map((part: any) => {
-        if (part.type !== "tool") {
-            return part
-        }
-        const matches = callIds.size > 0 ? callIds.has(part.callID) : part.tool === "compress"
-        if (!matches) {
-            return part
-        }
-        const state = part.state
-        if (!state || typeof state !== "object" || !state.input || typeof state.input.summary !== "string") {
-            return part
-        }
-        return {
-            ...part,
-            state: {
-                ...state,
-                input: {
-                    ...state.input,
-                    summary: COMPRESS_INPUT_SUMMARY_REDACTED,
-                },
-            },
-        }
-    })
-
-    return { ...message, parts: nextParts }
+    return { suppressedMessageIds, retainedTextByMessageId }
 }
 
 function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {
@@ -327,12 +278,6 @@ export const transformMessagesForSearch = (
         }
 
         if (managementSuppression.suppressedMessageIds.has(msgId)) {
-            continue
-        }
-
-        const redactCallIds = managementSuppression.redactToolCallsByMessageId.get(msgId)
-        if (redactCallIds) {
-            transformed.push(redactCompressToolCallSummary(msg, redactCallIds))
             continue
         }
 

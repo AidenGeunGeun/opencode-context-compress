@@ -110,6 +110,23 @@ function normalizeManagementTurns(turns) {
             ...(typeof turn.completedMessageId === "string" && turn.completedMessageId.length > 0
                 ? { completedMessageId: turn.completedMessageId }
                 : {}),
+            ...(turn.source === "automatic" ? { source: "automatic" } : {}),
+            ...(typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0
+                ? { triggeredByMessageId: turn.triggeredByMessageId }
+                : {}),
+            ...(Array.isArray(turn.protectedMessageIds)
+                ? {
+                    protectedMessageIds: [
+                        ...new Set(turn.protectedMessageIds.filter((messageId) => typeof messageId === "string" && messageId.length > 0)),
+                    ],
+                }
+                : {}),
+            ...(typeof turn.contextTokens === "number" && Number.isFinite(turn.contextTokens)
+                ? { contextTokens: turn.contextTokens }
+                : {}),
+            ...(typeof turn.thresholdTokens === "number" && Number.isFinite(turn.thresholdTokens)
+                ? { thresholdTokens: turn.thresholdTokens }
+                : {}),
         });
     }
     return normalized;

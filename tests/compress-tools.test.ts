@@ -28,6 +28,12 @@ const config: PluginConfig = {
         enabled: true,
         protectedTools: [],
     },
+    autoCompression: {
+        enabled: true,
+        contextWindowRatio: 0.9,
+        tokenThreshold: 300_000,
+        protectedTurns: 3,
+    },
     turnProtection: {
         enabled: false,
         turns: 0,
@@ -248,6 +254,77 @@ describe("compression management tools", () => {
             assert.equal(typeof turn.completedAt, "string")
             assert.equal(turn.completedCallId, "call-manage-compress-1")
             assert.equal(turn.completedMessageId, "message-call-manage-compress-1")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("rejects an automatic protected-tail range, then resumes the task after a valid older range", async () => {
+        const sessionId = `session-auto-protected-tail-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+
+        try {
+            const rawMessages = [
+                textMessage("m1", sessionId, "Completed older work"),
+                textMessage("m2", sessionId, "Current active work", "assistant"),
+                textMessage(
+                    "auto-trigger",
+                    sessionId,
+                    "<system-reminder>\nAUTOMATIC CONTEXT COMPRESSION REQUIRED\n</system-reminder>",
+                ),
+            ]
+            const stateManager = new SessionStateManager()
+            const state = stateManager.get(sessionId)
+            state.sessionId = sessionId
+            state.initialized = true
+            state.managementTurns = [
+                {
+                    triggerMessageId: "auto-trigger",
+                    source: "automatic",
+                    triggeredByMessageId: "m2",
+                    protectedMessageIds: ["m2"],
+                    contextTokens: 310_000,
+                    thresholdTokens: 300_000,
+                },
+            ]
+
+            const tool = createCompressTool({
+                client: createClient(rawMessages),
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+
+            await assert.rejects(
+                () =>
+                    tool.execute(
+                        {
+                            from: 2,
+                            to: 2,
+                            topic: "Active Work",
+                            summary: "This must remain visible.",
+                        },
+                        createToolContext(sessionId, "call-auto-rejected") as any,
+                    ),
+                /protected active tail/i,
+            )
+            assert.equal(state.managementTurns[0].completedAt, undefined)
+
+            const output = await tool.execute(
+                {
+                    from: 1,
+                    to: 1,
+                    topic: "Older Work",
+                    summary: "Completed older work with all durable decisions.",
+                },
+                createToolContext(sessionId, "call-auto-valid") as any,
+            )
+
+            assert.match(output, /^Compression complete\. Stored \[b0\] "Older Work"\./)
+            assert.match(output, /Continue the original task now/)
+            assert.match(output, /do not stop for a compression report/)
+            assert.equal(typeof state.managementTurns[0].completedAt, "string")
         } finally {
             await cleanupSessionFile(sessionId)
         }

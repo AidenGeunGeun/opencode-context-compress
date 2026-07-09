@@ -5,8 +5,6 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { ulid } from "ulid"
-
 import { extractManageCommandResidual, handleManageCommand } from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
 import { createSessionState } from "../lib/state/state.ts"
@@ -26,6 +24,12 @@ const config: PluginConfig = {
     commands: {
         enabled: true,
         protectedTools: [],
+    },
+    autoCompression: {
+        enabled: true,
+        contextWindowRatio: 0.9,
+        tokenThreshold: 300_000,
+        protectedTurns: 3,
     },
     turnProtection: {
         enabled: false,
@@ -155,7 +159,7 @@ describe("handleManageCommand", () => {
             assert.match(fullPayload, /\[1\] user: "Please manage context"/)
             assert.match(fullPayload, /Total: 1 messages \+ 0 blocks/)
 
-            assert.match(promptBody.messageID, /^msg_[0-9A-HJKMNP-TV-Z]{26}$/)
+            assert.match(promptBody.messageID, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
             assert.equal(state.managementTurns.length, 1)
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
         } finally {
@@ -213,9 +217,7 @@ describe("handleManageCommand", () => {
         state.sessionId = sessionId
         state.initialized = true
 
-        // Force a strictly-later seed time so the assistant reply's ID sorts after the
-        // trigger ID even when generated within the same test process tick.
-        const generatedAssistantId = `msg_${ulid(Date.now() + 60_000)}`
+        const generatedAssistantId = "msg_zzzzzzzzzzzzzzzzzzzzzzzzzz"
         let promptBody: any
         const client = {
             session: {
@@ -239,6 +241,10 @@ describe("handleManageCommand", () => {
 
             const triggerMessageId = state.managementTurns[0].triggerMessageId
             assert.equal(promptBody.messageID, triggerMessageId)
+            assert.ok(
+                triggerMessageId > "msg_f36d1953e001LLAN53Qcy9ZdYU",
+                "generated manage prompt ID must sort after recent OpenCode msg_f... IDs",
+            )
 
             const liveMessages: Array<{ id: string; role: "user" | "assistant"; parentID?: string }> = []
             insertLiveMessageById(liveMessages, { id: triggerMessageId, role: "user" })

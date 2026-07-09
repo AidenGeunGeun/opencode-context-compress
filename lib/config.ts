@@ -34,12 +34,27 @@ export interface TurnProtection {
     turns: number
 }
 
+export interface AutoCompression {
+    enabled: boolean
+    contextWindowRatio: number
+    tokenThreshold: number
+    protectedTurns: number
+}
+
+export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
+    enabled: true,
+    contextWindowRatio: 0.9,
+    tokenThreshold: 300_000,
+    protectedTurns: 3,
+}
+
 export interface PluginConfig {
     enabled: boolean
     debug: boolean
     notification: "off" | "minimal" | "detailed"
     notificationType: "chat" | "toast"
     commands: Commands
+    autoCompression: AutoCompression
     turnProtection: TurnProtection
     protectedFilePatterns: string[]
     tools: Tools
@@ -65,6 +80,11 @@ export const VALID_CONFIG_KEYS = new Set([
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
+    "autoCompression",
+    "autoCompression.enabled",
+    "autoCompression.contextWindowRatio",
+    "autoCompression.tokenThreshold",
+    "autoCompression.protectedTurns",
     "turnProtection",
     "turnProtection.enabled",
     "turnProtection.turns",
@@ -137,6 +157,64 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
                 expected: '"chat" | "toast"',
                 actual: JSON.stringify(config.notificationType),
             })
+        }
+    }
+
+    const autoCompression = config.autoCompression
+    if (autoCompression !== undefined) {
+        if (!autoCompression || typeof autoCompression !== "object" || Array.isArray(autoCompression)) {
+            errors.push({
+                key: "autoCompression",
+                expected: "object",
+                actual: Array.isArray(autoCompression) ? "array" : typeof autoCompression,
+            })
+        } else {
+            if (
+                autoCompression.enabled !== undefined &&
+                typeof autoCompression.enabled !== "boolean"
+            ) {
+                errors.push({
+                    key: "autoCompression.enabled",
+                    expected: "boolean",
+                    actual: typeof autoCompression.enabled,
+                })
+            }
+            if (
+                autoCompression.contextWindowRatio !== undefined &&
+                (typeof autoCompression.contextWindowRatio !== "number" ||
+                    autoCompression.contextWindowRatio <= 0 ||
+                    autoCompression.contextWindowRatio > 1)
+            ) {
+                errors.push({
+                    key: "autoCompression.contextWindowRatio",
+                    expected: "number greater than 0 and at most 1",
+                    actual: JSON.stringify(autoCompression.contextWindowRatio),
+                })
+            }
+            if (
+                autoCompression.tokenThreshold !== undefined &&
+                (typeof autoCompression.tokenThreshold !== "number" ||
+                    !Number.isFinite(autoCompression.tokenThreshold) ||
+                    autoCompression.tokenThreshold <= 0)
+            ) {
+                errors.push({
+                    key: "autoCompression.tokenThreshold",
+                    expected: "positive finite number",
+                    actual: JSON.stringify(autoCompression.tokenThreshold),
+                })
+            }
+            if (
+                autoCompression.protectedTurns !== undefined &&
+                (typeof autoCompression.protectedTurns !== "number" ||
+                    !Number.isInteger(autoCompression.protectedTurns) ||
+                    autoCompression.protectedTurns < 0)
+            ) {
+                errors.push({
+                    key: "autoCompression.protectedTurns",
+                    expected: "non-negative integer",
+                    actual: JSON.stringify(autoCompression.protectedTurns),
+                })
+            }
         }
     }
 
@@ -312,6 +390,7 @@ const defaultConfig: PluginConfig = {
         enabled: true,
         protectedTools: [...DEFAULT_PROTECTED_TOOLS],
     },
+    autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
     turnProtection: {
         enabled: false,
         turns: 4,
@@ -469,6 +548,20 @@ function mergeCommands(
     }
 }
 
+function mergeAutoCompression(
+    base: PluginConfig["autoCompression"],
+    override?: Partial<PluginConfig["autoCompression"]>,
+): PluginConfig["autoCompression"] {
+    if (override === undefined) return base
+
+    return {
+        enabled: override.enabled ?? base.enabled,
+        contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
+        tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
+        protectedTurns: override.protectedTurns ?? base.protectedTurns,
+    }
+}
+
 function deepCloneConfig(config: PluginConfig): PluginConfig {
     return {
         ...config,
@@ -476,6 +569,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
             enabled: config.commands.enabled,
             protectedTools: [...config.commands.protectedTools],
         },
+        autoCompression: { ...config.autoCompression },
         turnProtection: { ...config.turnProtection },
         protectedFilePatterns: [...config.protectedFilePatterns],
         tools: {
@@ -514,6 +608,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands as any),
+                autoCompression: mergeAutoCompression(
+                    config.autoCompression,
+                    result.data.autoCompression as any,
+                ),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
@@ -553,6 +651,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands as any),
+                autoCompression: mergeAutoCompression(
+                    config.autoCompression,
+                    result.data.autoCompression as any,
+                ),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
@@ -589,6 +691,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands as any),
+                autoCompression: mergeAutoCompression(
+                    config.autoCompression,
+                    result.data.autoCompression as any,
+                ),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,

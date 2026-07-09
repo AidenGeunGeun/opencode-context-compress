@@ -114,6 +114,51 @@ export async function promptSession(client: unknown, input: SessionPromptInput):
     })
 }
 
+export async function promptSessionAsync(client: unknown, input: SessionPromptInput): Promise<unknown> {
+    const sessionClient = (client as {
+        session?: {
+            promptAsync?: (input: unknown) => Promise<unknown>
+            prompt?: (input: unknown) => Promise<unknown>
+        }
+    })?.session
+    if (typeof sessionClient?.promptAsync !== "function") {
+        return promptSession(client, input)
+    }
+
+    const model = input.model
+        ? {
+              providerID: input.model.providerID,
+              modelID: input.model.modelID,
+          }
+        : undefined
+
+    if (usesFlatRequestShape(client)) {
+        return sessionClient.promptAsync({
+            sessionID: input.sessionId,
+            parts: input.parts,
+            agent: input.agent,
+            model,
+            variant: input.variant,
+            noReply: input.noReply,
+            messageID: input.messageId,
+        })
+    }
+
+    return sessionClient.promptAsync({
+        path: {
+            id: input.sessionId,
+        },
+        body: {
+            parts: input.parts,
+            agent: input.agent,
+            model,
+            variant: input.variant,
+            noReply: input.noReply,
+            messageID: input.messageId,
+        },
+    })
+}
+
 export async function showToast(client: unknown, input: ToastInput): Promise<boolean> {
     const tuiClient = (client as { tui?: { showToast?: (input: unknown) => Promise<unknown> } })?.tui
     if (typeof tuiClient?.showToast !== "function") {

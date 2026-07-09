@@ -260,6 +260,11 @@ describe("saveSessionState", () => {
                 {
                     triggerMessageId: "m4",
                     retainedText: "unrelated user text",
+                    source: "automatic",
+                    triggeredByMessageId: "m3",
+                    protectedMessageIds: ["m2", "m3", "m3"],
+                    contextTokens: 310_000,
+                    thresholdTokens: 300_000,
                 },
             ]
             state.stats = {
@@ -293,6 +298,11 @@ describe("saveSessionState", () => {
                 {
                     triggerMessageId: "m4",
                     retainedText: "unrelated user text",
+                    source: "automatic",
+                    triggeredByMessageId: "m3",
+                    protectedMessageIds: ["m2", "m3"],
+                    contextTokens: 310_000,
+                    thresholdTokens: 300_000,
                 },
             ])
             assert.deepEqual(loadResult.state.stats, {

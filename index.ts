@@ -5,6 +5,10 @@ import { SessionStateManager } from "./lib/state/index.js"
 import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js"
 import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks.js"
 import { configureClientAuth, isSecureMode } from "./lib/auth.js"
+import {
+    createAutomaticCompressionEventHandler,
+    createChatParamsHandler,
+} from "./lib/auto-compression.js"
 
 const stateManager = new SessionStateManager()
 
@@ -25,6 +29,12 @@ const plugin: Plugin = (async (ctx) => {
     logger.info("Context Compress initialized")
 
     const hooks = {
+        event: createAutomaticCompressionEventHandler(
+            ctx.client,
+            stateManager,
+            logger,
+            config,
+        ),
         "experimental.chat.messages.transform": createChatMessageTransformHandler(
             ctx.client,
             stateManager,
@@ -32,6 +42,7 @@ const plugin: Plugin = (async (ctx) => {
             config,
             ctx.directory,
         ) as any,
+        "chat.params": createChatParamsHandler(stateManager),
         "chat.message": async (
             input: {
                 sessionID: string
@@ -74,6 +85,13 @@ const plugin: Plugin = (async (ctx) => {
             }),
         },
         config: async (opencodeConfig: any) => {
+            if (config.autoCompression.enabled) {
+                opencodeConfig.compaction = {
+                    ...opencodeConfig.compaction,
+                    auto: false,
+                }
+            }
+
             if (config.commands.enabled) {
                 opencodeConfig.command ??= {}
                 opencodeConfig.command["compress"] = {

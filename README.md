@@ -4,27 +4,32 @@
 
 # opencode-context-compress
 
-**Manual-first context compression. You own the when.**
+**Model-directed context compression, with manual control and automatic safety.**
 
 [![npm version](https://img.shields.io/npm/v/%40skybluejacket%2Fopencode-context-compress?color=369eff&labelColor=black&style=flat-square)](https://www.npmjs.com/package/@skybluejacket/opencode-context-compress)
 [![License](https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square)](LICENSE)
 
 </div>
 
-OpenCode plugin for explicit, user-triggered context compression.
-It helps the model fold completed conversation phases into durable technical summaries only when you ask for it.
+OpenCode plugin for model-directed context compression. Run it explicitly with `/compress manage`,
+or let the plugin initiate the same workflow before a primary session fills its context window.
 
 ## Core Behavior
 
-- No autonomous context management loops.
-- No automatic nudges or per-turn injections.
-- Compression runs only when you trigger `/compress manage`.
+- No separate summarizer or hidden compaction model: the active agent chooses and summarizes the range.
+- Manual compression runs when you trigger `/compress manage`.
+- Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
+  the model-reported context window or 300,000 tokens by default.
+- When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
+  through the plugin config hook so the two mechanisms cannot race.
 - `/compress manage` sends the reminder plus the current `<compress-context-map>` snapshot
   together, so the agent normally goes straight to one `compress` call (subject to permissions).
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
   next model turn, with no need to wait for a further user message.
 - After that management turn completes, its trigger, injected map, tool calls, tool outputs,
   map snapshots, and assistant chatter are hidden from future model prompts.
+- Automatic turns protect the three most recent OpenCode execution turns by default, require a
+  high-detail current-task handoff, and tell the agent to resume the interrupted task immediately.
 
 ## Commands
 
@@ -37,7 +42,9 @@ It helps the model fold completed conversation phases into durable technical sum
 
 ## Agentic Workflow
 
-When `/compress manage` runs, the plugin opens a single model-visible management turn with a short reminder plus the current `<compress-context-map>` snapshot, already built from the conversation so far. Inside that turn the agent normally:
+For both `/compress manage` and an automatic threshold trigger, the plugin opens a single
+model-visible management turn with a short reminder plus the current `<compress-context-map>`
+snapshot. Inside that turn the agent normally:
 
 1. Reads the provided map — no `compress_map` call needed in the ordinary path.
 2. Calls `compress` once with a range to replace completed phases with a topical block.
@@ -45,9 +52,11 @@ When `/compress manage` runs, the plugin opens a single model-visible management
 
 `compress_map` remains available as a fallback for an explicit refresh, a stale/missing map, or debugging. Explicitly consolidating older `[bN]` blocks is still supported as a single `compress` call when the user asks for it.
 
-The manual boundary stays absolute: outside a user-triggered `/compress manage` turn, the plugin does not prompt for compression or open any background workflow.
+Automatic triggering is event-driven, per session, and deduplicated. It observes completed
+provider usage; it does not inject a reminder on every turn. Subagent sessions remain excluded
+because their transform and effective tool-permission contract is different from primary sessions.
 
-While the management turn is still open, the agent can see its own map and tool results. The instant `compress` succeeds, the manage prompt, injected map, any fallback `compress_map` output, and status notifications are hidden from the very next model turn — no further user message is needed. The completed `compress` tool call itself stays (protocol requires the pair), but its submitted summary is compacted since it is already stored in the `[bN]` block. On later turns, the model-visible context contains only compressed `[bN]` blocks, normal conversation between compression runs, and the active tail. The cleanup leaves no marker or placeholder behind.
+While the management turn is still open, the agent can see its own map and tool results. The instant `compress` succeeds, the manage prompt, injected map, any fallback `compress_map` output, and status notifications are hidden from the very next model turn — no further user message is needed. The completed `compress` tool call itself stays briefly because providers require the tool-call/result pair; its submitted input is left literal so the agent cannot mistake a synthetic marker for what it submitted. On later turns, the model-visible context contains only compressed `[bN]` blocks, normal conversation between compression runs, and the active tail. The cleanup leaves no marker or placeholder behind.
 
 ## Context Map
 
@@ -65,7 +74,11 @@ Total: 8 messages + 1 block | ~6,500 tokens
 </compress-context-map>
 ```
 
-The agent decides what counts as the active tail. Older completed work should be compressed more tersely than the most recent completed phase. Block labels follow where their anchors appear in the conversation stream, so re-compressing one block does not renumber unrelated blocks.
+During manual management, the agent decides what counts as the active tail. During automatic
+management, recent protected entries are labeled `[protected active tail]`; the agent still chooses
+the range, but `compress` rejects a range that crosses that safety boundary. Block labels follow
+where their anchors appear in the conversation stream, so re-compressing one block does not
+renumber unrelated blocks.
 
 ## Installation
 
@@ -132,6 +145,12 @@ Default runtime config:
         "enabled": true,
         "protectedTools": ["task", "todowrite", "todoread", "compress", "compress_map", "batch", "plan_enter", "plan_exit"]
     },
+    "autoCompression": {
+        "enabled": true,
+        "contextWindowRatio": 0.9,
+        "tokenThreshold": 300000,
+        "protectedTurns": 3
+    },
     "turnProtection": {
         "enabled": false,
         "turns": 4
@@ -163,7 +182,7 @@ Stored fields include:
 - compressed tool IDs
 - compressed message IDs
 - compression summaries
-- completed management-turn cleanup markers
+- manual and automatic management-turn cleanup markers, including automatic protected-tail IDs
 - per-session compression stats
 
 The raw conversation history still exists in OpenCode storage, but completed `/compress manage` machinery is suppressed from future model prompts. Restarting the session reloads the saved cleanup markers, so old management turns do not reappear in the model-visible stream.
@@ -173,11 +192,13 @@ The raw conversation history still exists in OpenCode storage, but completed `/c
 ```bash
 npm install
 npm run generate:prompts
-npx tsc --noEmit
+npm run typecheck
 npm test
+npm run build
 ```
 
 Prompt utility docs are in `scripts/README.md`.
+The project-scoped agent onboarding skill is in `.agents/skills/work-on-context-compress/`.
 
 ## License
 

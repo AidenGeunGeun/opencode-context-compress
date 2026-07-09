@@ -1,5 +1,5 @@
 import type { Logger } from "../logger.js"
-import type { SessionState, WithParts } from "../state/index.js"
+import type { ManagementTurn, SessionState, WithParts } from "../state/index.js"
 import type { PluginConfig } from "../config.js"
 import { renderSystemPrompt } from "../prompts/index.js"
 import { getCurrentParams } from "../token-utils.js"
@@ -7,8 +7,7 @@ import { syncToolCache } from "../state/tool-cache.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { buildContextMap } from "../messages/context-map.js"
-import { ulid } from "ulid"
-import { promptSession, showToast } from "../sdk/client.js"
+import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
     client: any
@@ -18,6 +17,23 @@ export interface ManageCommandContext {
     sessionId: string
     messages: WithParts[]
     arguments?: string
+}
+
+export interface ManagementTurnStartContext {
+    client: any
+    state: SessionState
+    config: PluginConfig
+    logger: Logger
+    sessionId: string
+    messages: WithParts[]
+    systemPrompt: string
+    retainedText?: string
+    source?: "automatic"
+    triggeredByMessageId?: string
+    contextTokens?: number
+    thresholdTokens?: number
+    protectedTurns?: number
+    asyncPrompt?: boolean
 }
 
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i
@@ -51,8 +67,31 @@ export function extractManageCommandResidual(args: string | undefined): string |
     return residual
 }
 
-function generateManagePromptMessageId(): string {
-    return `msg_${ulid()}`
+const ASCENDING_ID_RANDOM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+let lastGeneratedMessageIdTimestamp = 0
+let lastGeneratedMessageIdCounter = 0
+
+function generateAscendingMessageIdSuffix(timestamp = Date.now()): string {
+    if (timestamp !== lastGeneratedMessageIdTimestamp) {
+        lastGeneratedMessageIdTimestamp = timestamp
+        lastGeneratedMessageIdCounter = 0
+    }
+    lastGeneratedMessageIdCounter++
+
+    const current = BigInt(timestamp) * 0x1000n + BigInt(lastGeneratedMessageIdCounter)
+    const time = Array.from({ length: 6 }, (_, index) =>
+        Number((current >> BigInt(40 - 8 * index)) & 0xffn)
+            .toString(16)
+            .padStart(2, "0"),
+    ).join("")
+    const random = Array.from({ length: 14 }, () =>
+        ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)],
+    ).join("")
+    return time + random
+}
+
+export function generateManagePromptMessageId(): string {
+    return `msg_${generateAscendingMessageIdSuffix()}`
 }
 
 function removeManagementTurn(state: SessionState, triggerMessageId: string): void {
@@ -101,43 +140,79 @@ async function sendManageFailureFeedback(
 }
 
 export async function handleManageCommand(ctx: ManageCommandContext): Promise<void> {
+    const flags = {
+        compress: ctx.config.tools.compress.permission !== "deny",
+        compress_map: ctx.config.tools.compress_map.permission !== "deny",
+    }
+
+    await startManagementTurn({
+        client: ctx.client,
+        state: ctx.state,
+        config: ctx.config,
+        logger: ctx.logger,
+        sessionId: ctx.sessionId,
+        messages: ctx.messages,
+        systemPrompt: renderSystemPrompt(flags),
+        retainedText: extractManageCommandResidual(ctx.arguments),
+    })
+}
+
+export async function startManagementTurn(ctx: ManagementTurnStartContext): Promise<boolean> {
     const { client, state, config, logger, sessionId, messages } = ctx
 
     await syncToolCache(state, config, logger, messages)
-
-    const flags = {
-        compress: config.tools.compress.permission !== "deny",
-        compress_map: config.tools.compress_map.permission !== "deny",
-    }
 
     const currentParams = getCurrentParams(state, messages, logger)
 
     // Built from the pre-management conversation only, before the trigger message or
     // anything else about this turn exists - the agent gets the map it needs up front and
     // normally never has to call `compress_map` itself.
-    const contextMap = buildContextMap(messages, state, logger, currentParams.providerId)
+    const contextMap = buildContextMap(
+        messages,
+        state,
+        logger,
+        currentParams.providerId,
+        ctx.source === "automatic" ? { protectedTurns: ctx.protectedTurns ?? 0 } : undefined,
+    )
+
+    if (
+        ctx.source === "automatic" &&
+        !contextMap.entries.some((entry) => entry.kind === "message" && !entry.protected)
+    ) {
+        logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
+            sessionId,
+            protectedTurns: ctx.protectedTurns ?? 0,
+        })
+        return false
+    }
 
     const messageParts: Array<Record<string, unknown>> = []
 
-    const systemPrompt = renderSystemPrompt(flags)
-    if (systemPrompt) {
-        messageParts.push({ type: "text", text: systemPrompt })
+    if (ctx.systemPrompt) {
+        messageParts.push({ type: "text", text: ctx.systemPrompt })
     }
     messageParts.push({ type: "text", text: contextMap.mapText })
 
-    const retainedText = extractManageCommandResidual(ctx.arguments)
-    if (retainedText) {
+    if (ctx.retainedText) {
         messageParts.push({
             type: "text",
-            text: ["<user-message>", retainedText, "</user-message>"].join("\n"),
+            text: ["<user-message>", ctx.retainedText, "</user-message>"].join("\n"),
         })
     }
 
     const triggerMessageId = generateManagePromptMessageId()
-    state.managementTurns.push({
+    const managementTurn: ManagementTurn = {
         triggerMessageId,
-        ...(retainedText ? { retainedText } : {}),
-    })
+        ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
+        ...(ctx.source === "automatic" ? { source: "automatic" as const } : {}),
+        ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
+        ...(ctx.source === "automatic"
+            ? { protectedMessageIds: contextMap.protectedMessageIds }
+            : {}),
+        ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
+        ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
+    }
+    state.managementTurns.push(managementTurn)
 
     const statePersisted = await saveSessionState(state, logger)
     if (!statePersisted) {
@@ -153,7 +228,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
             "Compression management could not start: cleanup state could not be saved.",
             currentParams,
         )
-        return
+        return false
     }
 
     const model =
@@ -166,7 +241,8 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
 
     let promptResult: any
     try {
-        promptResult = await promptSession(client, {
+        const sendPrompt = ctx.asyncPrompt ? promptSessionAsync : promptSession
+        promptResult = await sendPrompt(client, {
             sessionId,
             agent: currentParams.agent,
             model,
@@ -185,7 +261,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
             `Compression management could not start: ${err?.message || "the prompt failed."}`,
             currentParams,
         )
-        return
+        return false
     }
 
     const returnedParentId = extractPromptParentIdForLogging(promptResult)
@@ -197,5 +273,10 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         })
     }
 
-    logger.info("Manage command: sent compression context to agent", { sessionId, triggerMessageId })
+    logger.info("Sent compression context to agent", {
+        sessionId,
+        triggerMessageId,
+        source: ctx.source ?? "manual",
+    })
+    return true
 }

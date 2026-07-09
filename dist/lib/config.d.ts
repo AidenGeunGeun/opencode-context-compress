@@ -22,12 +22,20 @@ export interface TurnProtection {
     enabled: boolean;
     turns: number;
 }
+export interface AutoCompression {
+    enabled: boolean;
+    contextWindowRatio: number;
+    tokenThreshold: number;
+    protectedTurns: number;
+}
+export declare const DEFAULT_AUTO_COMPRESSION: AutoCompression;
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
     notification: "off" | "minimal" | "detailed";
     notificationType: "chat" | "toast";
     commands: Commands;
+    autoCompression: AutoCompression;
     turnProtection: TurnProtection;
     protectedFilePatterns: string[];
     tools: Tools;

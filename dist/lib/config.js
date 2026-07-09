@@ -3,6 +3,12 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { parse } from "jsonc-parser";
 import { showToast } from "./sdk/client.js";
+export const DEFAULT_AUTO_COMPRESSION = {
+    enabled: true,
+    contextWindowRatio: 0.9,
+    tokenThreshold: 300_000,
+    protectedTurns: 3,
+};
 const DEFAULT_PROTECTED_TOOLS = [
     "task",
     "todowrite",
@@ -22,6 +28,11 @@ export const VALID_CONFIG_KEYS = new Set([
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
+    "autoCompression",
+    "autoCompression.enabled",
+    "autoCompression.contextWindowRatio",
+    "autoCompression.tokenThreshold",
+    "autoCompression.protectedTurns",
     "turnProtection",
     "turnProtection.enabled",
     "turnProtection.turns",
@@ -82,6 +93,56 @@ function validateConfigTypes(config) {
                 expected: '"chat" | "toast"',
                 actual: JSON.stringify(config.notificationType),
             });
+        }
+    }
+    const autoCompression = config.autoCompression;
+    if (autoCompression !== undefined) {
+        if (!autoCompression || typeof autoCompression !== "object" || Array.isArray(autoCompression)) {
+            errors.push({
+                key: "autoCompression",
+                expected: "object",
+                actual: Array.isArray(autoCompression) ? "array" : typeof autoCompression,
+            });
+        }
+        else {
+            if (autoCompression.enabled !== undefined &&
+                typeof autoCompression.enabled !== "boolean") {
+                errors.push({
+                    key: "autoCompression.enabled",
+                    expected: "boolean",
+                    actual: typeof autoCompression.enabled,
+                });
+            }
+            if (autoCompression.contextWindowRatio !== undefined &&
+                (typeof autoCompression.contextWindowRatio !== "number" ||
+                    autoCompression.contextWindowRatio <= 0 ||
+                    autoCompression.contextWindowRatio > 1)) {
+                errors.push({
+                    key: "autoCompression.contextWindowRatio",
+                    expected: "number greater than 0 and at most 1",
+                    actual: JSON.stringify(autoCompression.contextWindowRatio),
+                });
+            }
+            if (autoCompression.tokenThreshold !== undefined &&
+                (typeof autoCompression.tokenThreshold !== "number" ||
+                    !Number.isFinite(autoCompression.tokenThreshold) ||
+                    autoCompression.tokenThreshold <= 0)) {
+                errors.push({
+                    key: "autoCompression.tokenThreshold",
+                    expected: "positive finite number",
+                    actual: JSON.stringify(autoCompression.tokenThreshold),
+                });
+            }
+            if (autoCompression.protectedTurns !== undefined &&
+                (typeof autoCompression.protectedTurns !== "number" ||
+                    !Number.isInteger(autoCompression.protectedTurns) ||
+                    autoCompression.protectedTurns < 0)) {
+                errors.push({
+                    key: "autoCompression.protectedTurns",
+                    expected: "non-negative integer",
+                    actual: JSON.stringify(autoCompression.protectedTurns),
+                });
+            }
         }
     }
     if (config.protectedFilePatterns !== undefined) {
@@ -234,6 +295,7 @@ const defaultConfig = {
         enabled: true,
         protectedTools: [...DEFAULT_PROTECTED_TOOLS],
     },
+    autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
     turnProtection: {
         enabled: false,
         turns: 4,
@@ -369,6 +431,16 @@ function mergeCommands(base, override) {
         protectedTools: [...new Set([...base.protectedTools, ...(override.protectedTools ?? [])])],
     };
 }
+function mergeAutoCompression(base, override) {
+    if (override === undefined)
+        return base;
+    return {
+        enabled: override.enabled ?? base.enabled,
+        contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
+        tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
+        protectedTurns: override.protectedTurns ?? base.protectedTurns,
+    };
+}
 function deepCloneConfig(config) {
     return {
         ...config,
@@ -376,6 +448,7 @@ function deepCloneConfig(config) {
             enabled: config.commands.enabled,
             protectedTools: [...config.commands.protectedTools],
         },
+        autoCompression: { ...config.autoCompression },
         turnProtection: { ...config.turnProtection },
         protectedFilePatterns: [...config.protectedFilePatterns],
         tools: {
@@ -413,6 +486,7 @@ export function getConfig(ctx) {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands),
+                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
@@ -453,6 +527,7 @@ export function getConfig(ctx) {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands),
+                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
@@ -489,6 +564,7 @@ export function getConfig(ctx) {
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 commands: mergeCommands(config.commands, result.data.commands),
+                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
                     enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
                     turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,

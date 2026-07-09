@@ -1,4 +1,4 @@
-Use this tool during a user-initiated `/compress manage` turn to fold the completed working context into a single stored summary block. This call is the finishing step of the turn: once it returns successfully, the fold is already in effect and the older context and management scaffolding are gone from the next turn.
+Use this tool during a `/compress manage` turn or a plugin-initiated automatic compression turn to fold completed working context into a single stored summary block. Once it returns successfully, the fold is already in effect for the next model continuation.
 
 One new block per turn. Append it as the newest `[bN]`; never touch existing blocks.
 
@@ -14,5 +14,5 @@ Args:
 - Exception — ONLY when the user explicitly asks you to consolidate/compress older blocks: you may select a contiguous run of existing `[bN]` blocks and condense them into one. This deliberately invalidates cache from that point, so never do it on a normal turn.
 - Leave the active tail alone — the work you're still in the middle of.
 - Why append-only by default: each older block stays byte-identical across turns, so its cached tokens survive. Reaching back to rewrite a block invalidates everything after that point.
-- On success, the return value is a short receipt confirming what was stored, not a map. There is nothing further to call or check this turn.
-- Do not use outside explicit user-requested context management.
+- On success, the return value is a short receipt confirming what was stored, not a map. Do not call `compress` or `compress_map` again this turn. If an automatic reminder initiated the turn, immediately resume the original task; otherwise continue according to the user's request.
+- Do not use outside a manual or plugin-initiated compression-management turn.

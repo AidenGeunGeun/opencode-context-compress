@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "compress.schema.json",
     "title": "Context Compress Configuration",
-    "description": "Configuration for Context Compress - user-controlled context compression plugin",
+    "description": "Configuration for Context Compress - manual and automatic context compression plugin",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -31,6 +31,43 @@
             "enum": ["chat", "toast"],
             "default": "chat",
             "description": "Where to display compression notifications (chat message or toast notification)"
+        },
+        "autoCompression": {
+            "type": "object",
+            "description": "Automatically initiate model-directed compression before the context window fills",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable plugin-owned automatic compression and disable native OpenCode auto-compaction"
+                },
+                "contextWindowRatio": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "default": 0.9,
+                    "description": "Initiate compression at this fraction of the model-reported context window"
+                },
+                "tokenThreshold": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "default": 300000,
+                    "description": "System-wide absolute initiation threshold; the earlier of this and contextWindowRatio wins"
+                },
+                "protectedTurns": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 3,
+                    "description": "Recent OpenCode execution turns kept outside automatic compression ranges"
+                }
+            },
+            "default": {
+                "enabled": true,
+                "contextWindowRatio": 0.9,
+                "tokenThreshold": 300000,
+                "protectedTurns": 3
+            }
         },
         "commands": {
             "type": "object",

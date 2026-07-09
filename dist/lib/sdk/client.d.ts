@@ -23,5 +23,6 @@ export declare function listSessionMessages(client: unknown, sessionId: string, 
     limit?: number;
 }): Promise<unknown[]>;
 export declare function promptSession(client: unknown, input: SessionPromptInput): Promise<unknown>;
+export declare function promptSessionAsync(client: unknown, input: SessionPromptInput): Promise<unknown>;
 export declare function showToast(client: unknown, input: ToastInput): Promise<boolean>;
 //# sourceMappingURL=client.d.ts.map

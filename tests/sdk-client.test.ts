@@ -7,6 +7,7 @@ import {
     getSession,
     listSessionMessages,
     promptSession,
+    promptSessionAsync,
     showToast,
 } from "../lib/sdk/client.ts"
 
@@ -142,5 +143,49 @@ describe("SDK client adapter", () => {
 
         assert.equal("_client" in v1Client, true)
         assert.equal("client" in v2Client, true)
+    })
+
+    it("uses promptAsync when the host exposes it and falls back to prompt otherwise", async () => {
+        const calls: unknown[] = []
+        const asyncClient = {
+            _client: {},
+            session: {
+                promptAsync: async (input: unknown) => {
+                    calls.push(input)
+                },
+            },
+        }
+
+        await promptSessionAsync(asyncClient, {
+            sessionId: "session-async",
+            parts: [{ type: "text", text: "compress now" }],
+            messageId: "message-async",
+        })
+
+        assert.deepEqual(calls[0], {
+            path: { id: "session-async" },
+            body: {
+                parts: [{ type: "text", text: "compress now" }],
+                agent: undefined,
+                model: undefined,
+                variant: undefined,
+                noReply: undefined,
+                messageID: "message-async",
+            },
+        })
+
+        let fallbackCalls = 0
+        await promptSessionAsync(
+            {
+                _client: {},
+                session: {
+                    prompt: async () => {
+                        fallbackCalls++
+                    },
+                },
+            },
+            { sessionId: "session-fallback", parts: [{ type: "text", text: "fallback" }] },
+        )
+        assert.equal(fallbackCalls, 1)
     })
 })

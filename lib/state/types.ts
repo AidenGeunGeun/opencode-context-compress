@@ -31,6 +31,14 @@ export interface CompressSummary {
 export interface ManagementTurn {
     triggerMessageId: string
     retainedText?: string
+    /** Present only for plugin-initiated automatic compression turns. */
+    source?: "automatic"
+    /** Assistant message whose completed usage crossed the automatic threshold. */
+    triggeredByMessageId?: string
+    /** Raw message IDs that automatic compression must leave visible as the active tail. */
+    protectedMessageIds?: string[]
+    contextTokens?: number
+    thresholdTokens?: number
     /** ISO timestamp set once a `compress` call completes this turn. Presence marks completion. */
     completedAt?: string
     /** The completing `compress` tool call's ID, if the runtime provided one. */
@@ -59,4 +67,14 @@ export interface SessionState {
     lastCompaction: number
     currentTurn: number
     variant: string | undefined
+    /** Runtime-only model metadata captured from the latest chat.params hook. */
+    modelContext?: {
+        providerId: string
+        modelId: string
+        contextLimit: number
+    }
+    /** Runtime-only lock preventing duplicate threshold events from starting two turns. */
+    autoCompressionStarting?: boolean
+    /** Runtime-only deduplication marker for repeated message.updated events. */
+    lastAutoTriggeredMessageId?: string
 }
