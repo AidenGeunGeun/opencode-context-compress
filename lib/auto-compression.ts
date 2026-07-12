@@ -1,10 +1,18 @@
 import type { PluginConfig } from "./config.js"
 import type { Logger } from "./logger.js"
-import { startManagementTurn } from "./commands/manage.js"
+import {
+    stageManagementTurnWithinLock,
+    type StagedManagementTurn,
+} from "./commands/manage.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
 import { listSessionMessages, showToast } from "./sdk/client.js"
 import { ensureSessionInitialized, SessionStateManager, type WithParts } from "./state/index.js"
+import {
+    isMessageWithinPostCompressionCooldown,
+    messageContainsCompressCall,
+    resolveEffectiveAutoCompressionPolicy,
+} from "./auto-policy.js"
 
 interface AssistantUsage {
     total?: number
@@ -57,7 +65,7 @@ export function getAssistantContextTokens(tokens: AssistantUsage | undefined): n
 
 export function resolveAutomaticCompressionThreshold(
     contextTokens: number,
-    config: PluginConfig["autoCompression"],
+    config: Pick<PluginConfig["autoCompression"], "contextWindowRatio" | "tokenThreshold">,
     contextLimit?: number,
 ): AutomaticCompressionThreshold {
     const normalizedContextLimit = positiveFinite(contextLimit) || undefined
@@ -114,10 +122,6 @@ function findContextLimit(
     return cached.contextLimit
 }
 
-function messageContainsCompressCall(message: WithParts | undefined): boolean {
-    return !!message?.parts?.some((part) => part.type === "tool" && part.tool === "compress")
-}
-
 function formatThresholdReason(result: AutomaticCompressionThreshold, ratio: number): string {
     return result.reason === "context-window-ratio"
         ? `${Math.round(ratio * 100)}% of the model-reported context window`
@@ -145,90 +149,147 @@ export function createAutomaticCompressionEventHandler(
             return
         }
 
-        const contextTokens = getAssistantContextTokens(info.tokens)
-        const threshold = resolveAutomaticCompressionThreshold(
-            contextTokens,
-            config.autoCompression,
-            findContextLimit(stateManager, info),
-        )
-        if (contextTokens < threshold.thresholdTokens) return
-
         const state = stateManager.get(info.sessionID)
-        if (
-            state.isSubAgent ||
-            state.autoCompressionStarting ||
-            state.lastAutoTriggeredMessageId === info.id
-        ) {
-            return
-        }
+        const contextTokens = getAssistantContextTokens(info.tokens)
+        if (state.initialized && state.persistenceSynchronized) {
+            const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state)
+            const threshold = resolveAutomaticCompressionThreshold(
+                contextTokens,
+                policy,
+                findContextLimit(stateManager, info),
+            )
 
-        state.autoCompressionStarting = true
-        state.lastAutoTriggeredMessageId = info.id
-
-        try {
-            const messages = (await listSessionMessages(client, info.sessionID)) as WithParts[]
-            if (messages.length === 0) {
-                logger.warn("Automatic compression skipped because session messages were unavailable", {
-                    sessionId: info.sessionID,
-                    messageId: info.id,
-                })
-                return
-            }
-
-            await ensureSessionInitialized(client, state, info.sessionID, logger, messages)
-            if (state.isSubAgent) {
-                logger.debug("Automatic compression skipped for subagent session", {
-                    sessionId: info.sessionID,
-                })
-                return
-            }
-
+            // Cooldown progress is derived from the transcript when it is next needed, so
+            // skipping a transcript read here cannot lose responses or double-count events.
             if (
-                state.managementTurns.some(
-                    (turn) =>
-                        turn.source === "automatic" &&
-                        turn.triggeredByMessageId === info.id,
-                )
+                state.isSubAgent ||
+                !policy.enabled ||
+                contextTokens < threshold.thresholdTokens ||
+                state.autoCompressionStarting ||
+                state.lastAutoTriggeredMessageId === info.id
             ) {
                 return
             }
-            if (findActiveManagementTurn(state, messages)) return
-            if (messageContainsCompressCall(messages.find((message) => message.info.id === info.id))) return
+        }
 
-            const flags = {
-                compress: true,
-                compress_map: config.tools.compress_map.permission !== "deny",
-            }
-            const started = await startManagementTurn({
-                client,
-                state,
-                config,
-                logger,
-                sessionId: info.sessionID,
-                messages,
-                systemPrompt: renderAutomaticSystemPrompt(flags, {
-                    context_tokens: contextTokens.toLocaleString("en-US"),
-                    threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
-                    threshold_reason: formatThresholdReason(
-                        threshold,
-                        config.autoCompression.contextWindowRatio,
-                    ),
-                }),
-                source: "automatic",
-                triggeredByMessageId: info.id,
-                contextTokens,
-                thresholdTokens: threshold.thresholdTokens,
-                protectedTurns: config.autoCompression.protectedTurns,
-                asyncPrompt: true,
+        let attemptedStart = false
+        let reserved:
+            | {
+                  staged: StagedManagementTurn
+                  threshold: AutomaticCompressionThreshold
+                  contextTokens: number
+              }
+            | undefined
+
+        try {
+            reserved = await stateManager.runExclusive(info.sessionID, async () => {
+                const messages = (await listSessionMessages(client, info.sessionID)) as WithParts[]
+                if (messages.length === 0) {
+                    logger.warn("Automatic compression skipped because session messages were unavailable", {
+                        sessionId: info.sessionID,
+                        messageId: info.id,
+                    })
+                    return undefined
+                }
+
+                await ensureSessionInitialized(client, state, info.sessionID, logger, messages)
+                if (!state.persistenceSynchronized) {
+                    logger.warn("Automatic compression skipped because session policy could not be loaded", {
+                        sessionId: info.sessionID,
+                    })
+                    return undefined
+                }
+                if (state.isSubAgent) {
+                    logger.debug("Automatic compression skipped for subagent session", {
+                        sessionId: info.sessionID,
+                    })
+                    return undefined
+                }
+
+                const cooldownApplies = isMessageWithinPostCompressionCooldown(
+                    state,
+                    messages,
+                    info.id,
+                )
+                const policy = resolveEffectiveAutoCompressionPolicy(
+                    config.autoCompression,
+                    state,
+                )
+                if (
+                    !policy.enabled ||
+                    config.tools.compress.permission === "deny" ||
+                    cooldownApplies
+                ) {
+                    return undefined
+                }
+
+                const threshold = resolveAutomaticCompressionThreshold(
+                    contextTokens,
+                    policy,
+                    findContextLimit(stateManager, info),
+                )
+                if (contextTokens < threshold.thresholdTokens) return undefined
+
+                if (
+                    state.autoCompressionStarting ||
+                    state.lastAutoTriggeredMessageId === info.id ||
+                    state.managementTurns.some(
+                        (turn) =>
+                            turn.source === "automatic" &&
+                            turn.triggeredByMessageId === info.id,
+                    ) ||
+                    findActiveManagementTurn(state, messages) ||
+                    messageContainsCompressCall(
+                        messages.find((message) => message.info.id === info.id),
+                    )
+                ) {
+                    return undefined
+                }
+
+                state.autoCompressionStarting = true
+                state.lastAutoTriggeredMessageId = info.id
+                attemptedStart = true
+
+                const flags = {
+                    compress: true,
+                    compress_map: config.tools.compress_map.permission !== "deny",
+                }
+                const staged = await stageManagementTurnWithinLock({
+                    client,
+                    stateManager,
+                    state,
+                    config,
+                    logger,
+                    sessionId: info.sessionID,
+                    messages,
+                    systemPrompt: renderAutomaticSystemPrompt(flags, {
+                        context_tokens: contextTokens.toLocaleString("en-US"),
+                        threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
+                        threshold_reason: formatThresholdReason(
+                            threshold,
+                            policy.contextWindowRatio,
+                        ),
+                    }),
+                    source: "automatic",
+                    triggeredByMessageId: info.id,
+                    contextTokens,
+                    thresholdTokens: threshold.thresholdTokens,
+                    protectedTurns: config.autoCompression.protectedTurns,
+                    asyncPrompt: true,
+                })
+                return staged ? { staged, threshold, contextTokens } : undefined
             })
+
+            if (!reserved) return
+            const started = await reserved.staged()
 
             if (started) {
                 logger.info("Automatic compression initiated", {
                     sessionId: info.sessionID,
                     messageId: info.id,
-                    contextTokens,
-                    thresholdTokens: threshold.thresholdTokens,
-                    reason: threshold.reason,
+                    contextTokens: reserved.contextTokens,
+                    thresholdTokens: reserved.threshold.thresholdTokens,
+                    reason: reserved.threshold.reason,
                 })
             }
         } catch (error) {
@@ -245,7 +306,9 @@ export function createAutomaticCompressionEventHandler(
                 duration: 8000,
             })
         } finally {
-            state.autoCompressionStarting = false
+            if (attemptedStart) {
+                state.autoCompressionStarting = false
+            }
         }
     }
 }

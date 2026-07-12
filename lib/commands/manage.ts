@@ -1,5 +1,7 @@
 import type { Logger } from "../logger.js"
 import type { ManagementTurn, SessionState, WithParts } from "../state/index.js"
+import type { SessionStateManager } from "../state/state.js"
+import { commitDurableSessionState } from "../state/state.js"
 import type { PluginConfig } from "../config.js"
 import { renderSystemPrompt } from "../prompts/index.js"
 import { getCurrentParams } from "../token-utils.js"
@@ -11,6 +13,7 @@ import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
     client: any
+    stateManager: SessionStateManager
     state: SessionState
     config: PluginConfig
     logger: Logger
@@ -21,6 +24,7 @@ export interface ManageCommandContext {
 
 export interface ManagementTurnStartContext {
     client: any
+    stateManager: SessionStateManager
     state: SessionState
     config: PluginConfig
     logger: Logger
@@ -35,6 +39,8 @@ export interface ManagementTurnStartContext {
     protectedTurns?: number
     asyncPrompt?: boolean
 }
+
+export type StagedManagementTurn = () => Promise<boolean>
 
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i
 const LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i
@@ -94,10 +100,6 @@ export function generateManagePromptMessageId(): string {
     return `msg_${generateAscendingMessageIdSuffix()}`
 }
 
-function removeManagementTurn(state: SessionState, triggerMessageId: string): void {
-    state.managementTurns = state.managementTurns.filter((turn) => turn.triggerMessageId !== triggerMessageId)
-}
-
 /**
  * Best-effort sanity check only. The generated trigger ID passed via `messageID` on the
  * prompt call is the source of truth for cleanup anchoring - the assistant response's
@@ -147,6 +149,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
 
     await startManagementTurn({
         client: ctx.client,
+        stateManager: ctx.stateManager,
         state: ctx.state,
         config: ctx.config,
         logger: ctx.logger,
@@ -157,12 +160,27 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
     })
 }
 
-export async function startManagementTurn(ctx: ManagementTurnStartContext): Promise<boolean> {
-    const { client, state, config, logger, sessionId, messages } = ctx
-
-    await syncToolCache(state, config, logger, messages)
+/** Persists the turn marker; the caller must hold this session's mutation lock. */
+export async function stageManagementTurnWithinLock(
+    ctx: ManagementTurnStartContext,
+): Promise<StagedManagementTurn | undefined> {
+    const { client, stateManager, state, config, logger, sessionId, messages } = ctx
 
     const currentParams = getCurrentParams(state, messages, logger)
+    if (!state.persistenceSynchronized) {
+        return async () => {
+            await sendManageFailureFeedback(
+                client,
+                logger,
+                sessionId,
+                "Compression management could not start because saved session state could not be loaded.",
+                currentParams,
+            )
+            return false
+        }
+    }
+
+    await syncToolCache(state, config, logger, messages)
 
     // Built from the pre-management conversation only, before the trigger message or
     // anything else about this turn exists - the agent gets the map it needs up front and
@@ -183,7 +201,7 @@ export async function startManagementTurn(ctx: ManagementTurnStartContext): Prom
             sessionId,
             protectedTurns: ctx.protectedTurns ?? 0,
         })
-        return false
+        return undefined
     }
 
     const messageParts: Array<Record<string, unknown>> = []
@@ -212,24 +230,28 @@ export async function startManagementTurn(ctx: ManagementTurnStartContext): Prom
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
         ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
     }
-    state.managementTurns.push(managementTurn)
-
-    const statePersisted = await saveSessionState(state, logger)
+    const candidateState: SessionState = {
+        ...state,
+        managementTurns: [...state.managementTurns, managementTurn],
+    }
+    const statePersisted = await saveSessionState(candidateState, logger)
     if (!statePersisted) {
-        removeManagementTurn(state, triggerMessageId)
         logger.error("Manage command aborted because cleanup state could not be persisted", {
             sessionId,
             triggerMessageId,
         })
-        await sendManageFailureFeedback(
-            client,
-            logger,
-            sessionId,
-            "Compression management could not start: cleanup state could not be saved.",
-            currentParams,
-        )
-        return false
+        return async () => {
+            await sendManageFailureFeedback(
+                client,
+                logger,
+                sessionId,
+                "Compression management could not start: cleanup state could not be saved.",
+                currentParams,
+            )
+            return false
+        }
     }
+    commitDurableSessionState(state, candidateState)
 
     const model =
         currentParams.providerId && currentParams.modelId
@@ -239,44 +261,85 @@ export async function startManagementTurn(ctx: ManagementTurnStartContext): Prom
               }
             : undefined
 
-    let promptResult: any
-    try {
-        const sendPrompt = ctx.asyncPrompt ? promptSessionAsync : promptSession
-        promptResult = await sendPrompt(client, {
-            sessionId,
-            agent: currentParams.agent,
-            model,
-            variant: currentParams.variant,
-            parts: messageParts,
-            messageId: triggerMessageId,
-        })
-    } catch (err: any) {
-        removeManagementTurn(state, triggerMessageId)
-        await saveSessionState(state, logger)
-        logger.error("Manage command failed", { error: err?.message })
-        await sendManageFailureFeedback(
-            client,
-            logger,
-            sessionId,
-            `Compression management could not start: ${err?.message || "the prompt failed."}`,
-            currentParams,
-        )
-        return false
-    }
+    return async () => {
+        let promptResult: any
+        try {
+            const sendPrompt = ctx.asyncPrompt ? promptSessionAsync : promptSession
+            promptResult = await sendPrompt(client, {
+                sessionId,
+                agent: currentParams.agent,
+                model,
+                variant: currentParams.variant,
+                parts: messageParts,
+                messageId: triggerMessageId,
+            })
+        } catch (err: any) {
+            const rollbackResult = await stateManager.runExclusive(sessionId, async () => {
+                const currentTurn = state.managementTurns.find(
+                    (turn) => turn.triggerMessageId === triggerMessageId,
+                )
+                if (!currentTurn) return "removed" as const
+                if (currentTurn.completedAt) return "completed" as const
 
-    const returnedParentId = extractPromptParentIdForLogging(promptResult)
-    if (returnedParentId && returnedParentId !== triggerMessageId) {
-        logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
+                const rollbackState: SessionState = {
+                    ...state,
+                    managementTurns: state.managementTurns.filter(
+                        (turn) => turn.triggerMessageId !== triggerMessageId,
+                    ),
+                }
+                const persisted = await saveSessionState(rollbackState, logger)
+                if (!persisted) return "failed" as const
+
+                commitDurableSessionState(state, rollbackState)
+                return "removed" as const
+            })
+            logger.error("Manage command failed", { error: err?.message })
+            if (rollbackResult === "completed") {
+                logger.warn("Manage prompt failed after compression completed; preserving the completed turn marker", {
+                    sessionId,
+                    triggerMessageId,
+                })
+            } else if (rollbackResult === "failed") {
+                logger.error("Manage prompt failure marker could not be rolled back", {
+                    sessionId,
+                    triggerMessageId,
+                })
+            }
+            await sendManageFailureFeedback(
+                client,
+                logger,
+                sessionId,
+                rollbackResult === "completed"
+                    ? `The compression management prompt reported an error after compression completed: ${err?.message || "the prompt failed."} The completed state was preserved.`
+                    : rollbackResult === "removed"
+                      ? `Compression management could not start: ${err?.message || "the prompt failed."}`
+                      : `Compression management could not start: ${err?.message || "the prompt failed."} Its saved cleanup marker could not be removed.`,
+                currentParams,
+            )
+            return false
+        }
+
+        const returnedParentId = extractPromptParentIdForLogging(promptResult)
+        if (returnedParentId && returnedParentId !== triggerMessageId) {
+            logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
+                sessionId,
+                triggerMessageId,
+                returnedParentId,
+            })
+        }
+
+        logger.info("Sent compression context to agent", {
             sessionId,
             triggerMessageId,
-            returnedParentId,
+            source: ctx.source ?? "manual",
         })
+        return true
     }
+}
 
-    logger.info("Sent compression context to agent", {
-        sessionId,
-        triggerMessageId,
-        source: ctx.source ?? "manual",
-    })
-    return true
+export async function startManagementTurn(ctx: ManagementTurnStartContext): Promise<boolean> {
+    const staged = await ctx.stateManager.runExclusive(ctx.sessionId, () =>
+        stageManagementTurnWithinLock(ctx),
+    )
+    return staged ? staged() : false
 }

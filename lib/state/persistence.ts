@@ -23,6 +23,10 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     stats: SessionStats
+    autoCompressionEnabledOverride?: boolean
+    autoCompressionTokenThresholdOverride?: number
+    autoCompressionContextWindowRatioOverride?: number
+    compressionCooldownAfterMessageId?: string
     lastUpdated: string
 }
 
@@ -37,6 +41,10 @@ interface PersistedSessionStateFile {
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
     stats: SessionStats
+    autoCompressionEnabledOverride?: unknown
+    autoCompressionTokenThresholdOverride?: unknown
+    autoCompressionContextWindowRatioOverride?: unknown
+    compressionCooldownAfterMessageId?: unknown
     lastUpdated: string
 }
 
@@ -275,6 +283,27 @@ export async function saveSessionState(
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,
+            ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
+                ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
+                : {}),
+            ...(sessionState.autoCompressionTokenThresholdOverride !== undefined
+                ? {
+                      autoCompressionTokenThresholdOverride:
+                          sessionState.autoCompressionTokenThresholdOverride,
+                  }
+                : {}),
+            ...(sessionState.autoCompressionContextWindowRatioOverride !== undefined
+                ? {
+                      autoCompressionContextWindowRatioOverride:
+                          sessionState.autoCompressionContextWindowRatioOverride,
+                  }
+                : {}),
+            ...(sessionState.compressionCooldownAfterMessageId
+                ? {
+                      compressionCooldownAfterMessageId:
+                          sessionState.compressionCooldownAfterMessageId,
+                  }
+                : {}),
             lastUpdated,
         }
 
@@ -401,6 +430,33 @@ export async function loadSessionState(
         compressSummaries,
         managementTurns: normalizeManagementTurns(state.managementTurns),
         stats: state.stats,
+        ...(typeof state.autoCompressionEnabledOverride === "boolean"
+            ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }
+            : {}),
+        ...(typeof state.autoCompressionTokenThresholdOverride === "number" &&
+        Number.isSafeInteger(state.autoCompressionTokenThresholdOverride) &&
+        state.autoCompressionTokenThresholdOverride > 0
+            ? {
+                  autoCompressionTokenThresholdOverride:
+                      state.autoCompressionTokenThresholdOverride,
+              }
+            : {}),
+        ...(typeof state.autoCompressionContextWindowRatioOverride === "number" &&
+        Number.isFinite(state.autoCompressionContextWindowRatioOverride) &&
+        state.autoCompressionContextWindowRatioOverride > 0 &&
+        state.autoCompressionContextWindowRatioOverride < 1
+            ? {
+                  autoCompressionContextWindowRatioOverride:
+                      state.autoCompressionContextWindowRatioOverride,
+              }
+            : {}),
+        ...(typeof state.compressionCooldownAfterMessageId === "string" &&
+        state.compressionCooldownAfterMessageId.length > 0
+            ? {
+                  compressionCooldownAfterMessageId:
+                      state.compressionCooldownAfterMessageId,
+              }
+            : {}),
         lastUpdated: state.lastUpdated,
     }
 

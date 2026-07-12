@@ -12,6 +12,7 @@ import {
 } from "../lib/state/state.ts"
 import { getLastUserSessionId } from "../lib/hooks.ts"
 import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
+import { resetOnCompaction } from "../lib/state/utils.ts"
 
 const logger = {
     debug: () => {},
@@ -88,6 +89,52 @@ describe("SessionStateManager", () => {
 
         assert.strictEqual(manager.get("main-session"), state)
         assert.equal(manager.get("main-session").currentTurn, 7)
+    })
+
+    it("serializes mutations per session without blocking a different session", async () => {
+        const manager = new SessionStateManager()
+        const order: string[] = []
+        let releaseFirst!: () => void
+        const firstGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve
+        })
+
+        const first = manager.runExclusive("session-a", async () => {
+            order.push("first-start")
+            await firstGate
+            order.push("first-end")
+        })
+        const second = manager.runExclusive("session-a", async () => {
+            order.push("second")
+        })
+        const other = manager.runExclusive("session-b", async () => {
+            order.push("other")
+        })
+
+        await other
+        assert.deepEqual(order, ["first-start", "other"])
+        releaseFirst()
+        await Promise.all([first, second])
+        assert.deepEqual(order, ["first-start", "other", "first-end", "second"])
+    })
+})
+
+describe("native compaction reset", () => {
+    it("preserves session automatic-compression preferences", () => {
+        const state = createSessionState()
+        state.autoCompressionEnabledOverride = false
+        state.autoCompressionTokenThresholdOverride = 450_000
+        state.autoCompressionContextWindowRatioOverride = 0.8
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.compressed.messageIds.add("old-message")
+
+        resetOnCompaction(state)
+
+        assert.equal(state.autoCompressionEnabledOverride, false)
+        assert.equal(state.autoCompressionTokenThresholdOverride, 450_000)
+        assert.equal(state.autoCompressionContextWindowRatioOverride, 0.8)
+        assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
+        assert.equal(state.compressed.messageIds.size, 0)
     })
 })
 
@@ -271,6 +318,10 @@ describe("saveSessionState", () => {
                 compressTokenCounter: 8,
                 totalCompressTokens: 34,
             }
+            state.autoCompressionEnabledOverride = false
+            state.autoCompressionTokenThresholdOverride = 425_000
+            state.autoCompressionContextWindowRatioOverride = 0.82
+            state.compressionCooldownAfterMessageId = "m-compress"
 
             await saveSessionState(state, logger, "session-name")
 
@@ -309,8 +360,25 @@ describe("saveSessionState", () => {
                 compressTokenCounter: 8,
                 totalCompressTokens: 34,
             })
+            assert.equal(loadResult.state.autoCompressionEnabledOverride, false)
+            assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, 425_000)
+            assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, 0.82)
+            assert.equal(loadResult.state.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
+
+            const reloadedState = new SessionStateManager().get(sessionId)
+            await ensureSessionInitialized(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedState,
+                sessionId,
+                logger,
+                [createMessage("m1", sessionId, "user")] as any,
+            )
+            assert.equal(reloadedState.autoCompressionEnabledOverride, false)
+            assert.equal(reloadedState.autoCompressionTokenThresholdOverride, 425_000)
+            assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
+            assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -356,6 +424,10 @@ describe("saveSessionState", () => {
                     triggerMessageId: "msg_compress_manage_legacy",
                 },
             ])
+            assert.equal(loadResult.state.autoCompressionEnabledOverride, undefined)
+            assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, undefined)
+            assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, undefined)
+            assert.equal(loadResult.state.compressionCooldownAfterMessageId, undefined)
         } finally {
             await cleanupSessionFiles(sessionId)
         }

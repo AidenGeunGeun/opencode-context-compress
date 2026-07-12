@@ -32,7 +32,7 @@ export interface AutomaticCompressionThreshold {
     reason: "context-window-ratio" | "absolute-token-threshold";
 }
 export declare function getAssistantContextTokens(tokens: AssistantUsage | undefined): number;
-export declare function resolveAutomaticCompressionThreshold(contextTokens: number, config: PluginConfig["autoCompression"], contextLimit?: number): AutomaticCompressionThreshold;
+export declare function resolveAutomaticCompressionThreshold(contextTokens: number, config: Pick<PluginConfig["autoCompression"], "contextWindowRatio" | "tokenThreshold">, contextLimit?: number): AutomaticCompressionThreshold;
 export declare function createChatParamsHandler(stateManager: SessionStateManager): (input: {
     sessionID: string;
     model: {

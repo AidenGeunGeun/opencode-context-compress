@@ -56,12 +56,22 @@ export interface SessionState {
     sessionId: string | null
     initialized: boolean
     isSubAgent: boolean
+    /** Runtime-only: the persisted state was successfully loaded or confirmed absent. */
+    persistenceSynchronized: boolean
     hasPersistedState: boolean
     persistedLastUpdated: string | null
     compressed: Compressed
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     stats: SessionStats
+    /** Session-local override. Missing inherits the process-level auto setting. */
+    autoCompressionEnabledOverride?: boolean
+    /** Session-local absolute threshold override in tokens. */
+    autoCompressionTokenThresholdOverride?: number
+    /** Session-local context-window ratio override in the 0-1 representation. */
+    autoCompressionContextWindowRatioOverride?: number
+    /** Assistant message carrying the most recent successful `compress` call. */
+    compressionCooldownAfterMessageId?: string
     toolParameters: Map<string, ToolParameterEntry>
     toolIdList: string[]
     lastCompaction: number

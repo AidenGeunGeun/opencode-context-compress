@@ -1,9 +1,9 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
-import { rm } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
@@ -11,6 +11,10 @@ import { buildContextMap } from "../lib/messages/context-map.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import { createCompressMapTool } from "../lib/tools/compress-map.ts"
 import { createCompressTool } from "../lib/tools/compress.ts"
+import { handleAutoCommand } from "../lib/commands/auto.ts"
+import { loadSessionState } from "../lib/state/persistence.ts"
+import { createAutomaticCompressionEventHandler } from "../lib/auto-compression.ts"
+import { createCommandExecuteHandler } from "../lib/hooks.ts"
 
 const logger = {
     info: () => {},
@@ -254,6 +258,163 @@ describe("compression management tools", () => {
             assert.equal(typeof turn.completedAt, "string")
             assert.equal(turn.completedCallId, "call-manage-compress-1")
             assert.equal(turn.completedMessageId, "message-call-manage-compress-1")
+            assert.equal(
+                state.compressionCooldownAfterMessageId,
+                "message-call-manage-compress-1",
+            )
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("blocks model-initiated compression during cooldown before asking permission", async () => {
+        const sessionId = `session-compress-cooldown-block-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const rawMessages = [
+            {
+                ...toolMessage("compress-anchor", sessionId, "compress", "Compression complete"),
+                info: {
+                    ...toolMessage("compress-anchor", sessionId, "compress", "Compression complete").info,
+                    time: { created: Date.now(), completed: Date.now() },
+                },
+            },
+            textMessage("normal-user", sessionId, "Continue"),
+            {
+                ...textMessage("normal-assistant", sessionId, "Progress", "assistant"),
+                info: {
+                    ...textMessage("normal-assistant", sessionId, "Progress", "assistant").info,
+                    time: { created: Date.now(), completed: Date.now() },
+                },
+            },
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        let askCalls = 0
+        const tool = createCompressTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "call-blocked"),
+            ask: async () => {
+                askCalls++
+            },
+        }
+
+        const output = await tool.execute(
+            { from: 1, to: 1, topic: "Blocked", summary: "Must not be stored." },
+            toolContext as any,
+        )
+
+        assert.match(output, /Wait 2 more assistant responses/)
+        assert.match(output, /Only the user may override.*`\/compress manage`/)
+        assert.equal(askCalls, 0)
+        assert.equal(state.compressSummaries.length, 0)
+        assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
+    })
+
+    it("does not compress or replace state when persisted session data cannot be loaded", async () => {
+        const sessionId = `session-compress-load-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const filePath = getSessionFilePath(sessionId)
+        await mkdir(dirname(filePath), { recursive: true })
+        await writeFile(filePath, "{invalid-json", "utf8")
+        const rawMessages = [
+            textMessage("load-fail-m1", sessionId, "Prior work"),
+            textMessage("load-fail-m2", sessionId, "Prior result", "assistant"),
+        ]
+        const stateManager = new SessionStateManager()
+        let askCalls = 0
+        const tool = createCompressTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "load-fail"),
+            ask: async () => {
+                askCalls++
+            },
+        }
+
+        try {
+            await assert.rejects(
+                tool.execute(
+                    {
+                        from: 1,
+                        to: 2,
+                        topic: "Prior Work",
+                        summary: "This must not be stored.",
+                    },
+                    toolContext as any,
+                ),
+                /could not load saved session state/,
+            )
+            assert.equal(askCalls, 0)
+            assert.equal(stateManager.get(sessionId).compressSummaries.length, 0)
+            assert.equal(await readFile(filePath, "utf8"), "{invalid-json")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("allows an active manual management turn to override and re-arm cooldown", async () => {
+        const sessionId = `session-compress-cooldown-manual-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const completed = (message: any) => ({
+            ...message,
+            info: {
+                ...message.info,
+                time: { created: Date.now(), completed: Date.now() },
+            },
+        })
+        const rawMessages = [
+            textMessage("old-user", sessionId, "Old objective"),
+            textMessage("old-assistant", sessionId, "Old result", "assistant"),
+            completed(toolMessage("compress-anchor", sessionId, "compress", "Compression complete")),
+            textMessage("normal-user", sessionId, "Continue"),
+            completed(textMessage("normal-assistant", sessionId, "Progress", "assistant")),
+            textMessage("manual-trigger", sessionId, "Explicit manual management"),
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.managementTurns = [{ triggerMessageId: "manual-trigger" }]
+        let askCalls = 0
+        const tool = createCompressTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "call-manual-override"),
+            ask: async () => {
+                askCalls++
+            },
+        }
+
+        try {
+            const output = await tool.execute(
+                { from: 1, to: 2, topic: "Old Work", summary: "Durable old-work summary." },
+                toolContext as any,
+            )
+
+            assert.match(output, /^Compression complete/)
+            assert.equal(askCalls, 1)
+            assert.equal(
+                state.compressionCooldownAfterMessageId,
+                "message-call-manual-override",
+            )
+            assert.equal(typeof state.managementTurns[0].completedAt, "string")
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -426,6 +587,376 @@ describe("compression management tools", () => {
         assert.deepEqual(state.managementTurns, baselineManagementTurns)
         assert.deepEqual(state.stats, baselineStats)
         assert.equal(state.hasPersistedState, false)
+        assert.equal(state.compressionCooldownAfterMessageId, undefined)
+    })
+
+    it("preserves a compression cooldown update across an overlapping auto-control write", async () => {
+        const sessionId = `session-compress-auto-overlap-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const rawMessages = [
+            textMessage("m1", sessionId, "Do the actual work"),
+            textMessage("m2", sessionId, "Work done", "assistant"),
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        let releaseAsk!: () => void
+        let markAskStarted!: () => void
+        const askStarted = new Promise<void>((resolve) => {
+            markAskStarted = resolve
+        })
+        const askGate = new Promise<void>((resolve) => {
+            releaseAsk = resolve
+        })
+        const client = {
+            ...createClient(rawMessages),
+            session: {
+                ...createClient(rawMessages).session,
+                prompt: async () => ({ data: { info: { id: "ignored" } } }),
+            },
+        }
+        const tool = createCompressTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "call-overlap"),
+            ask: async () => {
+                markAskStarted()
+                await askGate
+            },
+        }
+
+        try {
+            const compression = tool.execute(
+                { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                toolContext as any,
+            )
+            await askStarted
+            const control = handleAutoCommand({
+                client,
+                stateManager,
+                state,
+                config,
+                logger,
+                sessionId,
+                messages: rawMessages as any,
+                arguments: ["off"],
+            })
+
+            releaseAsk()
+            await Promise.all([compression, control])
+
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.autoCompressionEnabledOverride, false)
+            assert.equal(
+                loaded.state.compressionCooldownAfterMessageId,
+                "message-call-overlap",
+            )
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("rechecks automatic cooldown state after waiting for an overlapping compression", async () => {
+        const sessionId = `session-compress-auto-event-overlap-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const oldMessages = [
+            textMessage("m1", sessionId, "Do the actual work"),
+            textMessage("m2", sessionId, "Work done", "assistant"),
+        ]
+        const completed = (message: any) => ({
+            ...message,
+            info: {
+                ...message.info,
+                providerID: "openai",
+                modelID: "gpt-test",
+                time: { created: Date.now(), completed: Date.now() },
+            },
+        })
+        const latestMessages = [
+            ...oldMessages,
+            completed(toolMessage("message-race-compress", sessionId, "compress", "done")),
+            textMessage("race-user", sessionId, "Continue"),
+            completed(textMessage("race-response", sessionId, "Progress", "assistant")),
+        ]
+        let messageReads = 0
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({
+                    data: messageReads++ === 0 ? [...oldMessages] : [...latestMessages],
+                }),
+                promptAsync: async () => {
+                    promptCalls++
+                    return { data: undefined }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        let releaseAsk!: () => void
+        let markAskStarted!: () => void
+        const askStarted = new Promise<void>((resolve) => {
+            markAskStarted = resolve
+        })
+        const askGate = new Promise<void>((resolve) => {
+            releaseAsk = resolve
+        })
+        const tool = createCompressTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "race-compress"),
+            ask: async () => {
+                markAskStarted()
+                await askGate
+            },
+        }
+        const autoConfig: PluginConfig = {
+            ...config,
+            autoCompression: {
+                ...config.autoCompression,
+                tokenThreshold: 100,
+                protectedTurns: 0,
+            },
+        }
+        const autoHandler = createAutomaticCompressionEventHandler(
+            client,
+            stateManager,
+            logger,
+            autoConfig,
+        )
+
+        try {
+            const compression = tool.execute(
+                { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                toolContext as any,
+            )
+            await askStarted
+            const autoEvent = autoHandler({
+                event: {
+                    type: "message.updated",
+                    properties: {
+                        info: {
+                            ...latestMessages.at(-1).info,
+                            tokens: { total: 1_000 },
+                        },
+                    },
+                },
+            } as any)
+
+            releaseAsk()
+            await Promise.all([compression, autoEvent])
+
+            assert.equal(
+                state.compressionCooldownAfterMessageId,
+                "message-race-compress",
+            )
+            assert.equal(promptCalls, 0)
+            assert.equal(
+                state.managementTurns.filter((turn) => turn.source === "automatic").length,
+                0,
+            )
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("preserves completed compression state when manual manage waits behind it", async () => {
+        const sessionId = `session-compress-manage-overlap-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const rawMessages = [
+            textMessage("m1", sessionId, "Do the actual work"),
+            textMessage("m2", sessionId, "Work done", "assistant"),
+        ]
+        let releaseAsk!: () => void
+        let markAskStarted!: () => void
+        const askStarted = new Promise<void>((resolve) => {
+            markAskStarted = resolve
+        })
+        const askGate = new Promise<void>((resolve) => {
+            releaseAsk = resolve
+        })
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: [...rawMessages] }),
+                prompt: async (input: any) => {
+                    promptCalls++
+                    return {
+                        data: {
+                            info: {
+                                id: "manage-assistant",
+                                role: "assistant",
+                                parentID: input.body.messageID,
+                            },
+                        },
+                    }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        const tool = createCompressTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const toolContext = {
+            ...createToolContext(sessionId, "manage-overlap"),
+            ask: async () => {
+                markAskStarted()
+                await askGate
+            },
+        }
+        const commandHandler = createCommandExecuteHandler(client, stateManager, logger, config)
+
+        try {
+            const compression = tool.execute(
+                { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
+                toolContext as any,
+            )
+            await askStarted
+            const output = { parts: [{ type: "text", text: "default" }], cancelled: false }
+            const manage = commandHandler(
+                { command: "compress", sessionID: sessionId, arguments: "manage" },
+                output,
+            )
+
+            releaseAsk()
+            await Promise.all([compression, manage])
+
+            assert.equal(promptCalls, 1)
+            assert.equal(output.cancelled, true)
+            assert.equal(state.compressSummaries.length, 1)
+            assert.equal(state.compressionCooldownAfterMessageId, "message-manage-overlap")
+            assert.equal(state.managementTurns.length, 1)
+
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressSummaries.length, 1)
+            assert.equal(
+                loaded.state.compressionCooldownAfterMessageId,
+                "message-manage-overlap",
+            )
+            assert.equal(loaded.state.managementTurns.length, 1)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("preserves a completed management marker when its overlapping prompt later fails", async () => {
+        const sessionId = `session-manage-prompt-compress-race-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const rawMessages = [
+            textMessage("race-m1", sessionId, "Compress this completed objective"),
+            textMessage("race-m2", sessionId, "Completed result", "assistant"),
+        ]
+        let releasePrompt!: () => void
+        let markPromptStarted!: () => void
+        const promptStarted = new Promise<void>((resolve) => {
+            markPromptStarted = resolve
+        })
+        const promptGate = new Promise<void>((resolve) => {
+            releasePrompt = resolve
+        })
+        const toasts: any[] = []
+        const client = {
+            _client: {},
+            tui: {
+                showToast: async (input: any) => {
+                    toasts.push(input)
+                },
+            },
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: rawMessages }),
+                prompt: async (input: any) => {
+                    rawMessages.push(
+                        textMessage(input.body.messageID, sessionId, "Manage compression"),
+                    )
+                    markPromptStarted()
+                    await promptGate
+                    throw new Error("prompt transport failed")
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        const commandHandler = createCommandExecuteHandler(client, stateManager, logger, config)
+        const tool = createCompressTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            const output = { parts: [{ type: "text", text: "default" }], cancelled: false }
+            const manage = commandHandler(
+                { command: "compress", sessionID: sessionId, arguments: "manage" },
+                output,
+            )
+            await promptStarted
+
+            const compression = await tool.execute(
+                {
+                    from: 1,
+                    to: 2,
+                    topic: "Completed Work",
+                    summary: "The completed objective and result were preserved.",
+                },
+                createToolContext(sessionId, "prompt-race-compress") as any,
+            )
+            assert.match(compression, /^Compression complete/)
+            assert.equal(typeof state.managementTurns[0].completedAt, "string")
+
+            releasePrompt()
+            await manage
+
+            assert.equal(output.cancelled, true)
+            assert.equal(state.managementTurns.length, 1)
+            assert.equal(typeof state.managementTurns[0].completedAt, "string")
+            assert.equal(
+                state.managementTurns[0].completedMessageId,
+                "message-prompt-race-compress",
+            )
+
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.managementTurns.length, 1)
+            assert.equal(typeof loaded.state.managementTurns[0].completedAt, "string")
+            assert.equal(
+                loaded.state.managementTurns[0].completedMessageId,
+                "message-prompt-race-compress",
+            )
+            assert.equal(toasts.length, 1)
+        } finally {
+            releasePrompt?.()
+            await cleanupSessionFile(sessionId)
+        }
     })
 
     it("supports iterative compress calls and keeps block numbering stable when recompressing the middle block", async () => {

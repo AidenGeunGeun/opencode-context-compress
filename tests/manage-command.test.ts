@@ -7,7 +7,7 @@ import { join } from "node:path"
 
 import { extractManageCommandResidual, handleManageCommand } from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
-import { createSessionState } from "../lib/state/state.ts"
+import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
 
 const logger = {
     info: () => {},
@@ -114,6 +114,7 @@ describe("handleManageCommand", () => {
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
+        state.persistenceSynchronized = true
 
         let promptBody: any
         const generatedAssistantId = "msg_01900000000000000000000002"
@@ -131,6 +132,7 @@ describe("handleManageCommand", () => {
         try {
             await handleManageCommand({
                 client,
+                stateManager: new SessionStateManager(),
                 state,
                 config,
                 logger,
@@ -177,6 +179,7 @@ describe("handleManageCommand", () => {
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
+        state.persistenceSynchronized = true
 
         const misleadingNotificationId = "msg_01900000000000000000000099"
         const generatedAssistantId = "msg_01900000000000000000000011"
@@ -193,6 +196,7 @@ describe("handleManageCommand", () => {
         try {
             await handleManageCommand({
                 client,
+                stateManager: new SessionStateManager(),
                 state,
                 config,
                 logger,
@@ -216,6 +220,7 @@ describe("handleManageCommand", () => {
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
+        state.persistenceSynchronized = true
 
         const generatedAssistantId = "msg_zzzzzzzzzzzzzzzzzzzzzzzzzz"
         let promptBody: any
@@ -231,6 +236,7 @@ describe("handleManageCommand", () => {
         try {
             await handleManageCommand({
                 client,
+                stateManager: new SessionStateManager(),
                 state,
                 config,
                 logger,
@@ -267,6 +273,7 @@ describe("handleManageCommand", () => {
         const sessionId = `session-manage-save-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const state = createSessionState()
         state.initialized = true
+        state.persistenceSynchronized = true
 
         const toasts: any[] = []
         let promptCalls = 0
@@ -285,6 +292,7 @@ describe("handleManageCommand", () => {
 
         await handleManageCommand({
             client,
+            stateManager: new SessionStateManager(),
             state,
             config,
             logger,
@@ -299,12 +307,50 @@ describe("handleManageCommand", () => {
         assert.match(toasts[0].body.message, /Compression management could not start/)
     })
 
+    it("does not start management when saved session state was not synchronized", async () => {
+        const sessionId = `session-manage-load-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const state = createSessionState()
+        state.sessionId = sessionId
+        state.initialized = true
+        const toasts: any[] = []
+        let promptCalls = 0
+        const client = {
+            tui: {
+                showToast: async (input: any) => {
+                    toasts.push(input)
+                },
+            },
+            session: {
+                prompt: async () => {
+                    promptCalls++
+                },
+            },
+        }
+
+        await handleManageCommand({
+            client,
+            stateManager: new SessionStateManager(),
+            state,
+            config,
+            logger,
+            sessionId,
+            messages: [createUserMessage(sessionId)] as any,
+            arguments: "manage",
+        })
+
+        assert.equal(promptCalls, 0)
+        assert.equal(state.managementTurns.length, 0)
+        assert.equal(toasts.length, 1)
+        assert.match(toasts[0].body.message, /saved session state could not be loaded/)
+    })
+
     it("shows visible feedback when the manage prompt throws", async () => {
         const sessionId = `session-manage-prompt-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
+        state.persistenceSynchronized = true
 
         const toasts: any[] = []
         let promptCalls = 0
@@ -325,6 +371,7 @@ describe("handleManageCommand", () => {
         try {
             await handleManageCommand({
                 client,
+                stateManager: new SessionStateManager(),
                 state,
                 config,
                 logger,

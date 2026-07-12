@@ -10,6 +10,7 @@ import { handleStatsCommand } from "./commands/stats.js"
 import { handleContextCommand } from "./commands/context.js"
 import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
+import { handleAutoCommand } from "./commands/auto.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { ensureSessionInitialized } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
@@ -35,31 +36,36 @@ export function createChatMessageTransformHandler(
         if (!sessionId) return
 
         const state = stateManager.get(sessionId)
-        const syncResult = await checkSession(client, state, logger, output.messages)
+        const transformed = await stateManager.runExclusive(sessionId, async () => {
+            const syncResult = await checkSession(client, state, logger, output.messages)
+            if (state.isSubAgent) return false
 
-        if (state.isSubAgent) return
+            const messageIds = new Set(output.messages.map((message) => message.info.id))
+            const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter(
+                (id) => messageIds.has(id),
+            ).length
+            const appliedSummaryCount = state.compressSummaries.filter((summary) =>
+                messageIds.has(summary.anchorMessageId),
+            ).length
 
-        const messageIds = new Set(output.messages.map((message) => message.info.id))
-        const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter((id) =>
-            messageIds.has(id),
-        ).length
-        const appliedSummaryCount = state.compressSummaries.filter((summary) =>
-            messageIds.has(summary.anchorMessageId),
-        ).length
+            logger.info("Resolved compress state for prompt transform", {
+                sessionID: sessionId,
+                directory: workingDirectory,
+                source: syncResult.source,
+                lastUpdated: syncResult.lastUpdated,
+                compressedMessageCount: appliedCompressedMessageCount,
+                summaryCount: appliedSummaryCount,
+            })
 
-        logger.info("Resolved compress state for prompt transform", {
-            sessionID: sessionId,
-            directory: workingDirectory,
-            source: syncResult.source,
-            lastUpdated: syncResult.lastUpdated,
-            compressedMessageCount: appliedCompressedMessageCount,
-            summaryCount: appliedSummaryCount,
+            syncToolCache(state, config, logger, output.messages)
+            buildToolIdList(state, output.messages)
+            applyCompressTransforms(state, logger, output.messages)
+            return true
         })
 
-        syncToolCache(state, config, logger, output.messages)
-        buildToolIdList(state, output.messages)
-        applyCompressTransforms(state, logger, output.messages)
-        await logger.saveContext(sessionId, output.messages)
+        if (transformed) {
+            await logger.saveContext(sessionId, output.messages)
+        }
     }
 }
 
@@ -79,9 +85,20 @@ export function createCommandExecuteHandler(
 
         if (input.command === "compress") {
             const state = stateManager.get(input.sessionID)
-            const messages = (await listSessionMessages(client, input.sessionID)) as WithParts[]
-
-            await ensureSessionInitialized(client, state, input.sessionID, logger, messages)
+            const messages = await stateManager.runExclusive(input.sessionID, async () => {
+                const currentMessages = (await listSessionMessages(
+                    client,
+                    input.sessionID,
+                )) as WithParts[]
+                await ensureSessionInitialized(
+                    client,
+                    state,
+                    input.sessionID,
+                    logger,
+                    currentMessages,
+                )
+                return currentMessages
+            })
 
             const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean)
             const subcommand = args[0]?.toLowerCase() || ""
@@ -113,12 +130,28 @@ export function createCommandExecuteHandler(
             if (subcommand === "manage") {
                 await handleManageCommand({
                     client,
+                    stateManager,
                     state,
                     config,
                     logger,
                     sessionId: input.sessionID,
                     messages,
                     arguments: input.arguments,
+                })
+                suppressDefaultCommandExecution(output)
+                return
+            }
+
+            if (subcommand === "auto") {
+                await handleAutoCommand({
+                    client,
+                    stateManager,
+                    state,
+                    config,
+                    logger,
+                    sessionId: input.sessionID,
+                    messages,
+                    arguments: args.slice(1),
                 })
                 suppressDefaultCommandExecution(output)
                 return

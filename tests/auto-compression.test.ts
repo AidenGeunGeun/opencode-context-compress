@@ -1,9 +1,9 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
-import { rm } from "node:fs/promises"
+import { mkdir, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 import {
     createAutomaticCompressionEventHandler,
@@ -13,6 +13,10 @@ import {
 } from "../lib/auto-compression.ts"
 import { DEFAULT_AUTO_COMPRESSION, type PluginConfig } from "../lib/config.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import {
+    getPostCompressionCooldownRemaining,
+    resolveEffectiveAutoCompressionPolicy,
+} from "../lib/auto-policy.ts"
 
 const logger = {
     info: () => {},
@@ -110,9 +114,364 @@ describe("automatic compression thresholds", () => {
             205,
         )
     })
+
+    it("resolves session overrides without coupling the independent triggers", () => {
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get("effective-policy")
+        state.autoCompressionEnabledOverride = false
+        state.autoCompressionTokenThresholdOverride = 500_000
+        state.autoCompressionContextWindowRatioOverride = 0.5
+
+        const off = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state)
+        assert.equal(off.enabled, false)
+        assert.equal(off.tokenThreshold, 500_000)
+        assert.equal(off.contextWindowRatio, 0.5)
+
+        state.autoCompressionEnabledOverride = true
+        const on = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state)
+        const threshold = resolveAutomaticCompressionThreshold(250_000, on, 400_000)
+        assert.equal(on.enabled, true)
+        assert.equal(threshold.thresholdTokens, 200_000)
+        assert.equal(threshold.reason, "context-window-ratio")
+    })
+})
+
+describe("post-compression cooldown", () => {
+    it("counts unique completed primary responses and excludes management spans", () => {
+        const sessionId = "cooldown-counting"
+        const state = new SessionStateManager().get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.managementTurns = [{ triggerMessageId: "manage-trigger" }]
+        const duplicate = assistantMessage("normal-1", sessionId, "First normal response")
+        const toolResponse = {
+            ...assistantMessage("normal-2", sessionId, "Second normal response"),
+            parts: [
+                {
+                    type: "tool",
+                    tool: "compress",
+                    callID: "call-normal-2",
+                    state: { status: "completed", input: {}, output: "done" },
+                },
+            ],
+        }
+        const messages = [
+            assistantMessage("compress-anchor", sessionId, "Compression call"),
+            userMessage("manage-trigger", sessionId, "Manage context"),
+            assistantMessage("manage-assistant", sessionId, "Inside management"),
+            userMessage("normal-user", sessionId, "Continue"),
+            duplicate,
+            duplicate,
+            toolResponse,
+        ]
+
+        assert.equal(getPostCompressionCooldownRemaining(state, messages as any), 1)
+        messages.push(assistantMessage("normal-3", sessionId, "Third normal response"))
+        assert.equal(getPostCompressionCooldownRemaining(state, messages as any), 0)
+    })
+
+    it("counts assistant responses after a completed management turn before the next user message", () => {
+        const sessionId = "cooldown-completed-management-boundary"
+        const state = new SessionStateManager().get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-trigger",
+                completedAt: new Date().toISOString(),
+                completedMessageId: "compress-anchor",
+            },
+        ]
+        const messages = [
+            userMessage("manage-trigger", sessionId, "Manage context"),
+            assistantMessage("compress-anchor", sessionId, "Compression completed"),
+            assistantMessage("continuation-1", sessionId, "Continued original task"),
+            assistantMessage("continuation-2", sessionId, "More task progress"),
+            assistantMessage("continuation-3", sessionId, "Finished task progress"),
+        ]
+
+        assert.equal(getPostCompressionCooldownRemaining(state, messages as any), 0)
+    })
+
+    it("suppresses the next three responses above threshold and allows the fourth", async () => {
+        const sessionId = `session-auto-cooldown-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const messages: any[] = [
+            userMessage("old-user", sessionId, "Old work"),
+            assistantMessage("old-assistant", sessionId, "Old result"),
+            assistantMessage("compress-anchor", sessionId, "Compression completed"),
+        ]
+        const promptCalls: any[] = []
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: messages }),
+                promptAsync: async (input: any) => {
+                    promptCalls.push(input)
+                    return { data: undefined }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        const cooldownConfig: PluginConfig = {
+            ...config,
+            autoCompression: {
+                ...config.autoCompression,
+                tokenThreshold: 100,
+                protectedTurns: 0,
+            },
+        }
+        const handler = createAutomaticCompressionEventHandler(
+            client,
+            stateManager,
+            logger,
+            cooldownConfig,
+        )
+
+        const complete = async (id: string) => {
+            const message = assistantMessage(id, sessionId, id)
+            messages.push(userMessage(`user-${id}`, sessionId, `Request ${id}`), message)
+            await handler({
+                event: {
+                    type: "message.updated",
+                    properties: {
+                        info: {
+                            ...message.info,
+                            tokens: { total: 1_000 },
+                        },
+                    },
+                },
+            } as any)
+        }
+
+        try {
+            await complete("response-1")
+            await complete("response-2")
+            await complete("response-3")
+            assert.equal(promptCalls.length, 0)
+
+            await complete("response-4")
+            assert.equal(promptCalls.length, 1)
+            assert.equal(state.managementTurns[0].triggeredByMessageId, "response-4")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("uses transcript recency while session auto is off and ignores duplicate completion delivery", async () => {
+        const sessionId = `session-auto-cooldown-off-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const messages: any[] = [assistantMessage("compress-anchor", sessionId, "Compression")]
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: messages }),
+                promptAsync: async () => {
+                    promptCalls++
+                    return { data: undefined }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.autoCompressionEnabledOverride = false
+        const cooldownConfig: PluginConfig = {
+            ...config,
+            autoCompression: {
+                ...config.autoCompression,
+                tokenThreshold: 100,
+                protectedTurns: 0,
+            },
+        }
+        const handler = createAutomaticCompressionEventHandler(
+            client,
+            stateManager,
+            logger,
+            cooldownConfig,
+        )
+        const eventFor = (message: any) => ({
+            event: {
+                type: "message.updated",
+                properties: { info: { ...message.info, tokens: { total: 1_000 } } },
+            },
+        })
+
+        try {
+            const first = assistantMessage("response-1", sessionId, "One")
+            messages.push(userMessage("user-1", sessionId, "One"), first)
+            await handler(eventFor(first) as any)
+            await handler(eventFor(first) as any)
+            assert.equal(getPostCompressionCooldownRemaining(state, messages), 2)
+
+            messages.push(
+                userMessage("user-2", sessionId, "Two"),
+                assistantMessage("response-2", sessionId, "Two"),
+                userMessage("user-3", sessionId, "Three"),
+                assistantMessage("response-3", sessionId, "Three"),
+            )
+            assert.equal(getPostCompressionCooldownRemaining(state, messages), 0)
+            assert.equal(promptCalls, 0)
+
+            state.autoCompressionEnabledOverride = true
+            const fourth = assistantMessage("response-4", sessionId, "Four")
+            messages.push(userMessage("user-4", sessionId, "Four"), fourth)
+            await handler(eventFor(fourth) as any)
+            assert.equal(promptCalls, 1)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
 })
 
 describe("automatic compression lifecycle", () => {
+    it("skips transcript work when global policy, permission, or the loaded effective threshold makes it unnecessary", async () => {
+        const sessionId = `session-auto-fast-path-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        let messageReads = 0
+        let sessionReads = 0
+        const client = {
+            session: {
+                get: async () => {
+                    sessionReads++
+                    return { data: {} }
+                },
+                messages: async () => {
+                    messageReads++
+                    return { data: [] }
+                },
+            },
+        }
+        const event = {
+            event: {
+                type: "message.updated",
+                properties: {
+                    info: {
+                        id: "fast-path-response",
+                        sessionID: sessionId,
+                        role: "assistant",
+                        time: { completed: Date.now() },
+                        tokens: { total: 499 },
+                    },
+                },
+            },
+        }
+
+        const globallyDisabled = {
+            ...config,
+            autoCompression: { ...config.autoCompression, enabled: false },
+        }
+        await createAutomaticCompressionEventHandler(
+            client,
+            new SessionStateManager(),
+            logger,
+            globallyDisabled,
+        )(event as any)
+
+        const toolDenied = {
+            ...config,
+            tools: {
+                ...config.tools,
+                compress: { ...config.tools.compress, permission: "deny" as const },
+            },
+        }
+        await createAutomaticCompressionEventHandler(
+            client,
+            new SessionStateManager(),
+            logger,
+            toolDenied,
+        )(event as any)
+
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.persistenceSynchronized = true
+        state.autoCompressionTokenThresholdOverride = 500
+        await createAutomaticCompressionEventHandler(client, stateManager, logger, config)(
+            event as any,
+        )
+
+        assert.equal(messageReads, 0)
+        assert.equal(sessionReads, 0)
+    })
+
+    it("does not use fallback auto policy when persisted session state cannot be loaded", async () => {
+        const sessionId = `session-auto-policy-load-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const filePath = getSessionFilePath(sessionId)
+        await mkdir(dirname(filePath), { recursive: true })
+        await writeFile(filePath, "{invalid-json", "utf8")
+        const messages = [
+            userMessage("load-fail-user", sessionId, "Old objective"),
+            assistantMessage("load-fail-assistant", sessionId, "Old result"),
+        ]
+        let messageReads = 0
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => {
+                    messageReads++
+                    return { data: messages }
+                },
+                promptAsync: async () => {
+                    promptCalls++
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, {
+            ...config,
+            autoCompression: { ...config.autoCompression, tokenThreshold: 100 },
+        })
+        const event = {
+            event: {
+                type: "message.updated",
+                properties: {
+                    info: {
+                        ...messages[1].info,
+                        tokens: { total: 1_000 },
+                    },
+                },
+            },
+        }
+
+        try {
+            await handler(event as any)
+            assert.equal(promptCalls, 0)
+            assert.equal(messageReads, 1)
+            assert.equal(stateManager.get(sessionId).persistenceSynchronized, false)
+
+            await writeFile(
+                filePath,
+                JSON.stringify({
+                    compressed: { toolIds: [], messageIds: [] },
+                    compressSummaries: [],
+                    managementTurns: [],
+                    stats: { compressTokenCounter: 0, totalCompressTokens: 0 },
+                    autoCompressionEnabledOverride: false,
+                    lastUpdated: new Date().toISOString(),
+                }),
+                "utf8",
+            )
+            await handler(event as any)
+            await handler(event as any)
+
+            assert.equal(promptCalls, 0)
+            assert.equal(messageReads, 2)
+            assert.equal(stateManager.get(sessionId).persistenceSynchronized, true)
+            assert.equal(stateManager.get(sessionId).autoCompressionEnabledOverride, false)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
     it("injects one asynchronous management turn with a protected tail and continuation guidance", async () => {
         const sessionId = `session-auto-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)

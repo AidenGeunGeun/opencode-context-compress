@@ -11,7 +11,10 @@ function formatHelpMessage() {
     lines.push("- `/compress context` — Show token usage breakdown for current session");
     lines.push("- `/compress stats` — Show context compression statistics");
     lines.push("- `/compress manage` — Instruct the agent to manage context now");
+    lines.push("- `/compress auto [status|on|off|threshold N|ratio N|reset]` — Control automatic compression for this session");
     lines.push("- `/compress help` — Show this command list");
+    lines.push("");
+    lines.push("Session `auto off` disables all automatic compression, including both absolute and ratio triggers, until you turn it back on.");
     return lines.join("\n");
 }
 export async function handleHelpCommand(ctx) {

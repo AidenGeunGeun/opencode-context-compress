@@ -26,6 +26,9 @@ or let the plugin initiate the same workflow before a primary session fills its 
   together, so the agent normally goes straight to one `compress` call (subject to permissions).
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
   next model turn, with no need to wait for a further user message.
+- After a successful compression, automatic and model-initiated compression pause for the next
+  three completed primary-session assistant responses. An explicit `/compress manage` may override
+  this cooldown.
 - After that management turn completes, its trigger, injected map, tool calls, tool outputs,
   map snapshots, and assistant chatter are hidden from future model prompts.
 - Automatic turns protect the three most recent OpenCode execution turns by default, require a
@@ -37,8 +40,17 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - `/compress manage`: send a lean context-management reminder plus the current context map to the active agent.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
+- `/compress auto` or `/compress auto status`: show this session's effective automatic-compression settings and cooldown.
+- `/compress auto on|off`: enable or disable automatic compression for this session.
+- `/compress auto threshold N`: override this session's absolute token threshold.
+- `/compress auto ratio N`: override this session's context-window threshold with an integer percentage from 1 to 99.
+- `/compress auto reset`: clear this session's threshold and ratio overrides without changing its on/off setting or cooldown.
 
 `/compress manage` is the only command that intentionally creates a model-visible turn.
+All `/compress auto` feedback is user-only. Session `off` disables every automatic trigger for
+that session—both the absolute threshold and the context-window ratio—until it is turned on again.
+The process-level `autoCompression.enabled: false` setting remains authoritative and cannot be
+overridden from a session.
 
 ## Agentic Workflow
 
@@ -184,6 +196,7 @@ Stored fields include:
 - compression summaries
 - manual and automatic management-turn cleanup markers, including automatic protected-tail IDs
 - per-session compression stats
+- session automatic-compression overrides and the post-compression cooldown anchor
 
 The raw conversation history still exists in OpenCode storage, but completed `/compress manage` machinery is suppressed from future model prompts. Restarting the session reloads the saved cleanup markers, so old management turns do not reappear in the model-visible stream.
 

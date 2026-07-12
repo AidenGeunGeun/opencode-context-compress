@@ -16,6 +16,10 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
     stats: SessionStats;
+    autoCompressionEnabledOverride?: boolean;
+    autoCompressionTokenThresholdOverride?: number;
+    autoCompressionContextWindowRatioOverride?: number;
+    compressionCooldownAfterMessageId?: string;
     lastUpdated: string;
 }
 export type LoadSessionStateResult = {

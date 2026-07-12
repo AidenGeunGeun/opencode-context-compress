@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import type { WithParts, CompressSummary, SessionState } from "../state/index.js"
 import type { CompressToolContext } from "./types.js"
-import { ensureSessionInitialized } from "../state/index.js"
+import { commitDurableSessionState, ensureSessionInitialized } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
 import { loadPrompt } from "../prompts/index.js"
 import { estimateTokensBatch, getCurrentParams } from "../token-utils.js"
@@ -17,6 +17,7 @@ import {
 } from "../messages/context-map.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import { listSessionMessages } from "../sdk/client.js"
+import { getPostCompressionCooldownRemaining } from "../auto-policy.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
 
@@ -186,151 +187,210 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
             const sessionId = toolCtx.sessionID
             const state = stateManager.get(sessionId)
 
-            await toolCtx.ask({
-                permission: "compress",
-                patterns: ["*"],
-                always: ["*"],
-                metadata: {},
+            const outcome = await stateManager.runExclusive(sessionId, async () => {
+                const rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
+                await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
+                if (!state.persistenceSynchronized) {
+                    throw new Error(
+                        "compress could not load saved session state - no compression was performed",
+                    )
+                }
+
+                const activeManagementTurn = findActiveManagementTurn(state, rawMessages)
+                const cooldownRemaining = getPostCompressionCooldownRemaining(state, rawMessages)
+                if (
+                    cooldownRemaining > 0 &&
+                    (!activeManagementTurn || activeManagementTurn.turn.source === "automatic")
+                ) {
+                    return {
+                        kind: "blocked" as const,
+                        message: `Compression succeeded recently. Compressing again is likely a mistake. Wait ${cooldownRemaining} more assistant ${cooldownRemaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`,
+                    }
+                }
+
+                await toolCtx.ask({
+                    permission: "compress",
+                    patterns: ["*"],
+                    always: ["*"],
+                    metadata: {},
+                })
+
+                const range = args as Partial<CompressRangeInput>
+                if (typeof range !== "object" || !range) {
+                    throw new Error("compress requires { from, to, summary, topic }")
+                }
+                if (!range.topic || typeof range.topic !== "string") {
+                    throw new Error("compress requires a non-empty topic")
+                }
+                if (!range.summary || typeof range.summary !== "string") {
+                    throw new Error("compress requires a non-empty summary")
+                }
+                if (
+                    (typeof range.from !== "number" && typeof range.from !== "string") ||
+                    (typeof range.to !== "number" && typeof range.to !== "string")
+                ) {
+                    throw new Error("compress requires valid from/to range boundaries")
+                }
+
+                const currentParams = getCurrentParams(state, rawMessages, logger)
+                const contextMap = buildContextMap(
+                    rawMessages,
+                    state,
+                    logger,
+                    currentParams.providerId,
+                )
+                const baselineSummaries = [...state.compressSummaries]
+                const baselineSummariesByAnchor = new Map(
+                    baselineSummaries.map((summary) => [summary.anchorMessageId, summary]),
+                )
+                const rawMessageIndexById = new Map(
+                    rawMessages.map((message, index) => [message.info.id, index]),
+                )
+
+                const resolvedRange = resolveContextMapRange(contextMap, range.from!, range.to!)
+                if (
+                    activeManagementTurn?.turn.source === "automatic" &&
+                    resolvedRange.entries.some((entry) => entry.protected)
+                ) {
+                    throw new Error(
+                        "Automatic compression cannot include entries labeled [protected active tail]. Select an older range.",
+                    )
+                }
+                const rangeMetrics = calculateCompressionRangeMetrics(
+                    rawMessages,
+                    rawMessageIndexById,
+                    resolvedRange,
+                    currentParams.providerId,
+                )
+                const containedMessageIds = rangeMetrics.messageIds
+                if (containedMessageIds.length === 0) {
+                    throw new Error("Could not resolve raw message IDs for the requested range")
+                }
+
+                const preservedSummaries = resolvedRange.entries
+                    .filter(
+                        (
+                            entry,
+                        ): entry is typeof entry & { kind: "block"; anchorMessageId: string } =>
+                            entry.kind === "block" && typeof entry.anchorMessageId === "string",
+                    )
+                    .map((entry) => baselineSummariesByAnchor.get(entry.anchorMessageId)?.summary)
+                    .filter(
+                        (summary): summary is string =>
+                            typeof summary === "string" && summary.length > 0,
+                    )
+
+                const finalSummary = selectFinalSummary(
+                    preservedSummaries,
+                    range.summary,
+                    rangeMetrics.nonBlockMessageIds,
+                )
+                const containedToolIds = rangeMetrics.toolIds
+
+                const startEntry = contextMap.entries[resolvedRange.startPosition]
+                const anchorMessageId =
+                    startEntry?.kind === "block" && startEntry.anchorMessageId
+                        ? startEntry.anchorMessageId
+                        : containedMessageIds[0]
+
+                const candidateCompressed = {
+                    toolIds: new Set(state.compressed.toolIds),
+                    messageIds: new Set(state.compressed.messageIds),
+                }
+                for (const id of containedToolIds) {
+                    candidateCompressed.toolIds.add(id)
+                }
+                for (const id of containedMessageIds) {
+                    candidateCompressed.messageIds.add(id)
+                }
+
+                const candidateSummaries = removeSubsumedCompressSummaries(
+                    state.compressSummaries,
+                    containedMessageIds,
+                )
+                candidateSummaries.push({
+                    anchorMessageId,
+                    messageIds: containedMessageIds,
+                    summary: finalSummary,
+                    topic: range.topic,
+                })
+
+                const completedAt = new Date().toISOString()
+                const candidateManagementTurns = activeManagementTurn
+                    ? state.managementTurns.map((turn) =>
+                          turn === activeManagementTurn.turn
+                              ? {
+                                    ...turn,
+                                    completedAt,
+                                    ...(typeof (toolCtx as any).callID === "string" &&
+                                    (toolCtx as any).callID
+                                        ? { completedCallId: (toolCtx as any).callID }
+                                        : {}),
+                                    completedMessageId: toolCtx.messageID,
+                                }
+                              : turn,
+                      )
+                    : [...state.managementTurns]
+
+                const candidateStats = {
+                    compressTokenCounter: 0,
+                    totalCompressTokens:
+                        state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
+                }
+
+                const candidateState: SessionState = {
+                    ...state,
+                    compressed: candidateCompressed,
+                    compressSummaries: candidateSummaries,
+                    managementTurns: candidateManagementTurns,
+                    stats: candidateStats,
+                    compressionCooldownAfterMessageId: toolCtx.messageID,
+                }
+
+                const persisted = await saveSessionState(candidateState, logger)
+                if (!persisted) {
+                    throw new Error(
+                        "compress could not persist compression state - the range was not compressed",
+                    )
+                }
+
+                // Commit only now that the new state is durable, so a failed save leaves the
+                // live in-memory state exactly as it was and no transform hides content as if
+                // compression had succeeded.
+                commitDurableSessionState(state, candidateState)
+
+                return {
+                    kind: "compressed" as const,
+                    rawMessages,
+                    currentParams,
+                    containedToolIds,
+                    mapEntryCount: rangeMetrics.mapEntryCount,
+                    topic: range.topic,
+                    finalSummary,
+                    startPosition: resolvedRange.startPosition,
+                    endPosition: resolvedRange.endPosition,
+                    contextMapEntryCount: contextMap.entries.length,
+                    estimatedCompressedTokens: rangeMetrics.estimatedCompressedTokens,
+                    anchorMessageId,
+                    continueTask: activeManagementTurn?.turn.source === "automatic",
+                }
             })
 
-            const range = args as Partial<CompressRangeInput>
-            if (typeof range !== "object" || !range) {
-                throw new Error("compress requires { from, to, summary, topic }")
-            }
-            if (!range.topic || typeof range.topic !== "string") {
-                throw new Error("compress requires a non-empty topic")
-            }
-            if (!range.summary || typeof range.summary !== "string") {
-                throw new Error("compress requires a non-empty summary")
-            }
-            if (
-                (typeof range.from !== "number" && typeof range.from !== "string") ||
-                (typeof range.to !== "number" && typeof range.to !== "string")
-            ) {
-                throw new Error("compress requires valid from/to range boundaries")
+            if (outcome.kind === "blocked") {
+                return outcome.message
             }
 
-            const rawMessages: WithParts[] = (await listSessionMessages(client, sessionId)) as WithParts[]
-
-            await ensureSessionInitialized(client, state, sessionId, logger, rawMessages)
-
-            const currentParams = getCurrentParams(state, rawMessages, logger)
-            const activeManagementTurn = findActiveManagementTurn(state, rawMessages)
-            const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
-            const baselineSummaries = [...state.compressSummaries]
-            const baselineSummariesByAnchor = new Map(
-                baselineSummaries.map((summary) => [summary.anchorMessageId, summary]),
+            const updatedContextMap = buildContextMap(
+                outcome.rawMessages,
+                state,
+                logger,
+                outcome.currentParams.providerId,
             )
-            const rawMessageIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]))
-
-            const resolvedRange = resolveContextMapRange(contextMap, range.from!, range.to!)
-            if (
-                activeManagementTurn?.turn.source === "automatic" &&
-                resolvedRange.entries.some((entry) => entry.protected)
-            ) {
-                throw new Error(
-                    "Automatic compression cannot include entries labeled [protected active tail]. Select an older range.",
-                )
-            }
-            const rangeMetrics = calculateCompressionRangeMetrics(
-                rawMessages,
-                rawMessageIndexById,
-                resolvedRange,
-                currentParams.providerId,
-            )
-            const containedMessageIds = rangeMetrics.messageIds
-            if (containedMessageIds.length === 0) {
-                throw new Error("Could not resolve raw message IDs for the requested range")
-            }
-
-            const preservedSummaries = resolvedRange.entries
-                .filter(
-                    (entry): entry is typeof entry & { kind: "block"; anchorMessageId: string } =>
-                        entry.kind === "block" && typeof entry.anchorMessageId === "string",
-                )
-                .map((entry) => baselineSummariesByAnchor.get(entry.anchorMessageId)?.summary)
-                .filter((summary): summary is string => typeof summary === "string" && summary.length > 0)
-
-            const finalSummary = selectFinalSummary(
-                preservedSummaries,
-                range.summary,
-                rangeMetrics.nonBlockMessageIds,
-            )
-            const containedToolIds = rangeMetrics.toolIds
-
-            const startEntry = contextMap.entries[resolvedRange.startPosition]
-            const anchorMessageId =
-                startEntry?.kind === "block" && startEntry.anchorMessageId
-                    ? startEntry.anchorMessageId
-                    : containedMessageIds[0]
-
-            const candidateCompressed = {
-                toolIds: new Set(state.compressed.toolIds),
-                messageIds: new Set(state.compressed.messageIds),
-            }
-            for (const id of containedToolIds) {
-                candidateCompressed.toolIds.add(id)
-            }
-            for (const id of containedMessageIds) {
-                candidateCompressed.messageIds.add(id)
-            }
-
-            const candidateSummaries = removeSubsumedCompressSummaries(
-                state.compressSummaries,
-                containedMessageIds,
-            )
-            candidateSummaries.push({
-                anchorMessageId,
-                messageIds: containedMessageIds,
-                summary: finalSummary,
-                topic: range.topic,
-            })
-
-            const completedAt = new Date().toISOString()
-            const candidateManagementTurns = activeManagementTurn
-                ? state.managementTurns.map((turn) =>
-                      turn === activeManagementTurn.turn
-                          ? {
-                                ...turn,
-                                completedAt,
-                                ...(typeof (toolCtx as any).callID === "string" && (toolCtx as any).callID
-                                    ? { completedCallId: (toolCtx as any).callID }
-                                    : {}),
-                                completedMessageId: toolCtx.messageID,
-                            }
-                          : turn,
-                  )
-                : [...state.managementTurns]
-
-            const candidateStats = {
-                compressTokenCounter: 0,
-                totalCompressTokens: state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
-            }
-
-            const candidateState: SessionState = {
-                ...state,
-                compressed: candidateCompressed,
-                compressSummaries: candidateSummaries,
-                managementTurns: candidateManagementTurns,
-                stats: candidateStats,
-            }
-
-            const persisted = await saveSessionState(candidateState, logger)
-            if (!persisted) {
-                throw new Error(
-                    "compress could not persist compression state - the range was not compressed",
-                )
-            }
-
-            // Commit only now that the new state is durable, so a failed save leaves the
-            // live in-memory state exactly as it was and no transform hides content as if
-            // compression had succeeded.
-            state.compressed = candidateState.compressed
-            state.compressSummaries = candidateState.compressSummaries
-            state.managementTurns = candidateState.managementTurns
-            state.stats = candidateState.stats
-            state.hasPersistedState = candidateState.hasPersistedState
-            state.persistedLastUpdated = candidateState.persistedLastUpdated
+            const storedBlockId = updatedContextMap.entries.find(
+                (entry) =>
+                    entry.kind === "block" &&
+                    entry.anchorMessageId === outcome.anchorMessageId,
+            )?.key as string | undefined
 
             await sendCompressNotification(
                 client,
@@ -338,26 +398,21 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 ctx.config,
                 state,
                 sessionId,
-                containedToolIds,
-                rangeMetrics.mapEntryCount,
-                range.topic,
-                finalSummary,
-                { messageIndex: resolvedRange.startPosition },
-                { messageIndex: resolvedRange.endPosition },
-                contextMap.entries.length,
-                currentParams,
-                rangeMetrics.estimatedCompressedTokens,
+                outcome.containedToolIds,
+                outcome.mapEntryCount,
+                outcome.topic,
+                outcome.finalSummary,
+                { messageIndex: outcome.startPosition },
+                { messageIndex: outcome.endPosition },
+                outcome.contextMapEntryCount,
+                outcome.currentParams,
+                outcome.estimatedCompressedTokens,
             )
 
-            const updatedContextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId)
-            const storedBlockId = updatedContextMap.entries.find(
-                (entry) => entry.kind === "block" && entry.anchorMessageId === anchorMessageId,
-            )?.key as string | undefined
-
             return buildCompressReceipt(
-                range.topic,
+                outcome.topic,
                 storedBlockId,
-                activeManagementTurn?.turn.source === "automatic",
+                outcome.continueTask,
             )
         },
     })

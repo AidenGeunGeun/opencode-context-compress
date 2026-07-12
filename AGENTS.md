@@ -32,6 +32,14 @@ lib/auto-compression.ts
   deduplicates per-session starts, skips subagents, and opens an asynchronous
   automatic management turn.
 
+lib/auto-policy.ts
+  Resolves global and session-level automatic-compression policy and derives the
+  fixed post-compression cooldown from persisted anchors plus the raw transcript.
+
+lib/commands/auto.ts
+  Implements session-scoped `/compress auto` status, on/off, threshold, ratio,
+  and reset controls with user-only feedback and atomic persistence.
+
 lib/tools/compress-map.ts
   Returns the current `<compress-context-map>` snapshot.
 
@@ -80,16 +88,19 @@ lib/state/*
 3. `/compress manage` injects a short reminder plus the current `<compress-context-map>`
    snapshot in the same turn; the agent normally calls `compress` once directly.
    `compress_map` remains available as a fallback/debug/explicit-use path.
-4. Automatic compression starts the same workflow once usage reaches the earlier of the
+4. `/compress auto` reads or changes the current session's persisted auto-compression
+   overrides. Global `autoCompression.enabled: false` remains authoritative.
+5. Automatic compression starts the same workflow once usage reaches the earlier of the
    configured context-window ratio and absolute token threshold. Its persisted map protects
    the configured recent execution tail, and the success receipt instructs task continuation.
-5. On a successful `compress` call, persistence is atomic and the management turn is marked
+6. On a successful `compress` call, persistence is atomic, the management turn is marked
    completed immediately - the fold takes effect for the very next model continuation, with
-   no need to wait for a further visible user message.
-6. While the management turn is still open (before `compress` succeeds), its own prompt/map
+   no need to wait for a further visible user message - and a three-eligible-response cooldown
+   is armed before another automatic or model-initiated compression may run.
+7. While the management turn is still open (before `compress` succeeds), its own prompt/map
    and tool results stay visible so the agent can work; the completing `compress` tool call
    itself remains afterward too, with its literal input intact until the turn is historical.
-7. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
+8. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
    inter-compress conversation, and the active tail remain model-visible.
 
 ## Prompt Generation
@@ -105,9 +116,16 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
 Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
-markers, compression stats, subagent status, initialization, and runtime-only threshold metadata.
+markers, compression stats, persisted auto-compression overrides and cooldown anchor, subagent
+status, initialization, and runtime-only threshold metadata.
 Durable fields are persisted at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`.
-The `initialized` flag prevents redundant disk loads.
+The `initialized` flag prevents repeated subagent/compaction bootstrap work; persisted state is
+still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
+
+Durable mutations for one session MUST run through `SessionStateManager.runExclusive(sessionId, ...)`.
+Construct and atomically save a candidate state before committing it to memory. This prevents
+concurrent commands, compression tools, event hooks, and transforms from overwriting newer state;
+different sessions remain independent.
 
 Subagent sessions are detected via `isSubAgent` and skip compression entirely (early return in transform hook).
 

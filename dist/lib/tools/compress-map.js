@@ -1,7 +1,6 @@
 import { tool } from "@opencode-ai/plugin/tool";
 import { loadPrompt } from "../prompts/index.js";
 import { ensureSessionInitialized } from "../state/index.js";
-import { saveSessionState } from "../state/persistence.js";
 import { getCurrentParams } from "../token-utils.js";
 import { buildContextMap } from "../messages/context-map.js";
 import { listSessionMessages } from "../sdk/client.js";
@@ -20,17 +19,12 @@ export function createCompressMapTool(ctx) {
                 always: ["*"],
                 metadata: {},
             });
-            const rawMessages = (await listSessionMessages(client, sessionId));
-            await ensureSessionInitialized(client, state, sessionId, logger, rawMessages);
-            const currentParams = getCurrentParams(state, rawMessages, logger);
-            const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId);
-            try {
-                await saveSessionState(state, logger);
-            }
-            catch (err) {
-                logger.error("Failed to persist state", { error: err.message });
-            }
-            return contextMap.mapText;
+            return stateManager.runExclusive(sessionId, async () => {
+                const rawMessages = (await listSessionMessages(client, sessionId));
+                await ensureSessionInitialized(client, state, sessionId, logger, rawMessages);
+                const currentParams = getCurrentParams(state, rawMessages, logger);
+                return buildContextMap(rawMessages, state, logger, currentParams.providerId).mapText;
+            });
         },
     });
 }
