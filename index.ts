@@ -3,7 +3,11 @@ import { getConfig } from "./lib/config.js"
 import { Logger } from "./lib/logger.js"
 import { SessionStateManager } from "./lib/state/index.js"
 import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js"
-import { createChatMessageTransformHandler, createCommandExecuteHandler } from "./lib/hooks.js"
+import {
+    createChatMessageHandler,
+    createChatMessageTransformHandler,
+    createCommandExecuteHandler,
+} from "./lib/hooks.js"
 import { configureClientAuth, isSecureMode } from "./lib/auth.js"
 import {
     createAutomaticCompressionEventHandler,
@@ -43,21 +47,7 @@ const plugin: Plugin = (async (ctx) => {
             ctx.directory,
         ) as any,
         "chat.params": createChatParamsHandler(stateManager),
-        "chat.message": async (
-            input: {
-                sessionID: string
-                agent?: string
-                model?: { providerID: string; modelID: string }
-                messageID?: string
-                variant?: string
-            },
-            _output: any,
-        ) => {
-            // Cache variant from real user messages (not synthetic)
-            // This avoids scanning all messages to find variant
-            stateManager.get(input.sessionID).variant = input.variant
-            logger.debug("Cached variant from chat.message hook", { variant: input.variant })
-        },
+        "chat.message": createChatMessageHandler(stateManager, logger),
         "command.execute.before": createCommandExecuteHandler(
             ctx.client,
             stateManager,

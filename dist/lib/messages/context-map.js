@@ -1,6 +1,6 @@
-import { countTokens } from "../token-utils.js";
+import { countTokens, estimateTokensBatch } from "../token-utils.js";
 import { transformMessagesForSearch, findActiveManagementTurn } from "./compress-transform.js";
-import { extractMessageContent } from "../tools/utils.js";
+import { collectContentInRange, extractMessageContent } from "../tools/utils.js";
 const PREVIEW_MAX_CHARS = 90;
 function dedupeMessageIds(ids) {
     const seen = new Set();
@@ -61,6 +61,7 @@ function extractPrimaryText(msg) {
 }
 function collectToolStats(msg) {
     const toolTypes = new Set();
+    const toolIds = new Set();
     let count = 0;
     const parts = Array.isArray(msg.parts) ? msg.parts : [];
     for (const part of parts) {
@@ -68,12 +69,16 @@ function collectToolStats(msg) {
             continue;
         }
         count++;
+        if (part.callID) {
+            toolIds.add(part.callID);
+        }
         if (part.tool) {
             toolTypes.add(part.tool);
         }
     }
     return {
         count,
+        ids: [...toolIds],
         types: [...toolTypes],
     };
 }
@@ -95,7 +100,7 @@ function buildBlockIdByAnchor(rawMessages, state) {
 }
 function buildContextMapEntries(rawMessages, state, logger, providerId) {
     const { transformed: transformedMessages, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger);
-    // The active management turn's own trigger message (system reminder + injected map) is
+    // The active management turn's own trigger message (the management reminder) is
     // not yet suppressed by the transform above - a still-open turn's own tail stays fully
     // visible in the transcript by design. But it is never a meaningful selectable entry for
     // range compression, so exclude it from the map specifically while the turn is open.
@@ -124,7 +129,9 @@ function buildContextMapEntries(rawMessages, state, logger, providerId) {
                 anchorMessageId: summary.anchorMessageId,
                 preview: extractBlockPreview(summary),
                 tokenEstimate: countTokens(summary.summary, providerId),
+                compressionTokenEstimate: countTokens(summary.summary, providerId),
                 toolCallCount: 0,
+                toolIds: [],
                 toolTypes: [],
             };
             entries.push(entry);
@@ -144,7 +151,9 @@ function buildContextMapEntries(rawMessages, state, logger, providerId) {
             rawMessageIds: [msg.info.id],
             preview: trimPreview(extractPrimaryText(msg)),
             tokenEstimate: countTokens(content, providerId),
+            compressionTokenEstimate: estimateTokensBatch(collectContentInRange([msg], 0, 0), providerId),
             toolCallCount: toolStats.count,
+            toolIds: toolStats.ids,
             toolTypes: toolStats.types,
         };
         entries.push(entry);
@@ -195,6 +204,31 @@ function deriveProtectedTailMessageIds(entries, rawMessages, protectedTurns) {
         .slice(protectedStart)
         .filter((entry) => entry.kind === "message")
         .flatMap((entry) => entry.rawMessageIds));
+}
+export function deriveAutomaticProtectedTail(rawMessages, state, logger, protectedTurns) {
+    const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger);
+    const visibleMessages = transformed.filter((message) => !syntheticMap.has(message.info.id));
+    if (visibleMessages.length === 0) {
+        return { protectedMessageIds: [], hasSelectableMessages: false };
+    }
+    let protectedStart = visibleMessages.length;
+    let turnCount = 0;
+    for (let index = visibleMessages.length - 1; index >= 0; index--) {
+        protectedStart = index;
+        const parts = Array.isArray(visibleMessages[index].parts) ? visibleMessages[index].parts : [];
+        turnCount += parts.filter((part) => part.type === "step-start").length;
+        if (turnCount >= protectedTurns)
+            break;
+    }
+    if (protectedTurns <= 0)
+        protectedStart = visibleMessages.length;
+    if (protectedTurns > 0 && turnCount === 0) {
+        protectedStart = Math.max(0, visibleMessages.length - protectedTurns);
+    }
+    return {
+        protectedMessageIds: visibleMessages.slice(protectedStart).map((message) => message.info.id),
+        hasSelectableMessages: protectedStart > 0,
+    };
 }
 function markProtectedEntries(entries, protectedMessageIds) {
     const protectedIds = new Set(protectedMessageIds);
@@ -279,6 +313,68 @@ export function buildContextMap(rawMessages, state, logger, providerId, options)
         protectedMessageIds,
     };
 }
+export function createCompressionMapSnapshot(triggerMessageId, contextMap) {
+    return {
+        triggerMessageId,
+        entries: contextMap.entries.map((entry) => ({
+            key: entry.key,
+            kind: entry.kind,
+            rawMessageIds: [...entry.rawMessageIds],
+            ...(entry.anchorMessageId ? { anchorMessageId: entry.anchorMessageId } : {}),
+            ...(entry.protected ? { protected: true } : {}),
+            toolIds: [...entry.toolIds],
+            tokenEstimate: entry.compressionTokenEstimate,
+        })),
+    };
+}
+export function contextMapFromCompressionSnapshot(snapshot) {
+    const entries = snapshot.entries.map((entry, position) => ({
+        key: entry.key,
+        position,
+        kind: entry.kind,
+        role: "",
+        rawMessageIds: [...entry.rawMessageIds],
+        ...(entry.anchorMessageId ? { anchorMessageId: entry.anchorMessageId } : {}),
+        preview: "",
+        tokenEstimate: entry.tokenEstimate,
+        compressionTokenEstimate: entry.tokenEstimate,
+        toolCallCount: entry.toolIds.length,
+        toolIds: [...entry.toolIds],
+        toolTypes: [],
+        ...(entry.protected ? { protected: true } : {}),
+    }));
+    const keyToPosition = new Map();
+    const lookup = new Map();
+    entries.forEach((entry, position) => {
+        keyToPosition.set(entry.key, position);
+        lookup.set(entry.key, [...entry.rawMessageIds]);
+    });
+    return {
+        mapText: "",
+        lookup,
+        entries,
+        keyOrder: entries.map((entry) => entry.key),
+        keyToPosition,
+        protectedMessageIds: entries
+            .filter((entry) => entry.protected)
+            .flatMap((entry) => entry.rawMessageIds),
+    };
+}
+function describeAvailableBoundaries(contextMap) {
+    const numeric = contextMap.entries
+        .filter((entry) => typeof entry.key === "number")
+        .map((entry) => entry.key);
+    const blocks = contextMap.entries
+        .filter((entry) => typeof entry.key === "string")
+        .map((entry) => `[${entry.key}]`);
+    const numericDescription = numeric.length === 0
+        ? "no numeric entries"
+        : numeric.length === 1
+            ? `numeric boundary ${numeric[0]}`
+            : `numeric boundaries ${numeric[0]} through ${numeric[numeric.length - 1]}`;
+    const blockDescription = blocks.length > 0 ? `; block labels ${blocks.join(", ")}` : "";
+    return `${numericDescription}${blockDescription}`;
+}
 function normalizeRangeBoundary(boundary) {
     if (typeof boundary === "number") {
         return boundary;
@@ -314,11 +410,11 @@ export function resolveContextMapRange(contextMap, from, to) {
     const toKey = normalizeRangeBoundary(to);
     const startPosition = resolveBoundaryPosition(contextMap, fromKey, "start");
     if (startPosition === undefined) {
-        throw new Error(`Unknown range start: ${String(from)}. Use indexes from <compress-context-map>.`);
+        throw new Error(`Unknown range start: ${String(from)}. Nothing was compressed. Do not guess a smaller or differently formatted range; call compress_map and use labels from the map it returns. Available: ${describeAvailableBoundaries(contextMap)}.`);
     }
     const endPosition = resolveBoundaryPosition(contextMap, toKey, "end");
     if (endPosition === undefined) {
-        throw new Error(`Unknown range end: ${String(to)}. Use indexes from <compress-context-map>.`);
+        throw new Error(`Unknown range end: ${String(to)}. Nothing was compressed. Do not guess a smaller or differently formatted range; call compress_map and use labels from the map it returns. Available: ${describeAvailableBoundaries(contextMap)}.`);
     }
     if (startPosition > endPosition) {
         throw new Error(`Range start must appear before end. Received from=${String(from)}, to=${String(to)}.`);

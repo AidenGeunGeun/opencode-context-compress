@@ -39,6 +39,7 @@ export function resetOnCompaction(state) {
     state.compressed.messageIds = new Set();
     state.compressSummaries = [];
     state.managementTurns = [];
+    state.compressionMapSnapshot = undefined;
     state.autoCompressionStarting = false;
     state.lastAutoTriggeredMessageId = undefined;
 }

@@ -1,26 +1,34 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
+import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
-import { buildContextMap } from "../lib/messages/context-map.ts"
+import {
+    buildContextMap,
+    createCompressionMapSnapshot,
+} from "../lib/messages/context-map.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import { createCompressMapTool } from "../lib/tools/compress-map.ts"
 import { createCompressTool } from "../lib/tools/compress.ts"
 import { handleAutoCommand } from "../lib/commands/auto.ts"
-import { loadSessionState } from "../lib/state/persistence.ts"
+import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
 import { createAutomaticCompressionEventHandler } from "../lib/auto-compression.ts"
-import { createCommandExecuteHandler } from "../lib/hooks.ts"
+import {
+    createChatMessageHandler,
+    createChatMessageTransformHandler,
+    createCommandExecuteHandler,
+} from "../lib/hooks.ts"
 
 const logger = {
     info: () => {},
     warn: () => {},
     error: () => {},
     debug: () => {},
+    saveContext: async () => {},
 } as any
 
 const config: PluginConfig = {
@@ -140,8 +148,939 @@ const createClient = (rawMessages: any[]) => ({
     },
 })
 
+const pinCompressionMap = (
+    state: ReturnType<SessionStateManager["get"]>,
+    rawMessages: any[],
+    options: {
+        triggerMessageId?: string
+        source?: "automatic"
+        protectedMessageIds?: string[]
+        reuseExistingTurn?: boolean
+    } = {},
+) => {
+    const triggerMessageId =
+        options.triggerMessageId ?? `manage-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let turn = options.reuseExistingTurn
+        ? state.managementTurns.find(
+              (candidate) => candidate.triggerMessageId === triggerMessageId,
+          )
+        : undefined
+    if (!turn) {
+        turn = {
+            triggerMessageId,
+            ...(options.source === "automatic" ? { source: "automatic" as const } : {}),
+            ...(options.protectedMessageIds
+                ? { protectedMessageIds: options.protectedMessageIds }
+                : {}),
+        }
+        state.managementTurns.push(turn)
+    }
+    const triggerIndex = rawMessages.findIndex(
+        (message) => message.info.id === triggerMessageId,
+    )
+    const preManagementMessages =
+        triggerIndex === -1 ? rawMessages : rawMessages.slice(0, triggerIndex)
+    const contextMap = buildContextMap(
+        preManagementMessages as any,
+        state,
+        logger,
+        undefined,
+        turn.source === "automatic"
+            ? { protectedMessageIds: turn.protectedMessageIds ?? [] }
+            : undefined,
+    )
+    state.persistenceSynchronized = true
+    state.compressionMapSnapshot = createCompressionMapSnapshot(triggerMessageId, contextMap)
+    return contextMap
+}
+
 describe("compression management tools", () => {
-    it("compress_map returns the current map shape without marking its output for stripping", async () => {
+    it("pins a 148-entry map so a later sparse seven-message host response cannot change compression", async () => {
+        const sessionId = `session-compress-pinned-148-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+
+        try {
+            const pinnedMessages = Array.from({ length: 148 }, (_, index) =>
+                textMessage(
+                    `pinned-${String(index + 1).padStart(3, "0")}`,
+                    sessionId,
+                    `Pinned historical message ${index + 1}`,
+                    index % 2 === 0 ? "user" : "assistant",
+                ),
+            )
+            const trigger = textMessage(
+                "manage-trigger",
+                sessionId,
+                "<system-reminder>CONTEXT MANAGEMENT REQUESTED</system-reminder>",
+            )
+            const sparseLaterResponse = [
+                pinnedMessages[0],
+                pinnedMessages[1],
+                pinnedMessages[2],
+                pinnedMessages[145],
+                pinnedMessages[146],
+                pinnedMessages[147],
+                trigger,
+            ]
+            let messageReads = 0
+            const client = {
+                session: {
+                    get: async () => ({ data: {} }),
+                    messages: async () => ({
+                        data:
+                            messageReads++ === 0
+                                ? [...pinnedMessages, trigger]
+                                : sparseLaterResponse,
+                    }),
+                },
+            }
+            const stateManager = new SessionStateManager()
+            const state = stateManager.get(sessionId)
+            state.sessionId = sessionId
+            state.initialized = true
+            state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+
+            const mapTool = createCompressMapTool({
+                client,
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+            const compressTool = createCompressTool({
+                client,
+                stateManager,
+                logger,
+                config,
+                workingDirectory: "/tmp",
+            })
+
+            const map = await mapTool.execute(
+                {} as any,
+                createToolContext(sessionId, "call-map-148") as any,
+            )
+            assert.match(map, /Total: 148 messages \+ 0 blocks/)
+
+            const output = await compressTool.execute(
+                {
+                    from: 1,
+                    to: 148,
+                    topic: "Pinned History",
+                    summary: "All 148 pinned historical messages are preserved here.",
+                },
+                createToolContext(sessionId, "call-compress-148") as any,
+            )
+
+            assert.match(output, /^Compression complete/)
+            assert.equal(messageReads, 1, "compress must not retrieve the transcript after the map is pinned")
+            assert.deepEqual(state.compressSummaries[0].messageIds, pinnedMessages.map((message) => message.info.id))
+            assert.deepEqual([...state.compressed.messageIds], pinnedMessages.map((message) => message.info.id))
+            assert.equal(state.compressionMapSnapshot, undefined)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("rejects compress_map outside an active management turn without creating a snapshot", async () => {
+        const sessionId = `session-compress-map-unauthorized-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        let askCalls = 0
+        const mapTool = createCompressMapTool({
+            client: createClient([textMessage("m1", sessionId, "Ordinary work")]),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            await assert.rejects(
+                mapTool.execute(
+                    {} as any,
+                    {
+                        ...createToolContext(sessionId, "unauthorized-map"),
+                        ask: async () => {
+                            askCalls++
+                        },
+                    } as any,
+                ),
+                /Only the user can authorize.*`\/compress manage`/,
+            )
+            assert.equal(askCalls, 0)
+            assert.equal(state.compressionMapSnapshot, undefined)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("replaces the current-turn snapshot when a later successful map is smaller", async () => {
+        const sessionId = `session-compress-map-replace-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const all = Array.from({ length: 12 }, (_, index) =>
+            textMessage(`m${index + 1}`, sessionId, `History ${index + 1}`, index % 2 ? "assistant" : "user"),
+        )
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const smaller = [all[0], all[1], all[10], all[11], trigger]
+        let reads = 0
+        const client = {
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => {
+                    if (reads++ === 0) return { data: [...all, trigger] }
+                    if (reads === 2) return { data: smaller }
+                    throw new Error("host messages unavailable")
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const mapTool = createCompressMapTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            assert.match(
+                await mapTool.execute({} as any, createToolContext(sessionId, "map-large") as any),
+                /Total: 12 messages/,
+            )
+            assert.equal(state.compressionMapSnapshot?.entries.length, 12)
+            assert.match(
+                await mapTool.execute({} as any, createToolContext(sessionId, "map-small") as any),
+                /Total: 4 messages/,
+            )
+            assert.equal(state.compressionMapSnapshot?.entries.length, 4)
+            assert.equal(Array.isArray(state.compressionMapSnapshot), false)
+            const lastSuccessfulSnapshot = structuredClone(state.compressionMapSnapshot)
+            await assert.rejects(
+                mapTool.execute({} as any, createToolContext(sessionId, "map-fetch-fails") as any),
+                /No new map became authoritative/,
+            )
+            assert.deepEqual(state.compressionMapSnapshot, lastSuccessfulSnapshot)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("does not return an executable-looking map when snapshot persistence fails", async () => {
+        const sessionId = `session-compress-map-save-fails/${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const mapTool = createCompressMapTool({
+            client: createClient([textMessage("m1", sessionId, "History"), trigger]),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        await assert.rejects(
+            mapTool.execute({} as any, createToolContext(sessionId, "map-save-fails") as any),
+            /could not save this snapshot.*No new map became authoritative/s,
+        )
+        assert.equal(state.compressionMapSnapshot, undefined)
+    })
+
+    it("compresses only seven entries when the first authoritative map honestly contains seven", async () => {
+        const sessionId = `session-compress-map-seven-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const seven = Array.from({ length: 7 }, (_, index) =>
+            textMessage(`m${index + 1}`, sessionId, `Sparse visible ${index + 1}`, index % 2 ? "assistant" : "user"),
+        )
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const client = createClient([...seven, trigger])
+        const mapTool = createCompressMapTool({ client, stateManager, logger, config, workingDirectory: "/tmp" })
+        const compressTool = createCompressTool({ client, stateManager, logger, config, workingDirectory: "/tmp" })
+
+        try {
+            assert.match(
+                await mapTool.execute({} as any, createToolContext(sessionId, "map-seven") as any),
+                /Total: 7 messages/,
+            )
+            await compressTool.execute(
+                { from: 1, to: 7, topic: "Sparse History", summary: "Only the seven visible entries." },
+                createToolContext(sessionId, "compress-seven") as any,
+            )
+            assert.deepEqual(state.compressSummaries[0].messageIds, seven.map((message) => message.info.id))
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("omits an unsafe block label when a sparse pinned map cannot see an older stored block", async () => {
+        const sessionId = `session-compress-sparse-block-label-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const visible = [
+            textMessage("m3", sessionId, "Visible later request"),
+            textMessage("m4", sessionId, "Visible later result", "assistant"),
+        ]
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressed.messageIds = new Set(["m1", "m2"])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "m1",
+                messageIds: ["m1", "m2"],
+                summary: "Older stored block omitted by the sparse host response.",
+                topic: "Older Block",
+            },
+        ]
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const client = createClient([...visible, trigger])
+        const mapTool = createCompressMapTool({ client, stateManager, logger, config, workingDirectory: "/tmp" })
+        const compressTool = createCompressTool({ client, stateManager, logger, config, workingDirectory: "/tmp" })
+
+        try {
+            await mapTool.execute({} as any, createToolContext(sessionId, "map-sparse-block") as any)
+            const receipt = await compressTool.execute(
+                { from: 1, to: 2, topic: "Later Work", summary: "The visible later work." },
+                createToolContext(sessionId, "compress-sparse-block") as any,
+            )
+
+            assert.match(receipt, /Stored "Later Work" durably/)
+            assert.doesNotMatch(receipt, /Stored \[b\d+\]/)
+            assert.equal(state.compressSummaries.length, 2)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("clears the pinned snapshot when a later visible user message ends the management turn", async () => {
+        const sessionId = `session-compress-map-user-boundary-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const client = createClient([
+            textMessage("m1", sessionId, "Completed work"),
+            trigger,
+        ])
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const mapTool = createCompressMapTool({ client, stateManager, logger, config, workingDirectory: "/tmp" })
+
+        try {
+            await mapTool.execute({} as any, createToolContext(sessionId, "map-before-user") as any)
+            assert.ok(state.compressionMapSnapshot)
+
+            const handler = createChatMessageHandler(stateManager, logger)
+            await handler(
+                { sessionID: sessionId, messageID: "later-user", variant: "high" },
+                {
+                    message: textMessage("later-user", sessionId, "Continue normally").info,
+                    parts: [{ type: "text", text: "Continue normally" }],
+                },
+            )
+
+            assert.equal(state.compressionMapSnapshot, undefined)
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("queues a racing visible user behind compress_map and invalidates the newly committed snapshot", async () => {
+        const sessionId = `session-compress-map-user-race-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const mapMessages = [textMessage("m1", sessionId, "Completed work"), trigger]
+        const laterUser = textMessage("later-user", sessionId, "Continue normally")
+        let releaseMessages!: () => void
+        let markMessagesStarted!: () => void
+        const messagesStarted = new Promise<void>((resolve) => {
+            markMessagesStarted = resolve
+        })
+        const messagesGate = new Promise<void>((resolve) => {
+            releaseMessages = resolve
+        })
+        const client = {
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => {
+                    markMessagesStarted()
+                    await messagesGate
+                    return { data: mapMessages }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        const mapTool = createCompressMapTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const compressTool = createCompressTool({
+            client,
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const userHandler = createChatMessageHandler(stateManager, logger)
+
+        try {
+            const mapCreation = mapTool.execute(
+                {} as any,
+                createToolContext(sessionId, "map-racing-user") as any,
+            )
+            await messagesStarted
+
+            let userHandlerCompleted = false
+            const userInvalidation = userHandler(
+                { sessionID: sessionId, messageID: laterUser.info.id },
+                { message: laterUser.info, parts: laterUser.parts },
+            ).then(() => {
+                userHandlerCompleted = true
+            })
+            await new Promise<void>((resolve) => setImmediate(resolve))
+            assert.equal(userHandlerCompleted, false)
+            assert.equal(state.compressionMapSnapshot, undefined)
+
+            releaseMessages()
+            assert.match(await mapCreation, /<compress-context-map>/)
+            await userInvalidation
+
+            assert.equal(state.compressionMapSnapshot, undefined)
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+
+            let askCalls = 0
+            await assert.rejects(
+                compressTool.execute(
+                    { from: 1, to: 1, topic: "Stale", summary: "Must not run." },
+                    {
+                        ...createToolContext(sessionId, "compress-after-racing-user"),
+                        ask: async () => {
+                            askCalls++
+                        },
+                    } as any,
+                ),
+                /no authoritative map/,
+            )
+            assert.equal(askCalls, 0)
+            assert.equal(state.compressSummaries.length, 0)
+            assert.equal(state.compressed.messageIds.size, 0)
+        } finally {
+            releaseMessages?.()
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("keeps a failed visible-user cleanup blocked through compress_map reload and compress", async () => {
+        const nestedSessionRoot = `session-compress-map-user-cleanup-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const sessionId = `${nestedSessionRoot}/state`
+        const sessionDirectory = dirname(getSessionFilePath(sessionId))
+        const backupDirectory = `${sessionDirectory}-backup`
+        await rm(sessionDirectory, { recursive: true, force: true })
+        await rm(backupDirectory, { recursive: true, force: true })
+        await mkdir(sessionDirectory, { recursive: true })
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const laterUser = textMessage("later-user", sessionId, "Continue normally")
+        const messages = [textMessage("m1", sessionId, "Completed work"), trigger, laterUser]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        pinCompressionMap(state, messages.slice(0, 2), {
+            triggerMessageId: trigger.info.id,
+            reuseExistingTurn: true,
+        })
+        assert.equal(await saveSessionState(state, logger), true)
+        const originalSnapshot = structuredClone(state.compressionMapSnapshot)
+        const userHandler = createChatMessageHandler(stateManager, logger)
+        const blockStateWrites = () => {
+            renameSync(sessionDirectory, backupDirectory)
+            writeFileSync(sessionDirectory, "not a directory")
+        }
+        const restoreStateFile = () => {
+            rmSync(sessionDirectory, { force: true })
+            renameSync(backupDirectory, sessionDirectory)
+        }
+        let staleStateReloaded = false
+        const reloadLogger = {
+            ...logger,
+            info: (message: string) => {
+                if (message === "Loaded session state from disk" && !staleStateReloaded) {
+                    staleStateReloaded = true
+                    blockStateWrites()
+                }
+            },
+        } as any
+        const mapTool = createCompressMapTool({
+            client: createClient(messages),
+            stateManager,
+            logger: reloadLogger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const compressTool = createCompressTool({
+            client: createClient(messages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            blockStateWrites()
+            await userHandler(
+                { sessionID: sessionId, messageID: laterUser.info.id },
+                { message: laterUser.info, parts: laterUser.parts },
+            )
+            restoreStateFile()
+
+            assert.deepEqual(state.compressionMapSnapshot, originalSnapshot)
+            assert.equal(state.persistenceSynchronized, false)
+
+            await assert.rejects(
+                mapTool.execute({} as any, createToolContext(sessionId, "map-after-user-cleanup-failure") as any),
+                /could not load saved session state/,
+            )
+            restoreStateFile()
+            assert.equal(staleStateReloaded, true)
+            assert.deepEqual(state.compressionMapSnapshot, originalSnapshot)
+            assert.equal(state.persistenceSynchronized, false)
+
+            await assert.rejects(
+                compressTool.execute(
+                    { from: 1, to: 1, topic: "Stale", summary: "Must not run." },
+                    createToolContext(sessionId, "compress-after-user-cleanup-failure") as any,
+                ),
+                /cannot trust saved session state/,
+            )
+        } finally {
+            if (existsSync(sessionDirectory) && existsSync(backupDirectory)) {
+                rmSync(sessionDirectory, { recursive: true, force: true })
+                renameSync(backupDirectory, sessionDirectory)
+            }
+            await rm(sessionDirectory, { recursive: true, force: true })
+            await rm(backupDirectory, { recursive: true, force: true })
+        }
+    })
+
+    it("reconciles a stale persisted snapshot during the next transcript transform after restart", async () => {
+        const sessionId = `session-compress-map-restart-reconcile-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const laterUser = textMessage("later-user", sessionId, "Resume ordinary work")
+        const messages = [textMessage("m1", sessionId, "History"), trigger, laterUser]
+        const initialManager = new SessionStateManager()
+        const initialState = initialManager.get(sessionId)
+        initialState.initialized = true
+        initialState.persistenceSynchronized = true
+        initialState.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        pinCompressionMap(initialState, messages.slice(0, 2), {
+            triggerMessageId: trigger.info.id,
+            reuseExistingTurn: true,
+        })
+        const saved = await saveSessionState(initialState, logger)
+        assert.equal(saved, true)
+
+        try {
+            const reloadedManager = new SessionStateManager()
+            const handler = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedManager,
+                logger,
+                config,
+            )
+            const output = { messages: structuredClone(messages) as any }
+            await handler({}, output)
+
+            const reloadedState = reloadedManager.get(sessionId)
+            assert.equal(reloadedState.compressionMapSnapshot, undefined)
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("invalidates a pre-compaction persisted snapshot after restart", async () => {
+        const sessionId = `session-compress-map-compaction-restart-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const compaction = {
+            ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant"),
+            info: {
+                ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant").info,
+                summary: true,
+                time: { created: Date.now() + 10_000 },
+            },
+        }
+        const messages = [textMessage("m1", sessionId, "History"), trigger, compaction]
+        const initialManager = new SessionStateManager()
+        const initialState = initialManager.get(sessionId)
+        initialState.initialized = true
+        initialState.persistenceSynchronized = true
+        initialState.compressed.messageIds = new Set(["m1"])
+        initialState.compressSummaries = [
+            {
+                anchorMessageId: "m1",
+                messageIds: ["m1"],
+                summary: "Pre-compaction plugin summary.",
+            },
+        ]
+        initialState.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        pinCompressionMap(initialState, messages.slice(0, 2), {
+            triggerMessageId: trigger.info.id,
+            reuseExistingTurn: true,
+        })
+        assert.equal(await saveSessionState(initialState, logger), true)
+
+        try {
+            const reloadedManager = new SessionStateManager()
+            const handler = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedManager,
+                logger,
+                config,
+            )
+            await handler({}, { messages: structuredClone(messages) as any })
+
+            const reloadedState = reloadedManager.get(sessionId)
+            assert.equal(reloadedState.compressionMapSnapshot, undefined)
+            assert.equal(reloadedState.compressed.messageIds.size, 0)
+            assert.deepEqual(reloadedState.compressSummaries, [])
+            assert.deepEqual(reloadedState.managementTurns, [])
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+            assert.deepEqual(loaded.state.compressed.messageIds, [])
+            assert.deepEqual(loaded.state.compressSummaries, [])
+            assert.deepEqual(loaded.state.managementTurns, [])
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("fully resets missing-trigger pre-compaction state even after a later generic save timestamp", async () => {
+        const sessionId = `session-compress-map-compaction-missing-trigger-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const oldMessage = textMessage("old-message", sessionId, "Pre-compaction history")
+        const oldTrigger = textMessage("old-manage-trigger", sessionId, "Manage")
+        const compaction = {
+            ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant"),
+            info: {
+                ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant").info,
+                summary: true,
+                time: { created: Date.now() - 1_000 },
+            },
+        }
+        const messages = [
+            compaction,
+            textMessage("post-compaction-user", sessionId, "Continue after compaction"),
+        ]
+        const initialManager = new SessionStateManager()
+        const initialState = initialManager.get(sessionId)
+        initialState.initialized = true
+        initialState.persistenceSynchronized = true
+        initialState.compressed.messageIds = new Set([oldMessage.info.id])
+        initialState.compressed.toolIds = new Set(["old-tool-call"])
+        initialState.compressSummaries = [
+            {
+                anchorMessageId: oldMessage.info.id,
+                messageIds: [oldMessage.info.id],
+                summary: "Pre-compaction plugin summary.",
+            },
+        ]
+        initialState.managementTurns = [{ triggerMessageId: oldTrigger.info.id }]
+        pinCompressionMap(initialState, [oldMessage, oldTrigger], {
+            triggerMessageId: oldTrigger.info.id,
+            reuseExistingTurn: true,
+        })
+        assert.equal(await saveSessionState(initialState, logger), true)
+
+        try {
+            const reloadedManager = new SessionStateManager()
+            const handler = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedManager,
+                logger,
+                config,
+            )
+            await handler({}, { messages: structuredClone(messages) as any })
+
+            const reloadedState = reloadedManager.get(sessionId)
+            assert.equal(reloadedState.persistenceSynchronized, true)
+            assert.equal(reloadedState.compressionMapSnapshot, undefined)
+            assert.equal(reloadedState.compressed.messageIds.size, 0)
+            assert.equal(reloadedState.compressed.toolIds.size, 0)
+            assert.deepEqual(reloadedState.compressSummaries, [])
+            assert.deepEqual(reloadedState.managementTurns, [])
+            assert.equal(reloadedState.lastCompaction, compaction.info.time.created)
+
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected persisted state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+            assert.deepEqual(loaded.state.compressed.messageIds, [])
+            assert.deepEqual(loaded.state.compressed.toolIds, [])
+            assert.deepEqual(loaded.state.compressSummaries, [])
+            assert.deepEqual(loaded.state.managementTurns, [])
+            assert.equal(loaded.state.lastCompaction, compaction.info.time.created)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("retains compression state whose physical messages follow the latest native compaction", async () => {
+        const sessionId = `session-compress-map-post-compaction-state-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const compaction = {
+            ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant"),
+            info: {
+                ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant").info,
+                summary: true,
+                time: { created: Date.now() - 1_000 },
+            },
+        }
+        const postCompactionMessage = textMessage(
+            "post-compaction-message",
+            sessionId,
+            "Work completed after native compaction",
+        )
+        const messages = [compaction, postCompactionMessage]
+        const initialManager = new SessionStateManager()
+        const initialState = initialManager.get(sessionId)
+        initialState.initialized = true
+        initialState.persistenceSynchronized = true
+        initialState.compressed.messageIds = new Set([postCompactionMessage.info.id])
+        initialState.compressed.toolIds = new Set(["post-compaction-tool"])
+        initialState.compressSummaries = [
+            {
+                anchorMessageId: postCompactionMessage.info.id,
+                messageIds: [postCompactionMessage.info.id],
+                summary: "Post-compaction plugin summary.",
+            },
+        ]
+        assert.equal(await saveSessionState(initialState, logger), true)
+
+        try {
+            const reloadedManager = new SessionStateManager()
+            const handler = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedManager,
+                logger,
+                config,
+            )
+            await handler({}, { messages: structuredClone(messages) as any })
+
+            const reloadedState = reloadedManager.get(sessionId)
+            assert.equal(reloadedState.persistenceSynchronized, true)
+            assert.equal(reloadedState.lastCompaction, compaction.info.time.created)
+            assert.deepEqual([...reloadedState.compressed.messageIds], [postCompactionMessage.info.id])
+            assert.deepEqual([...reloadedState.compressed.toolIds], ["post-compaction-tool"])
+            assert.equal(reloadedState.compressSummaries.length, 1)
+
+            const sparseMessages = [
+                compaction,
+                textMessage("sparse-post-compaction-user", sessionId, "Sparse later response"),
+            ]
+            await handler({}, { messages: structuredClone(sparseMessages) as any })
+            assert.deepEqual([...reloadedState.compressed.messageIds], [postCompactionMessage.info.id])
+            assert.equal(reloadedState.compressSummaries.length, 1)
+
+            const secondRestartManager = new SessionStateManager()
+            const secondRestartHandler = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                secondRestartManager,
+                logger,
+                config,
+            )
+            await secondRestartHandler({}, { messages: structuredClone(sparseMessages) as any })
+            const secondRestartState = secondRestartManager.get(sessionId)
+            assert.deepEqual([...secondRestartState.compressed.messageIds], [postCompactionMessage.info.id])
+            assert.equal(secondRestartState.compressSummaries.length, 1)
+
+            await secondRestartHandler({}, { messages: structuredClone(messages) as any })
+            assert.deepEqual([...secondRestartState.compressed.messageIds], [postCompactionMessage.info.id])
+            assert.equal(secondRestartState.compressSummaries.length, 1)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("keeps live pin authority fail-closed when compaction cleanup cannot be saved", async () => {
+        const sessionId = `session-compress-map-compaction-save-fails/${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const trigger = textMessage("manage-trigger", sessionId, "Manage")
+        const compaction = {
+            ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant"),
+            info: {
+                ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant").info,
+                summary: true,
+                time: { created: Date.now() + 1 },
+            },
+        }
+        const messages = [textMessage("m1", sessionId, "History"), trigger, compaction]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.persistenceSynchronized = true
+        state.managementTurns = [{ triggerMessageId: trigger.info.id }]
+        pinCompressionMap(state, messages.slice(0, 2), {
+            triggerMessageId: trigger.info.id,
+            reuseExistingTurn: true,
+        })
+        const originalSnapshot = structuredClone(state.compressionMapSnapshot)
+        const handler = createChatMessageTransformHandler(
+            { session: { get: async () => ({ data: {} }) } },
+            stateManager,
+            logger,
+            config,
+        )
+        const mapTool = createCompressMapTool({
+            client: createClient(messages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const compressTool = createCompressTool({
+            client: createClient(messages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        await handler({}, { messages: structuredClone(messages) as any })
+
+        assert.deepEqual(state.compressionMapSnapshot, originalSnapshot)
+        assert.equal(state.persistenceSynchronized, false)
+        assert.equal(state.lastCompaction, 0)
+
+        await assert.rejects(
+            mapTool.execute({} as any, createToolContext(sessionId, "map-after-cleanup-failure") as any),
+            /could not load saved session state/,
+        )
+        assert.deepEqual(state.compressionMapSnapshot, originalSnapshot)
+        assert.equal(state.persistenceSynchronized, false)
+
+        await assert.rejects(
+            compressTool.execute(
+                { from: 1, to: 1, topic: "Stale", summary: "Must not run." },
+                createToolContext(sessionId, "compress-after-cleanup-failure") as any,
+            ),
+            /cannot trust saved session state/,
+        )
+    })
+
+    it("retries a failed missing-trigger compaction reset without advancing authority", async () => {
+        const nestedSessionRoot = `session-compress-map-compaction-retry-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const sessionId = `${nestedSessionRoot}/state`
+        const sessionFile = getSessionFilePath(sessionId)
+        const sessionDirectory = dirname(sessionFile)
+        await rm(sessionDirectory, { recursive: true, force: true })
+
+        const oldMessage = textMessage("old-message", sessionId, "Pre-compaction history")
+        const oldTrigger = textMessage("old-manage-trigger", sessionId, "Manage")
+        const compaction = {
+            ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant"),
+            info: {
+                ...textMessage("native-compaction", sessionId, "Native compacted context", "assistant").info,
+                summary: true,
+                time: { created: Date.now() + 1 },
+            },
+        }
+        const messages = [
+            compaction,
+            textMessage("post-compaction-user", sessionId, "Continue after compaction"),
+        ]
+        let saveFailureCount = 0
+        const countingLogger = {
+            ...logger,
+            error: (message: string) => {
+                if (message === "Failed to save session state") saveFailureCount++
+            },
+        } as any
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.compressed.messageIds = new Set([oldMessage.info.id])
+        state.compressSummaries = [
+            {
+                anchorMessageId: oldMessage.info.id,
+                messageIds: [oldMessage.info.id],
+                summary: "Pre-compaction plugin summary.",
+            },
+        ]
+        state.managementTurns = [{ triggerMessageId: oldTrigger.info.id }]
+        pinCompressionMap(state, [oldMessage, oldTrigger], {
+            triggerMessageId: oldTrigger.info.id,
+            reuseExistingTurn: true,
+        })
+        state.initialized = false
+        const originalSnapshot = structuredClone(state.compressionMapSnapshot)
+        const handler = createChatMessageTransformHandler(
+            { session: { get: async () => ({ data: {} }) } },
+            stateManager,
+            countingLogger,
+            config,
+        )
+
+        try {
+            await handler({}, { messages: structuredClone(messages) as any })
+            await handler({}, { messages: structuredClone(messages) as any })
+
+            assert.equal(saveFailureCount, 2)
+            assert.equal(state.persistenceSynchronized, false)
+            assert.equal(state.lastCompaction, 0)
+            assert.deepEqual(state.compressionMapSnapshot, originalSnapshot)
+            assert.equal(state.compressed.messageIds.has(oldMessage.info.id), true)
+            assert.equal(state.managementTurns.length, 1)
+
+            await mkdir(sessionDirectory, { recursive: true })
+            await handler({}, { messages: structuredClone(messages) as any })
+
+            assert.equal(state.persistenceSynchronized, true)
+            assert.equal(state.lastCompaction, compaction.info.time.created)
+            assert.equal(state.compressionMapSnapshot, undefined)
+            assert.equal(state.compressed.messageIds.size, 0)
+            assert.deepEqual(state.compressSummaries, [])
+            assert.deepEqual(state.managementTurns, [])
+        } finally {
+            await rm(join(
+                process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
+                "opencode",
+                "storage",
+                "plugin",
+                "compress",
+                nestedSessionRoot,
+            ), { recursive: true, force: true })
+        }
+    })
+
+    it("compress_map pins the current map shape without marking its output for stripping", async () => {
         const sessionId = `session-compress-map-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
 
@@ -150,11 +1089,17 @@ describe("compression management tools", () => {
                 textMessage("m1", sessionId, "Phase one request"),
                 textMessage("m2", sessionId, "Phase one result", "assistant"),
                 textMessage("m3", sessionId, "Phase two request"),
+                textMessage("manage-trigger", sessionId, "Manage compression"),
             ]
             const stateManager = new SessionStateManager()
             const state = stateManager.get(sessionId)
             state.sessionId = sessionId
             state.initialized = true
+            state.managementTurns = [{ triggerMessageId: "manage-trigger" }]
+            pinCompressionMap(state, rawMessages, {
+                triggerMessageId: "manage-trigger",
+                reuseExistingTurn: true,
+            })
 
             const client = createClient(rawMessages)
 
@@ -173,6 +1118,8 @@ describe("compression management tools", () => {
             assert.match(output, /Total: 3 messages \+ 0 blocks/)
             assert.doesNotMatch(output, /Active:/)
             assert.equal(state.compressed.toolIds.has("call-map-1"), false)
+            assert.equal(state.compressionMapSnapshot?.triggerMessageId, "manage-trigger")
+            assert.equal(state.compressionMapSnapshot?.entries.length, 3)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -191,6 +1138,8 @@ describe("compression management tools", () => {
                     sessionId,
                     "<system-reminder>\nCONTEXT MANAGEMENT REQUESTED\n</system-reminder>\n\n<compress-context-map>stale injected map</compress-context-map>",
                 ),
+                textMessage("manage-reasoning", sessionId, "Choosing a range", "assistant"),
+                toolMessage("manage-failed-compress", sessionId, "compress", "Unknown range end"),
             ]
             const stateManager = new SessionStateManager()
             const state = stateManager.get(sessionId)
@@ -212,6 +1161,8 @@ describe("compression management tools", () => {
 
             assert.doesNotMatch(output, /CONTEXT MANAGEMENT REQUESTED/)
             assert.doesNotMatch(output, /stale injected map/)
+            assert.doesNotMatch(output, /Choosing a range/)
+            assert.doesNotMatch(output, /Unknown range end/)
             assert.match(output, /\[1\] user: "Do the actual work"/)
             assert.match(output, /Total: 2 messages \+ 0 blocks/)
         } finally {
@@ -238,6 +1189,10 @@ describe("compression management tools", () => {
             state.sessionId = sessionId
             state.initialized = true
             state.managementTurns = [{ triggerMessageId: "manage-trigger" }]
+            pinCompressionMap(state, rawMessages, {
+                triggerMessageId: "manage-trigger",
+                reuseExistingTurn: true,
+            })
 
             const tool = createCompressTool({
                 client: createClient(rawMessages),
@@ -247,12 +1202,22 @@ describe("compression management tools", () => {
                 workingDirectory: "/tmp",
             })
 
+            await assert.rejects(
+                tool.execute(
+                    { from: 1, to: 99, topic: "Invalid", summary: "Must not store." },
+                    createToolContext(sessionId, "call-invalid-range") as any,
+                ),
+                /Unknown range end: 99.*Nothing was compressed.*Do not guess.*Available: numeric boundaries 1 through 2/s,
+            )
+            assert.ok(state.compressionMapSnapshot)
+
             const output = await tool.execute(
                 { from: 1, to: 2, topic: "Prior Work", summary: "Summary of prior work." },
                 createToolContext(sessionId, "call-manage-compress-1") as any,
             )
 
-            assert.equal(output, 'Compression complete. Stored [b0] "Prior Work".')
+            assert.match(output, /Stored \[b0\] "Prior Work" durably; the fold is already in effect/)
+            assert.match(output, /Do not call compress or compress_map again this turn/)
             assert.equal(state.managementTurns.length, 1)
             const turn = state.managementTurns[0]
             assert.equal(typeof turn.completedAt, "string")
@@ -267,7 +1232,7 @@ describe("compression management tools", () => {
         }
     })
 
-    it("blocks model-initiated compression during cooldown before asking permission", async () => {
+    it("blocks compression outside a user-authorized management turn before asking permission", async () => {
         const sessionId = `session-compress-cooldown-block-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const rawMessages = [
@@ -306,13 +1271,13 @@ describe("compression management tools", () => {
             },
         }
 
-        const output = await tool.execute(
-            { from: 1, to: 1, topic: "Blocked", summary: "Must not be stored." },
-            toolContext as any,
+        await assert.rejects(
+            tool.execute(
+                { from: 1, to: 1, topic: "Blocked", summary: "Must not be stored." },
+                toolContext as any,
+            ),
+            /Call compress_map first.*only the user can .*`\/compress manage`/is,
         )
-
-        assert.match(output, /Wait 2 more assistant responses/)
-        assert.match(output, /Only the user may override.*`\/compress manage`/)
         assert.equal(askCalls, 0)
         assert.equal(state.compressSummaries.length, 0)
         assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
@@ -354,7 +1319,7 @@ describe("compression management tools", () => {
                     },
                     toolContext as any,
                 ),
-                /could not load saved session state/,
+                /cannot trust saved session state/,
             )
             assert.equal(askCalls, 0)
             assert.equal(stateManager.get(sessionId).compressSummaries.length, 0)
@@ -387,6 +1352,10 @@ describe("compression management tools", () => {
         state.initialized = true
         state.compressionCooldownAfterMessageId = "compress-anchor"
         state.managementTurns = [{ triggerMessageId: "manual-trigger" }]
+        pinCompressionMap(state, rawMessages, {
+            triggerMessageId: "manual-trigger",
+            reuseExistingTurn: true,
+        })
         let askCalls = 0
         const tool = createCompressTool({
             client: createClient(rawMessages),
@@ -420,6 +1389,48 @@ describe("compression management tools", () => {
         }
     })
 
+    it("does not create an automatic execution pin while the successful-compression cooldown applies", async () => {
+        const sessionId = `session-compress-map-auto-cooldown-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const completed = (message: any) => ({
+            ...message,
+            info: {
+                ...message.info,
+                time: { created: Date.now(), completed: Date.now() },
+            },
+        })
+        const rawMessages = [
+            completed(toolMessage("compress-anchor", sessionId, "compress", "done")),
+            textMessage("normal-user", sessionId, "Continue"),
+            completed(textMessage("normal-assistant", sessionId, "Progress", "assistant")),
+            textMessage("auto-trigger", sessionId, "Automatic management"),
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.compressionCooldownAfterMessageId = "compress-anchor"
+        state.managementTurns = [
+            { triggerMessageId: "auto-trigger", source: "automatic" },
+        ]
+        const mapTool = createCompressMapTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            await assert.rejects(
+                mapTool.execute({} as any, createToolContext(sessionId, "auto-cooldown-map") as any),
+                /still in its post-compression cooldown.*No new map became authoritative/s,
+            )
+            assert.equal(state.compressionMapSnapshot, undefined)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
     it("rejects an automatic protected-tail range, then resumes the task after a valid older range", async () => {
         const sessionId = `session-auto-protected-tail-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
@@ -448,6 +1459,12 @@ describe("compression management tools", () => {
                     thresholdTokens: 300_000,
                 },
             ]
+            pinCompressionMap(state, rawMessages, {
+                triggerMessageId: "auto-trigger",
+                source: "automatic",
+                protectedMessageIds: ["m2"],
+                reuseExistingTurn: true,
+            })
 
             const tool = createCompressTool({
                 client: createClient(rawMessages),
@@ -482,7 +1499,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-auto-valid") as any,
             )
 
-            assert.match(output, /^Compression complete\. Stored \[b0\] "Older Work"\./)
+            assert.match(output, /^Compression complete\. Stored \[b0\] "Older Work" durably/)
             assert.match(output, /Continue the original task now/)
             assert.match(output, /do not stop for a compression report/)
             assert.equal(typeof state.managementTurns[0].completedAt, "string")
@@ -519,6 +1536,10 @@ describe("compression management tools", () => {
                 { triggerMessageId: "stale-manage" },
                 { triggerMessageId: "manage-trigger" },
             ]
+            pinCompressionMap(state, rawMessages, {
+                triggerMessageId: "manage-trigger",
+                reuseExistingTurn: true,
+            })
 
             const tool = createCompressTool({
                 client: createClient(rawMessages),
@@ -561,8 +1582,10 @@ describe("compression management tools", () => {
         const baselineCompressedMessageIds = [...state.compressed.messageIds]
         const baselineCompressedToolIds = [...state.compressed.toolIds]
         const baselineSummaries = [...state.compressSummaries]
-        const baselineManagementTurns = [...state.managementTurns]
         const baselineStats = { ...state.stats }
+        pinCompressionMap(state, rawMessages)
+        const baselineManagementTurns = [...state.managementTurns]
+        const baselineSnapshot = state.compressionMapSnapshot
 
         const tool = createCompressTool({
             client: createClient(rawMessages),
@@ -586,6 +1609,7 @@ describe("compression management tools", () => {
         assert.deepEqual(state.compressSummaries, baselineSummaries)
         assert.deepEqual(state.managementTurns, baselineManagementTurns)
         assert.deepEqual(state.stats, baselineStats)
+        assert.deepEqual(state.compressionMapSnapshot, baselineSnapshot)
         assert.equal(state.hasPersistedState, false)
         assert.equal(state.compressionCooldownAfterMessageId, undefined)
     })
@@ -600,6 +1624,7 @@ describe("compression management tools", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
+        pinCompressionMap(state, rawMessages)
         let releaseAsk!: () => void
         let markAskStarted!: () => void
         const askStarted = new Promise<void>((resolve) => {
@@ -691,9 +1716,10 @@ describe("compression management tools", () => {
             _client: {},
             session: {
                 get: async () => ({ data: {} }),
-                messages: async () => ({
-                    data: messageReads++ === 0 ? [...oldMessages] : [...latestMessages],
-                }),
+                messages: async () => {
+                    messageReads++
+                    return { data: [...latestMessages] }
+                },
                 promptAsync: async () => {
                     promptCalls++
                     return { data: undefined }
@@ -703,6 +1729,7 @@ describe("compression management tools", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
+        pinCompressionMap(state, oldMessages)
         let releaseAsk!: () => void
         let markAskStarted!: () => void
         const askStarted = new Promise<void>((resolve) => {
@@ -813,6 +1840,7 @@ describe("compression management tools", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
+        pinCompressionMap(state, rawMessages)
         const tool = createCompressTool({
             client,
             stateManager,
@@ -848,7 +1876,7 @@ describe("compression management tools", () => {
             assert.equal(output.cancelled, true)
             assert.equal(state.compressSummaries.length, 1)
             assert.equal(state.compressionCooldownAfterMessageId, "message-manage-overlap")
-            assert.equal(state.managementTurns.length, 1)
+            assert.equal(state.managementTurns.length, 2)
 
             const loaded = await loadSessionState(sessionId, logger)
             assert.equal(loaded.status, "loaded")
@@ -858,7 +1886,7 @@ describe("compression management tools", () => {
                 loaded.state.compressionCooldownAfterMessageId,
                 "message-manage-overlap",
             )
-            assert.equal(loaded.state.managementTurns.length, 1)
+            assert.equal(loaded.state.managementTurns.length, 2)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -919,11 +1947,15 @@ describe("compression management tools", () => {
                 output,
             )
             await promptStarted
+            pinCompressionMap(state, rawMessages, {
+                triggerMessageId: state.managementTurns[0].triggerMessageId,
+                reuseExistingTurn: true,
+            })
 
             const compression = await tool.execute(
                 {
-                    from: 1,
-                    to: 2,
+                    from: "1-2",
+                    to: "1-2",
                     topic: "Completed Work",
                     summary: "The completed objective and result were preserved.",
                 },
@@ -988,6 +2020,7 @@ describe("compression management tools", () => {
                 workingDirectory: "/tmp",
             })
 
+            pinCompressionMap(state, rawMessages)
             const firstOutput = await tool.execute(
                 {
                     from: 1,
@@ -1000,8 +2033,9 @@ describe("compression management tools", () => {
 
             assert.match(firstOutput, /^Compression complete\./)
             assert.doesNotMatch(firstOutput, /<compress-context-map>/)
-            assert.equal(firstOutput, 'Compression complete. Stored [b0] "Phase A".')
+            assert.match(firstOutput, /Stored \[b0\] "Phase A" durably/)
 
+            pinCompressionMap(state, rawMessages)
             const secondOutput = await tool.execute(
                 {
                     from: 1,
@@ -1012,8 +2046,9 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-2") as any,
             )
 
-            assert.equal(secondOutput, 'Compression complete. Stored [b1] "Phase B".')
+            assert.match(secondOutput, /Stored \[b1\] "Phase B" durably/)
 
+            pinCompressionMap(state, rawMessages)
             const thirdOutput = await tool.execute(
                 {
                     from: 1,
@@ -1024,8 +2059,9 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-3") as any,
             )
 
-            assert.equal(thirdOutput, 'Compression complete. Stored [b2] "Phase C".')
+            assert.match(thirdOutput, /Stored \[b2\] "Phase C" durably/)
 
+            pinCompressionMap(state, rawMessages)
             const fourthOutput = await tool.execute(
                 {
                     from: "b1",
@@ -1036,7 +2072,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-4") as any,
             )
 
-            assert.equal(fourthOutput, 'Compression complete. Stored [b1] "Phase B Updated".')
+            assert.match(fourthOutput, /Stored \[b1\] "Phase B Updated" durably/)
             const finalMap = buildContextMap(rawMessages as any, state, logger)
 
             assert.deepEqual(finalMap.lookup.get("b0"), ["m1", "m2"])
@@ -1075,6 +2111,7 @@ describe("compression management tools", () => {
                 workingDirectory: "/tmp",
             })
 
+            pinCompressionMap(state, rawMessages)
             await tool.execute(
                 {
                     from: 1,
@@ -1085,6 +2122,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-a") as any,
             )
 
+            pinCompressionMap(state, rawMessages)
             const secondOutput = await tool.execute(
                 {
                     from: "b0",
@@ -1095,7 +2133,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-b") as any,
             )
 
-            assert.equal(secondOutput, 'Compression complete. Stored [b0] "Older Phase Condensed".')
+            assert.match(secondOutput, /Stored \[b0\] "Older Phase Condensed" durably/)
             assert.equal(state.compressSummaries.length, 1)
             assert.equal(state.compressSummaries[0].anchorMessageId, "m1")
             assert.equal(state.compressSummaries[0].summary, "Much terser condensed summary.")
@@ -1129,6 +2167,7 @@ describe("compression management tools", () => {
                 workingDirectory: "/tmp",
             })
 
+            pinCompressionMap(state, rawMessages)
             await tool.execute(
                 {
                     from: 1,
@@ -1139,6 +2178,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-mixed-1") as any,
             )
 
+            pinCompressionMap(state, rawMessages)
             const secondOutput = await tool.execute(
                 {
                     from: "b0",
@@ -1149,7 +2189,7 @@ describe("compression management tools", () => {
                 createToolContext(sessionId, "call-compress-mixed-2") as any,
             )
 
-            assert.equal(secondOutput, 'Compression complete. Stored [b0] "Combined A+B".')
+            assert.match(secondOutput, /Stored \[b0\] "Combined A\+B" durably/)
             assert.equal(state.compressSummaries.length, 1)
             assert.equal(state.compressSummaries[0].anchorMessageId, "m1")
             assert.match(state.compressSummaries[0].summary, /^\[Preserved context\]/)

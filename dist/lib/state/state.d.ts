@@ -5,6 +5,11 @@ export interface SessionStateSyncResult {
     lastUpdated: string | null;
 }
 export declare function commitDurableSessionState(state: SessionState, candidate: SessionState): void;
+/**
+ * Synchronize durable state and reconcile transcript-owned lifecycle authority.
+ * The caller must hold the session's SessionStateManager exclusive boundary.
+ */
+export declare function reconcileSessionLifecycle(client: any, state: SessionState, sessionId: string, logger: Logger, messages: WithParts[]): Promise<SessionStateSyncResult>;
 export declare class SessionStateManager {
     private sessions;
     private mutationTails;

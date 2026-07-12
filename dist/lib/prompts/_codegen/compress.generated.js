@@ -1,23 +1,18 @@
 // AUTO-GENERATED FILE - DO NOT EDIT
 // Generated from compress.md by scripts/generate-prompts.ts
 // To modify, edit compress.md and run `npm run generate:prompts`
-export const COMPRESS = `Use this tool during a \`/compress manage\` turn or a plugin-initiated automatic compression turn to fold completed working context into a single stored summary block. Once it returns successfully, the fold is already in effect for the next model continuation.
-
-One new block per turn. Append it as the newest \`[bN]\`; never touch existing blocks.
+export const COMPRESS = `Use this tool only during a current manual or plugin-initiated automatic compression-management turn, after \`compress_map\` has successfully returned the authoritative snapshot for that turn. It folds one selected historical span into one durable summary block.
 
 Args:
-\`from\`: Start entry from the \`<compress-context-map>\` snapshot provided with \`/compress manage\` (or from a fallback \`compress_map\` call). Use a numeric index or a grouped numeric label like \`"2-4"\`, or an existing \`[bN]\` label.
-\`to\`: End entry from that same snapshot. Inclusive.
-\`summary\`: The summary that replaces the selected span. Capture the WHY plus any load-bearing details — decisions, constraints, gotchas, working commands, key paths — and drop only noise. Detail is cheap; when in doubt, keep more.
-\`topic\`: Short display label for the new block.
+\`from\`: Inclusive start label from the most recently returned current-turn map: a numeric entry, grouped numeric label such as \`"2-4"\`, or \`[bN]\` block label.
+\`to\`: Inclusive end label from that same pinned map.
+\`summary\`: Dense replacement preserving the objective and WHY, decisions, constraints, edits, paths, commands/results, failures, pending work, and exact next action.
+\`topic\`: Short display label for the stored block.
 
-- The range covers only new, uncompressed entries — the completed work that piled up since the last block (or, on the first compression, all completed conversation before the active tail). Compress the oldest uncompressed content first.
-- Produce exactly ONE new block this turn. Don't split the range across multiple calls.
-- By default, never include or rewrite an existing \`[bN]\` block — older blocks stay immutable and keep their cache warm.
-- Exception — ONLY when the user explicitly asks you to consolidate/compress older blocks: you may select a contiguous run of existing \`[bN]\` blocks and condense them into one. This deliberately invalidates cache from that point, so never do it on a normal turn.
-- Leave the active tail alone — the work you're still in the middle of.
-- Why append-only by default: each older block stays byte-identical across turns, so its cached tokens survive. Reaching back to rewrite a block invalidates everything after that point.
-- On success, the return value is a short receipt confirming what was stored, not a map. Do not call \`compress\` or \`compress_map\` again this turn. If an automatic reminder initiated the turn, immediately resume the original task; otherwise continue according to the user's request.
-- Do not use outside a manual or plugin-initiated compression-management turn.
+- Compress the oldest completed uncompressed span first and leave unresolved/current work visible.
+- Default append-only: do not include existing \`[bN]\` blocks. Consolidate contiguous old blocks only when the user explicitly requested it.
+- Never select \`[protected active tail]\` during automatic management.
+- A success receipt means the save is durable and the fold is already active. Do not call \`compress\` or \`compress_map\` again that turn; after automatic compression, immediately resume the original task.
+- A failure means nothing changed. Follow its exact diagnostic; do not guess smaller or reformatted ranges. Refresh with \`compress_map\` when instructed and retry only with labels it returns.
 `;
 //# sourceMappingURL=compress.generated.js.map

@@ -1,5 +1,5 @@
 import { getPostCompressionCooldownRemaining, resolveEffectiveAutoCompressionPolicy, } from "../auto-policy.js";
-import { commitDurableSessionState, ensureSessionInitialized, } from "../state/state.js";
+import { commitDurableSessionState, reconcileSessionLifecycle, } from "../state/state.js";
 import { saveSessionState } from "../state/persistence.js";
 import { getCurrentParams } from "../token-utils.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
@@ -59,15 +59,25 @@ export async function handleAutoCommand(ctx) {
     else {
         response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
             const messages = (await listSessionMessages(ctx.client, ctx.sessionId));
-            await ensureSessionInitialized(ctx.client, ctx.state, ctx.sessionId, ctx.logger, messages);
+            await reconcileSessionLifecycle(ctx.client, ctx.state, ctx.sessionId, ctx.logger, messages);
             if (!ctx.state.persistenceSynchronized) {
                 return "Automatic compression settings are unavailable because saved session state could not be loaded. No session setting was changed.";
             }
             if (action.kind === "status") {
                 return formatStatus(ctx.config, ctx.state, messages);
             }
+            const effectivePolicy = resolveEffectiveAutoCompressionPolicy(ctx.config.autoCompression, ctx.state);
+            if (action.kind === "on" && effectivePolicy.enabled) {
+                return `Automatic compression is already on (${effectivePolicy.enabledSource}). No session setting was changed.`;
+            }
+            if (action.kind === "off" && !effectivePolicy.enabled) {
+                const source = effectivePolicy.globallyEnabled
+                    ? effectivePolicy.enabledSource
+                    : "global config";
+                return `Automatic compression is already off (${source}). No session setting was changed.`;
+            }
             if (!ctx.config.autoCompression.enabled) {
-                return "Automatic compression is disabled globally. Session overrides cannot change it.";
+                return "Automatic compression is disabled globally. Session overrides cannot turn it on.";
             }
             const candidate = { ...ctx.state };
             let successMessage;

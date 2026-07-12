@@ -388,6 +388,20 @@ describe("automatic compression lifecycle", () => {
             toolDenied,
         )(event as any)
 
+        const mapToolDenied = {
+            ...config,
+            tools: {
+                ...config.tools,
+                compress_map: { ...config.tools.compress_map, permission: "deny" as const },
+            },
+        }
+        await createAutomaticCompressionEventHandler(
+            client,
+            new SessionStateManager(),
+            logger,
+            mapToolDenied,
+        )(event as any)
+
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
@@ -544,6 +558,8 @@ describe("automatic compression lifecycle", () => {
             assert.match(payload, /300,000 tokens/)
             assert.match(payload, /protected active tail/)
             assert.match(payload, /immediately continue the original task/i)
+            assert.match(payload, /Call `compress_map` first/)
+            assert.doesNotMatch(payload, /<compress-context-map>/)
 
             const state = stateManager.get(sessionId)
             assert.equal(state.managementTurns.length, 1)

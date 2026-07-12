@@ -7,7 +7,7 @@ import {
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
 import { listSessionMessages, showToast } from "./sdk/client.js"
-import { ensureSessionInitialized, SessionStateManager, type WithParts } from "./state/index.js"
+import { reconcileSessionLifecycle, SessionStateManager, type WithParts } from "./state/index.js"
 import {
     isMessageWithinPostCompressionCooldown,
     messageContainsCompressCall,
@@ -135,7 +135,11 @@ export function createAutomaticCompressionEventHandler(
     config: PluginConfig,
 ) {
     return async (input: { event?: { type?: string; properties?: { info?: AssistantMessageInfo } } }) => {
-        if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
+        if (
+            !config.autoCompression.enabled ||
+            config.tools.compress.permission === "deny" ||
+            config.tools.compress_map.permission === "deny"
+        ) return
         if (input.event?.type !== "message.updated") return
 
         const info = input.event.properties?.info
@@ -192,7 +196,7 @@ export function createAutomaticCompressionEventHandler(
                     return undefined
                 }
 
-                await ensureSessionInitialized(client, state, info.sessionID, logger, messages)
+                await reconcileSessionLifecycle(client, state, info.sessionID, logger, messages)
                 if (!state.persistenceSynchronized) {
                     logger.warn("Automatic compression skipped because session policy could not be loaded", {
                         sessionId: info.sessionID,
@@ -218,6 +222,7 @@ export function createAutomaticCompressionEventHandler(
                 if (
                     !policy.enabled ||
                     config.tools.compress.permission === "deny" ||
+                    config.tools.compress_map.permission === "deny" ||
                     cooldownApplies
                 ) {
                     return undefined
@@ -252,7 +257,7 @@ export function createAutomaticCompressionEventHandler(
 
                 const flags = {
                     compress: true,
-                    compress_map: config.tools.compress_map.permission !== "deny",
+                    compress_map: true,
                 }
                 const staged = await stageManagementTurnWithinLock({
                     client,

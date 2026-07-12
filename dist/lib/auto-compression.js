@@ -2,7 +2,7 @@ import { stageManagementTurnWithinLock, } from "./commands/manage.js";
 import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { renderAutomaticSystemPrompt } from "./prompts/index.js";
 import { listSessionMessages, showToast } from "./sdk/client.js";
-import { ensureSessionInitialized } from "./state/index.js";
+import { reconcileSessionLifecycle } from "./state/index.js";
 import { isMessageWithinPostCompressionCooldown, messageContainsCompressCall, resolveEffectiveAutoCompressionPolicy, } from "./auto-policy.js";
 function positiveFinite(value) {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -68,7 +68,9 @@ function formatThresholdReason(result, ratio) {
 }
 export function createAutomaticCompressionEventHandler(client, stateManager, logger, config) {
     return async (input) => {
-        if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
+        if (!config.autoCompression.enabled ||
+            config.tools.compress.permission === "deny" ||
+            config.tools.compress_map.permission === "deny")
             return;
         if (input.event?.type !== "message.updated")
             return;
@@ -107,7 +109,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                     });
                     return undefined;
                 }
-                await ensureSessionInitialized(client, state, info.sessionID, logger, messages);
+                await reconcileSessionLifecycle(client, state, info.sessionID, logger, messages);
                 if (!state.persistenceSynchronized) {
                     logger.warn("Automatic compression skipped because session policy could not be loaded", {
                         sessionId: info.sessionID,
@@ -124,6 +126,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                 const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
                 if (!policy.enabled ||
                     config.tools.compress.permission === "deny" ||
+                    config.tools.compress_map.permission === "deny" ||
                     cooldownApplies) {
                     return undefined;
                 }
@@ -143,7 +146,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                 attemptedStart = true;
                 const flags = {
                     compress: true,
-                    compress_map: config.tools.compress_map.permission !== "deny",
+                    compress_map: true,
                 };
                 const staged = await stageManagementTurnWithinLock({
                     client,

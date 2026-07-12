@@ -10,6 +10,8 @@ Core contract:
 - Automatic compression can initiate the same one-turn workflow after completed provider usage
   reaches the configured relative or absolute threshold.
 - The active agent chooses the range and writes the summary; there is no separate summarizer loop.
+- Management is map-first: the reminder does not include a map. The agent must call `compress_map`,
+  then `compress` against that same-turn pinned snapshot. Both tools must be available.
 - During either management turn, the primary agent can use `compress_map` and `compress`.
 
 ## Build and Test
@@ -38,15 +40,19 @@ lib/auto-policy.ts
 
 lib/commands/auto.ts
   Implements session-scoped `/compress auto` status, on/off, threshold, ratio,
-  and reset controls with user-only feedback and atomic persistence.
+  and reset controls with user-only feedback and atomic persistence. on/off are
+  idempotent: already-matching effective state reports source without writing.
 
 lib/tools/compress-map.ts
-  Returns the current `<compress-context-map>` snapshot.
+  Active-management-only map tool. Builds the pre-management map, reapplies
+  automatic protected IDs, persists one same-turn execution skeleton, then
+  returns `<compress-context-map>` text only after that pin is durable.
 
 lib/tools/compress.ts
-  Compression tool implementation. Validates one range at a time, requests
-  permission, calculates range metrics, tracks compressed IDs, stores
-  summaries, atomically persists state, and marks the active management turn
+  Compression tool implementation. Requires a matching current-turn pinned
+  snapshot, validates one range against that pin (no live transcript rebuild),
+  requests permission, uses pinned IDs/metrics, stores summaries, atomically
+  persists state, clears the pin, and marks the active management turn
   completed. Success is a tiny receipt, not a refreshed map.
 
 lib/messages/compress-transform.ts
@@ -57,20 +63,21 @@ lib/messages/compress-transform.ts
   span is hidden immediately - no next user message is required - except the
   completing `compress` tool call, which stays briefly with its literal input
   intact to preserve a protocol-valid tool-call/result pair without synthetic
-  placeholder text.
+  placeholder text. Also reconciles a stale same-turn map pin after restart or
+  a later visible user boundary.
 
 lib/messages/context-map.ts
   Builds <compress-context-map> with numeric entries and compressed [bN] blocks,
-  resolves map boundaries to raw message IDs, and labels the automatic active
-  tail. Excludes the active
-  management turn's own trigger message (reminder + injected map) from
-  selectable entries while that turn is still open.
+  creates the minimal execution skeleton, resolves map boundaries from either a
+  live build or a pinned snapshot, and labels the automatic active tail.
+  Excludes the entire active management span from selectable entries while that
+  turn is still open.
 
 lib/commands/manage.ts
-  Starts both manual and automatic management turns: builds the current context
-  map from the pre-management conversation, persists the cleanup anchor, and
-  sends the reminder and map together so the agent normally never needs to call
-  `compress_map` itself.
+  Starts both manual and automatic management turns: requires both compression
+  tools, stages automatic protected-tail IDs when needed, clears any prior map
+  pin, persists the cleanup anchor, and sends a self-contained reminder that
+  requires `compress_map` then `compress` (no map text is injected).
 
 lib/config.ts
   Config schema + layered loading/merge (global/config-dir/project), defaults,
@@ -85,23 +92,30 @@ lib/state/*
 1. Startup loads config and initializes state.
 2. Hooks cache model limits, observe completed assistant usage, sync tool cache, apply
    compression transforms, and route `/compress` commands.
-3. `/compress manage` injects a short reminder plus the current `<compress-context-map>`
-   snapshot in the same turn; the agent normally calls `compress` once directly.
-   `compress_map` remains available as a fallback/debug/explicit-use path.
+3. `/compress manage` opens a management turn with a self-contained reminder and no map.
+   The agent must call `compress_map`, then `compress` against that same-turn pin. Both tools
+   must be permitted or the command fails user-only before opening a model turn.
 4. `/compress auto` reads or changes the current session's persisted auto-compression
-   overrides. Global `autoCompression.enabled: false` remains authoritative.
-5. Automatic compression starts the same workflow once usage reaches the earlier of the
-   configured context-window ratio and absolute token threshold. Its persisted map protects
-   the configured recent execution tail, and the success receipt instructs task continuation.
-6. On a successful `compress` call, persistence is atomic, the management turn is marked
-   completed immediately - the fold takes effect for the very next model continuation, with
-   no need to wait for a further visible user message - and a three-eligible-response cooldown
-   is armed before another automatic or model-initiated compression may run.
-7. While the management turn is still open (before `compress` succeeds), its own prompt/map
-   and tool results stay visible so the agent can work; the completing `compress` tool call
-   itself remains afterward too, with its literal input intact until the turn is historical.
-8. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
-   inter-compress conversation, and the active tail remain model-visible.
+   overrides. `on`/`off` are no-ops when the effective state already matches. Global
+   `autoCompression.enabled: false` remains authoritative.
+5. Automatic compression starts the same map-first workflow once usage reaches the earlier of
+   the configured context-window ratio and absolute token threshold, only when both tools are
+   available. Protected active-tail IDs are staged at turn start and reapplied by `compress_map`;
+   the success receipt instructs task continuation.
+6. Successful `compress_map` atomically replaces the session's one bounded execution skeleton
+   before returning map text. `compress` resolves the range from that pin's physical IDs and
+   metrics without fetching or renumbering a live transcript map.
+7. On a successful `compress` call, persistence is atomic: the block, IDs, stats, completion
+   marker, and cooldown anchor are stored together while the pin is cleared. The fold takes
+   effect for the very next model continuation - no further visible user message is required -
+   and a three-eligible-response cooldown is armed before another automatic or model-initiated
+   compression may run.
+8. While the management turn is still open (before `compress` succeeds), its reminder and tool
+   results stay visible so the agent can work; the completing `compress` tool call itself
+   remains afterward too, with its literal input intact until the turn is historical.
+9. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
+   inter-compress conversation, and the active tail remain model-visible. A later visible user
+   message, new management turn, successful compress, or native compaction clears any leftover pin.
 
 ## Prompt Generation
 
@@ -116,8 +130,13 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
 Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
-markers, compression stats, persisted auto-compression overrides and cooldown anchor, subagent
-status, initialization, and runtime-only threshold metadata.
+markers, at most one same-turn compression-map execution skeleton, compression stats, persisted
+auto-compression overrides and cooldown anchor, subagent status, initialization, and runtime-only
+threshold metadata.
+The execution skeleton is tied to the active turn's trigger ID and holds only the minimal keys,
+kinds, physical message IDs, optional block anchors, protected flags, tool IDs, and approximate
+metrics needed to execute the map the agent was shown. It is replaced, never appended, and cleared
+on success, a new turn, a later visible user message, or compaction.
 Durable fields are persisted at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`.
 The `initialized` flag prevents repeated subagent/compaction bootstrap work; persisted state is
 still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
@@ -151,9 +170,14 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 ## Notes
 
-- `compress_map` and `compress` are for manual or plugin-initiated management turns. Automatic
-  protected-tail enforcement lives in `compress`; manual range choice remains model-directed.
-- Completed `/compress manage` turns leave no model-visible machinery marker; future prompts show blocks, inter-compress normal conversation, and active tail.
+- `compress_map` and `compress` are for manual or plugin-initiated management turns only.
+  Management is map-first: `compress_map` creates the pin; `compress` executes that pin and does
+  not rebuild a live numeric map. Automatic protected-tail enforcement is staged at turn start,
+  reapplied on the map, and enforced from the pin; manual range choice remains model-directed.
+- Both tools must be available for manual or automatic management to start. There is no injected-map
+  fallback when one tool is denied.
+- Completed management turns leave no model-visible machinery marker; future prompts show blocks,
+  inter-compress normal conversation, and active tail.
 - Manual context maps do not emit a hardcoded active footer. Automatic maps label only the
   configured recent tail as `[protected active tail]`.
 - `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.

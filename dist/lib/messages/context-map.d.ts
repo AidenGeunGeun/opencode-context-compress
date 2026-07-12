@@ -1,5 +1,5 @@
 import type { Logger } from "../logger.js";
-import type { SessionState, WithParts } from "../state/index.js";
+import type { CompressionMapSnapshot, SessionState, WithParts } from "../state/index.js";
 export type ContextMapKey = number | string;
 export interface ContextMapEntry {
     key: ContextMapKey;
@@ -10,7 +10,9 @@ export interface ContextMapEntry {
     anchorMessageId?: string;
     preview: string;
     tokenEstimate: number;
+    compressionTokenEstimate: number;
     toolCallCount: number;
+    toolIds: string[];
     toolTypes: string[];
     protected?: boolean;
 }
@@ -39,6 +41,12 @@ export interface ResolvedContextMapRange {
     nonBlockMessageIds: string[];
     blockIds: string[];
 }
+export declare function deriveAutomaticProtectedTail(rawMessages: WithParts[], state: SessionState, logger: Logger, protectedTurns: number): {
+    protectedMessageIds: string[];
+    hasSelectableMessages: boolean;
+};
 export declare function buildContextMap(rawMessages: WithParts[], state: SessionState, logger: Logger, providerId?: string, options?: ContextMapOptions): ContextMapResult;
+export declare function createCompressionMapSnapshot(triggerMessageId: string, contextMap: ContextMapResult): CompressionMapSnapshot;
+export declare function contextMapFromCompressionSnapshot(snapshot: CompressionMapSnapshot): ContextMapResult;
 export declare function resolveContextMapRange(contextMap: ContextMapResult, from: number | string, to: number | string): ResolvedContextMapRange;
 //# sourceMappingURL=context-map.d.ts.map

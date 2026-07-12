@@ -8,7 +8,7 @@ import { getCurrentParams } from "../token-utils.js"
 import { syncToolCache } from "../state/tool-cache.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
-import { buildContextMap } from "../messages/context-map.js"
+import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
 import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
@@ -147,6 +147,21 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         compress_map: ctx.config.tools.compress_map.permission !== "deny",
     }
 
+    if (!flags.compress || !flags.compress_map) {
+        const unavailable = [
+            !flags.compress_map ? "compress_map" : undefined,
+            !flags.compress ? "compress" : undefined,
+        ].filter(Boolean)
+        await sendManageFailureFeedback(
+            ctx.client,
+            ctx.logger,
+            ctx.sessionId,
+            `Compression management did not start because ${unavailable.join(" and ")} ${unavailable.length === 1 ? "is" : "are"} denied. Enable both compression tools, then run \`/compress manage\` again.`,
+            getCurrentParams(ctx.state, ctx.messages, ctx.logger),
+        )
+        return
+    }
+
     await startManagementTurn({
         client: ctx.client,
         stateManager: ctx.stateManager,
@@ -182,20 +197,19 @@ export async function stageManagementTurnWithinLock(
 
     await syncToolCache(state, config, logger, messages)
 
-    // Built from the pre-management conversation only, before the trigger message or
-    // anything else about this turn exists - the agent gets the map it needs up front and
-    // normally never has to call `compress_map` itself.
-    const contextMap = buildContextMap(
-        messages,
-        state,
-        logger,
-        currentParams.providerId,
-        ctx.source === "automatic" ? { protectedTurns: ctx.protectedTurns ?? 0 } : undefined,
-    )
+    const automaticTail =
+        ctx.source === "automatic"
+            ? deriveAutomaticProtectedTail(
+                  messages,
+                  state,
+                  logger,
+                  ctx.protectedTurns ?? 0,
+              )
+            : undefined
 
     if (
         ctx.source === "automatic" &&
-        !contextMap.entries.some((entry) => entry.kind === "message" && !entry.protected)
+        !automaticTail?.hasSelectableMessages
     ) {
         logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
             sessionId,
@@ -209,8 +223,6 @@ export async function stageManagementTurnWithinLock(
     if (ctx.systemPrompt) {
         messageParts.push({ type: "text", text: ctx.systemPrompt })
     }
-    messageParts.push({ type: "text", text: contextMap.mapText })
-
     if (ctx.retainedText) {
         messageParts.push({
             type: "text",
@@ -225,7 +237,7 @@ export async function stageManagementTurnWithinLock(
         ...(ctx.source === "automatic" ? { source: "automatic" as const } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
         ...(ctx.source === "automatic"
-            ? { protectedMessageIds: contextMap.protectedMessageIds }
+            ? { protectedMessageIds: automaticTail?.protectedMessageIds ?? [] }
             : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
         ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
@@ -233,6 +245,7 @@ export async function stageManagementTurnWithinLock(
     const candidateState: SessionState = {
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
+        compressionMapSnapshot: undefined,
     }
     const statePersisted = await saveSessionState(candidateState, logger)
     if (!statePersisted) {

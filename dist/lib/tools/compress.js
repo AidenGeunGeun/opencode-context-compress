@@ -1,14 +1,11 @@
 import { tool } from "@opencode-ai/plugin/tool";
-import { commitDurableSessionState, ensureSessionInitialized } from "../state/index.js";
+import { commitDurableSessionState } from "../state/index.js";
 import { saveSessionState } from "../state/persistence.js";
 import { loadPrompt } from "../prompts/index.js";
-import { estimateTokensBatch, getCurrentParams } from "../token-utils.js";
+import { estimateTokensBatch } from "../token-utils.js";
 import { collectContentInRange, collectToolIdsInRange, } from "./utils.js";
 import { sendCompressNotification } from "../ui/notification.js";
-import { buildContextMap, resolveContextMapRange, } from "../messages/context-map.js";
-import { findActiveManagementTurn } from "../messages/compress-transform.js";
-import { listSessionMessages } from "../sdk/client.js";
-import { getPostCompressionCooldownRemaining } from "../auto-policy.js";
+import { contextMapFromCompressionSnapshot, resolveContextMapRange, } from "../messages/context-map.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 export function removeSubsumedCompressSummaries(summaries, containedMessageIds) {
     const containedIds = new Set(containedMessageIds);
@@ -77,6 +74,29 @@ export function calculateCompressionRangeMetrics(rawMessages, rawMessageIndexByI
         incrementalCompressTokens: nonBlockTokenEstimate,
     };
 }
+export function calculatePinnedCompressionRangeMetrics(resolvedRange) {
+    const toolIds = [
+        ...new Set(resolvedRange.entries
+            .filter((entry) => entry.kind === "message")
+            .flatMap((entry) => entry.toolIds)),
+    ];
+    const blockTokenEstimate = resolvedRange.entries
+        .filter((entry) => entry.kind === "block")
+        .reduce((sum, entry) => sum + entry.tokenEstimate, 0);
+    const nonBlockTokenEstimate = resolvedRange.entries
+        .filter((entry) => entry.kind === "message")
+        .reduce((sum, entry) => sum + entry.tokenEstimate, 0);
+    return {
+        messageIds: resolvedRange.messageIds,
+        nonBlockMessageIds: resolvedRange.nonBlockMessageIds,
+        mapEntryCount: resolvedRange.mapEntryCount,
+        toolIds,
+        blockTokenEstimate,
+        nonBlockTokenEstimate,
+        estimatedCompressedTokens: blockTokenEstimate + nonBlockTokenEstimate,
+        incrementalCompressTokens: nonBlockTokenEstimate,
+    };
+}
 /**
  * Select the final stored summary for a compression range.
  *
@@ -97,11 +117,12 @@ export function selectFinalSummary(preservedSummaries, newSummary, nonBlockMessa
 }
 function buildCompressReceipt(topic, blockId, continueTask = false) {
     const stored = blockId
-        ? `Compression complete. Stored [${blockId}] "${topic}".`
-        : `Compression complete. Stored "${topic}".`;
+        ? `Compression complete. Stored [${blockId}] "${topic}" durably; the fold is already in effect.`
+        : `Compression complete. Stored "${topic}" durably; the fold is already in effect.`;
+    const finish = `${stored} Do not call compress or compress_map again this turn.`;
     return continueTask
-        ? `${stored} Continue the original task now from the preserved active tail; do not stop for a compression report.`
-        : stored;
+        ? `${finish} Continue the original task now from the preserved active tail; do not stop for a compression report.`
+        : finish;
 }
 export function createCompressTool(ctx) {
     return tool({
@@ -125,26 +146,19 @@ export function createCompressTool(ctx) {
             const sessionId = toolCtx.sessionID;
             const state = stateManager.get(sessionId);
             const outcome = await stateManager.runExclusive(sessionId, async () => {
-                const rawMessages = (await listSessionMessages(client, sessionId));
-                await ensureSessionInitialized(client, state, sessionId, logger, rawMessages);
                 if (!state.persistenceSynchronized) {
-                    throw new Error("compress could not load saved session state - no compression was performed");
+                    throw new Error("compress cannot trust saved session state. Nothing was compressed. Call compress_map first inside the current management turn; if it cannot synchronize state, only the user can restart management with `/compress manage`.");
                 }
-                const activeManagementTurn = findActiveManagementTurn(state, rawMessages);
-                const cooldownRemaining = getPostCompressionCooldownRemaining(state, rawMessages);
-                if (cooldownRemaining > 0 &&
-                    (!activeManagementTurn || activeManagementTurn.turn.source === "automatic")) {
-                    return {
-                        kind: "blocked",
-                        message: `Compression succeeded recently. Compressing again is likely a mistake. Wait ${cooldownRemaining} more assistant ${cooldownRemaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`,
-                    };
+                const snapshot = state.compressionMapSnapshot;
+                const latestIncompleteTurn = [...state.managementTurns]
+                    .reverse()
+                    .find((turn) => !turn.completedAt);
+                const activeManagementTurn = snapshot?.triggerMessageId === latestIncompleteTurn?.triggerMessageId
+                    ? latestIncompleteTurn
+                    : undefined;
+                if (!snapshot || !activeManagementTurn) {
+                    throw new Error("compress has no authoritative map for the current management turn. Nothing was compressed. Call compress_map first and use labels from the map it returns. Outside a management turn, only the user can authorize one with `/compress manage`.");
                 }
-                await toolCtx.ask({
-                    permission: "compress",
-                    patterns: ["*"],
-                    always: ["*"],
-                    metadata: {},
-                });
                 const range = args;
                 if (typeof range !== "object" || !range) {
                     throw new Error("compress requires { from, to, summary, topic }");
@@ -159,17 +173,26 @@ export function createCompressTool(ctx) {
                     (typeof range.to !== "number" && typeof range.to !== "string")) {
                     throw new Error("compress requires valid from/to range boundaries");
                 }
-                const currentParams = getCurrentParams(state, rawMessages, logger);
-                const contextMap = buildContextMap(rawMessages, state, logger, currentParams.providerId);
+                const contextMap = contextMapFromCompressionSnapshot(snapshot);
                 const baselineSummaries = [...state.compressSummaries];
                 const baselineSummariesByAnchor = new Map(baselineSummaries.map((summary) => [summary.anchorMessageId, summary]));
-                const rawMessageIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]));
-                const resolvedRange = resolveContextMapRange(contextMap, range.from, range.to);
-                if (activeManagementTurn?.turn.source === "automatic" &&
-                    resolvedRange.entries.some((entry) => entry.protected)) {
-                    throw new Error("Automatic compression cannot include entries labeled [protected active tail]. Select an older range.");
+                const missingBlock = contextMap.entries.find((entry) => {
+                    if (entry.kind !== "block" || !entry.anchorMessageId)
+                        return false;
+                    const summary = baselineSummariesByAnchor.get(entry.anchorMessageId);
+                    return (!summary ||
+                        summary.messageIds.length !== entry.rawMessageIds.length ||
+                        summary.messageIds.some((messageId, index) => messageId !== entry.rawMessageIds[index]));
+                });
+                if (missingBlock) {
+                    throw new Error(`The pinned map contains block [${String(missingBlock.key)}] without a matching durable summary. Nothing was compressed. Call compress_map again before retrying.`);
                 }
-                const rangeMetrics = calculateCompressionRangeMetrics(rawMessages, rawMessageIndexById, resolvedRange, currentParams.providerId);
+                const resolvedRange = resolveContextMapRange(contextMap, range.from, range.to);
+                if (activeManagementTurn.source === "automatic" &&
+                    resolvedRange.entries.some((entry) => entry.protected)) {
+                    throw new Error("Automatic compression cannot include entries labeled [protected active tail]. Nothing was compressed. Use an older unprotected range from the pinned map; do not guess a smaller or differently formatted boundary.");
+                }
+                const rangeMetrics = calculatePinnedCompressionRangeMetrics(resolvedRange);
                 const containedMessageIds = rangeMetrics.messageIds;
                 if (containedMessageIds.length === 0) {
                     throw new Error("Could not resolve raw message IDs for the requested range");
@@ -180,6 +203,17 @@ export function createCompressTool(ctx) {
                     .filter((summary) => typeof summary === "string" && summary.length > 0);
                 const finalSummary = selectFinalSummary(preservedSummaries, range.summary, rangeMetrics.nonBlockMessageIds);
                 const containedToolIds = rangeMetrics.toolIds;
+                const allExistingBlocksArePinned = baselineSummaries.every((summary) => contextMap.entries.some((entry) => entry.kind === "block" &&
+                    entry.anchorMessageId === summary.anchorMessageId));
+                const pinnedBlockOrderIsSafe = contextMap.entries
+                    .filter((entry) => entry.kind === "block")
+                    .every((entry, index) => entry.key === `b${index}`);
+                await toolCtx.ask({
+                    permission: "compress",
+                    patterns: ["*"],
+                    always: ["*"],
+                    metadata: {},
+                });
                 const startEntry = contextMap.entries[resolvedRange.startPosition];
                 const anchorMessageId = startEntry?.kind === "block" && startEntry.anchorMessageId
                     ? startEntry.anchorMessageId
@@ -202,19 +236,17 @@ export function createCompressTool(ctx) {
                     topic: range.topic,
                 });
                 const completedAt = new Date().toISOString();
-                const candidateManagementTurns = activeManagementTurn
-                    ? state.managementTurns.map((turn) => turn === activeManagementTurn.turn
-                        ? {
-                            ...turn,
-                            completedAt,
-                            ...(typeof toolCtx.callID === "string" &&
-                                toolCtx.callID
-                                ? { completedCallId: toolCtx.callID }
-                                : {}),
-                            completedMessageId: toolCtx.messageID,
-                        }
-                        : turn)
-                    : [...state.managementTurns];
+                const candidateManagementTurns = state.managementTurns.map((turn) => turn === activeManagementTurn
+                    ? {
+                        ...turn,
+                        completedAt,
+                        ...(typeof toolCtx.callID === "string" &&
+                            toolCtx.callID
+                            ? { completedCallId: toolCtx.callID }
+                            : {}),
+                        completedMessageId: toolCtx.messageID,
+                    }
+                    : turn);
                 const candidateStats = {
                     compressTokenCounter: 0,
                     totalCompressTokens: state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
@@ -226,6 +258,7 @@ export function createCompressTool(ctx) {
                     managementTurns: candidateManagementTurns,
                     stats: candidateStats,
                     compressionCooldownAfterMessageId: toolCtx.messageID,
+                    compressionMapSnapshot: undefined,
                 };
                 const persisted = await saveSessionState(candidateState, logger);
                 if (!persisted) {
@@ -237,8 +270,12 @@ export function createCompressTool(ctx) {
                 commitDurableSessionState(state, candidateState);
                 return {
                     kind: "compressed",
-                    rawMessages,
-                    currentParams,
+                    currentParams: {
+                        providerId: state.modelContext?.providerId,
+                        modelId: state.modelContext?.modelId,
+                        agent: toolCtx.agent,
+                        variant: state.variant,
+                    },
                     containedToolIds,
                     mapEntryCount: rangeMetrics.mapEntryCount,
                     topic: range.topic,
@@ -248,17 +285,16 @@ export function createCompressTool(ctx) {
                     contextMapEntryCount: contextMap.entries.length,
                     estimatedCompressedTokens: rangeMetrics.estimatedCompressedTokens,
                     anchorMessageId,
-                    continueTask: activeManagementTurn?.turn.source === "automatic",
+                    storedBlockId: allExistingBlocksArePinned && pinnedBlockOrderIsSafe
+                        ? `b${contextMap.entries
+                            .slice(0, resolvedRange.startPosition)
+                            .filter((entry) => entry.kind === "block").length}`
+                        : undefined,
+                    continueTask: activeManagementTurn.source === "automatic",
                 };
             });
-            if (outcome.kind === "blocked") {
-                return outcome.message;
-            }
-            const updatedContextMap = buildContextMap(outcome.rawMessages, state, logger, outcome.currentParams.providerId);
-            const storedBlockId = updatedContextMap.entries.find((entry) => entry.kind === "block" &&
-                entry.anchorMessageId === outcome.anchorMessageId)?.key;
             await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.mapEntryCount, outcome.topic, outcome.finalSummary, { messageIndex: outcome.startPosition }, { messageIndex: outcome.endPosition }, outcome.contextMapEntryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
-            return buildCompressReceipt(outcome.topic, storedBlockId, outcome.continueTask);
+            return buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
         },
     });
 }

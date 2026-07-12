@@ -18,9 +18,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const COMPRESS_GUIDANCE = "CONTEXT MANAGEMENT REQUESTED"
 const APPEND_ONLY_GUIDANCE = "Default append-only"
-const MAP_ALREADY_PROVIDED_GUIDANCE = "Use the included map snapshot."
-const COMPRESS_MAP_FALLBACK_GUIDANCE = "Do not call `compress_map` in the normal path"
-const COMPRESS_SINGLE_BLOCK_GUIDANCE = "Call `compress` exactly once to fold completed, no-longer-active context into one durable block."
+const MAP_FIRST_GUIDANCE = "Call `compress_map` first"
+const PINNED_MAP_GUIDANCE = "labels from that exact snapshot"
 
 describe("renderSystemPrompt", () => {
     it("includes compress section when flag is true", () => {
@@ -29,8 +28,8 @@ describe("renderSystemPrompt", () => {
         assert.match(output, /system-reminder/)
         assert.equal(output.includes(COMPRESS_GUIDANCE), true)
         assert.equal(output.includes(APPEND_ONLY_GUIDANCE), true)
-        assert.equal(output.includes(MAP_ALREADY_PROVIDED_GUIDANCE), true)
-        assert.equal(output.includes(COMPRESS_MAP_FALLBACK_GUIDANCE), true)
+        assert.equal(output.includes(MAP_FIRST_GUIDANCE), true)
+        assert.equal(output.includes(PINNED_MAP_GUIDANCE), true)
         assert.match(output, /\/compress manage/)
         assert.doesNotMatch(output, /<compress-context-map>/)
         assert.doesNotMatch(output, /EXHAUSTIVE/)
@@ -39,7 +38,7 @@ describe("renderSystemPrompt", () => {
     it("does not describe same-turn iteration or a refreshed map returned by compress", () => {
         const output = renderSystemPrompt({ compress: true, compress_map: true })
 
-        assert.doesNotMatch(output, /use `compress_map` to read the current context map/i)
+        assert.match(output, /call `compress_map` first/i)
         assert.doesNotMatch(output, /refreshed map returned by `compress`/i)
         assert.doesNotMatch(output, /returned map snapshot/i)
         assert.doesNotMatch(output, /same-turn iteration/i)
@@ -92,14 +91,14 @@ describe("renderAutomaticSystemPrompt", () => {
 
         assert.match(output, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
         assert.match(output, /middle of an ongoing task/)
-        assert.match(output, /very high information density and breadth/)
-        assert.match(output, /no load-bearing information/)
+        assert.match(output, /dense, durable summary/)
+        assert.match(output, /Call `compress_map` first/)
         assert.match(output, /310,000 tokens/)
         assert.match(output, /300,000 tokens/)
         assert.match(output, /protected active tail/)
         assert.match(output, /exact user objective/)
         assert.match(output, /immediately continue the original task/i)
-        assert.match(output, /make no further context-management calls/i)
+        assert.match(output, /Make no more compression calls/i)
         assert.doesNotMatch(output, /\{\{/)
     })
 })
@@ -110,7 +109,7 @@ describe("loadPrompt", () => {
 
         assert.equal(typeof output, "string")
         assert.ok(output.length > 0)
-        assert.match(output, /One new block per turn/)
+        assert.match(output, /after `compress_map` has successfully returned/i)
         assert.doesNotMatch(output, /`ranges` is an array/)
     })
 
@@ -119,8 +118,8 @@ describe("loadPrompt", () => {
 
         assert.doesNotMatch(output, /returned map snapshot/i)
         assert.doesNotMatch(output, /use the fresh `<compress-context-map>` returned by the tool/i)
-        assert.match(output, /short receipt/i)
-        assert.match(output, /automatic reminder initiated the turn/i)
+        assert.match(output, /success receipt/i)
+        assert.match(output, /after automatic compression/i)
         assert.match(output, /immediately resume the original task/i)
         assert.doesNotMatch(output, /nothing further to call or check this turn/i)
     })
@@ -132,10 +131,11 @@ describe("loadPrompt", () => {
         assert.ok(output.length > 0)
     })
 
-    it("compress-map-tool-spec frames itself as a fallback, not the default source of truth", () => {
+    it("compress-map-tool-spec frames itself as the required pinned source of truth", () => {
         const output = loadPrompt("compress-map-tool-spec")
 
-        assert.match(output, /fallback/i)
+        assert.match(output, /Call `compress_map` before `compress`/)
+        assert.match(output, /sole execution source of truth/)
         assert.doesNotMatch(output, /prefer the refreshed map returned by that tool/i)
         assert.doesNotMatch(output, /after a `compress` call/i)
     })
@@ -166,10 +166,11 @@ describe("loadPrompt", () => {
         assert.equal(COMPRESS_MAP, compressMapSource)
     })
 
-    it("system guidance reflects single-block append-only compression", () => {
+    it("system guidance reflects map-first single-block append-only compression", () => {
         const output = renderSystemPrompt({ compress: true, compress_map: true })
 
-        assert.equal(output.includes(COMPRESS_SINGLE_BLOCK_GUIDANCE), true)
+        assert.match(output, /Call `compress` once/)
+        assert.match(output, /one dense, durable summary/)
         assert.doesNotMatch(output, /single call constraint/i)
         assert.doesNotMatch(output, /submit all ranges/i)
         assert.doesNotMatch(output, /2 blocks, 3 max/i)

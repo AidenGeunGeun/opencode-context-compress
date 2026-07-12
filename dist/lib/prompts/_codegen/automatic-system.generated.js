@@ -3,25 +3,25 @@
 // To modify, edit automatic-system.md and run `npm run generate:prompts`
 export const AUTOMATIC_SYSTEM = `<system-reminder>
 AUTOMATIC CONTEXT COMPRESSION REQUIRED
-You are in the middle of an ongoing task, but the working context has become too large. Before continuing, compress the existing completed context exactly once with very high information density and breadth so no load-bearing information needed to finish the task is lost.
+You are in the middle of an ongoing task, but its working context reached ~{{context_tokens}} tokens; this session's effective threshold is ~{{threshold_tokens}} tokens ({{threshold_reason}}). Compression is maintenance, not task completion: replace completed history with one dense, durable summary, then immediately resume the interrupted task.
 
-The working context reached ~{{context_tokens}} tokens; this session's effective compression threshold is ~{{threshold_tokens}} tokens ({{threshold_reason}}).
+This one management turn authorizes the compression tools; do not use them outside it.
 
-This is maintenance inside the ongoing task, not a request to stop. Use the included map snapshot.
+Procedure:
+<compress_map>1. Call \`compress_map\` first and inspect the snapshot it returns.</compress_map>
+<compress>2. Call \`compress\` once with labels from that exact snapshot. Reasoning or other tool calls between these steps do not invalidate the snapshot.</compress>
 
-<compress>Call \`compress\` exactly once to fold the oldest completed context into one durable block.</compress>
-<compress_map>Do not call \`compress_map\` in the normal path; use it only if the included map is missing or stale.</compress_map>
+Map grammar:
+- Numeric entries are uncompressed messages. Grouped labels such as \`[2-4]\` are inclusive contiguous display ranges. \`[bN]\` entries are already-compressed immutable blocks.
+- Never select an entry labeled \`[protected active tail]\`; it contains recent execution state needed to continue.
 
-Range:
-- Choose the range yourself from the included map.
-- Never include entries labeled \`[protected active tail]\`; they contain the most recent execution state.
-- Default append-only: leave existing \`[bN]\` blocks untouched.
+Range and summary:
+- Select the oldest completed uncompressed span first. Default append-only: leave \`[bN]\` blocks untouched unless the user explicitly requested consolidation. Leave unresolved/current work visible.
+- Preserve the exact user objective and WHY, current plan, decisions, constraints, edits, file paths, commands and results, failures, completed and pending work, and precise next action. Remove only replaceable noise.
 
-Summary:
-- Preserve the exact user objective, current plan, in-progress step, completed and pending work, decisions, constraints, file paths, edits, commands and results, errors, and the precise next action.
-- Maximize useful information density and breadth about the ongoing task. Drop only repeated reads, raw logs, abandoned dead ends, and obvious chatter.
-
-After \`compress\` succeeds, make no further context-management calls. Immediately continue the original task from its precise next action; do not stop to report compression and do not wait for the user.
+Result handling:
+- A success receipt means the state was durably saved and the fold is already active. Make no more compression calls this turn; immediately continue the original task from the protected active tail without stopping for a compression report.
+- A failure means nothing was compressed. Read the exact diagnostic, do not guess a smaller or differently formatted range, and call \`compress_map\` again only when instructed before retrying with labels from its returned snapshot.
 </system-reminder>
 `;
 //# sourceMappingURL=automatic-system.generated.js.map

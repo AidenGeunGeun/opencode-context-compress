@@ -7,6 +7,14 @@ export declare function getLastUserSessionId(messages: WithParts[]): string | un
 export declare function createChatMessageTransformHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig, workingDirectory?: string): (_input: {}, output: {
     messages: WithParts[];
 }) => Promise<void>;
+export declare function createChatMessageHandler(stateManager: SessionStateManager, logger: Logger): (input: {
+    sessionID: string;
+    messageID?: string;
+    variant?: string;
+}, output: {
+    message?: any;
+    parts?: any[];
+}) => Promise<void>;
 export declare function createCommandExecuteHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig): (input: {
     command: string;
     sessionID: string;

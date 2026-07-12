@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -103,6 +103,37 @@ function createHarness(sessionId: string, messages: any[], configOverride = conf
 }
 
 describe("session automatic-compression commands", () => {
+    it("treats repeated on/off requests as sourced no-ops without redundant persistence", async () => {
+        const sessionId = `session-auto-idempotent-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const filePath = getSessionFilePath(sessionId)
+        const { run } = createHarness(sessionId, [userMessage("u1", sessionId)])
+
+        try {
+            const alreadyOn = await run("auto on")
+            assert.match(alreadyOn, /already on \(config\)/)
+            assert.equal(existsSync(filePath), false)
+
+            assert.match(await run("auto off"), /off for this session/)
+            const afterOff = await readFile(filePath, "utf8")
+            const afterOffInode = (await stat(filePath)).ino
+            const alreadyOff = await run("auto off")
+            assert.match(alreadyOff, /already off \(session override\)/)
+            assert.equal(await readFile(filePath, "utf8"), afterOff)
+            assert.equal((await stat(filePath)).ino, afterOffInode)
+
+            assert.match(await run("auto on"), /on for this session/)
+            const afterOn = await readFile(filePath, "utf8")
+            const afterOnInode = (await stat(filePath)).ino
+            const secondOn = await run("auto on")
+            assert.match(secondOn, /already on \(session override\)/)
+            assert.equal(await readFile(filePath, "utf8"), afterOn)
+            assert.equal((await stat(filePath)).ino, afterOnInode)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
     it("persists independent on/off, threshold, and ratio settings and reports provenance", async () => {
         const sessionId = `session-auto-controls-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
@@ -226,6 +257,7 @@ describe("session automatic-compression commands", () => {
 
         try {
             assert.match(await disabled.run("auto on"), /disabled globally/)
+            assert.match(await disabled.run("auto off"), /already off \(global config\)/)
             assert.equal(
                 disabled.stateManager.get(disabledSessionId).autoCompressionEnabledOverride,
                 undefined,

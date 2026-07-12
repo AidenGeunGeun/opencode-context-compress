@@ -108,13 +108,83 @@ const insertLiveMessageById = <T extends { id: string }>(messages: T[], message:
 }
 
 describe("handleManageCommand", () => {
-    it("sends a lean reminder plus the injected map, and anchors cleanup to the generated prompt message ID", async () => {
+    it("does not open a management turn when either required tool is denied", async () => {
+        const sessionId = `session-manage-tool-denied-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const state = createSessionState()
+        state.sessionId = sessionId
+        state.initialized = true
+        state.persistenceSynchronized = true
+        state.compressionMapSnapshot = {
+            triggerMessageId: "older-management-turn",
+            entries: [
+                {
+                    key: 1,
+                    kind: "message",
+                    rawMessageIds: ["m1"],
+                    toolIds: [],
+                    tokenEstimate: 1,
+                },
+            ],
+        }
+        let promptCalls = 0
+        const toasts: any[] = []
+        const client = {
+            tui: {
+                showToast: async (input: any) => {
+                    toasts.push(input)
+                },
+            },
+            session: {
+                prompt: async () => {
+                    promptCalls++
+                },
+            },
+        }
+        const deniedConfig: PluginConfig = {
+            ...config,
+            tools: {
+                ...config.tools,
+                compress_map: { permission: "deny" },
+            },
+        }
+
+        await handleManageCommand({
+            client,
+            stateManager: new SessionStateManager(),
+            state,
+            config: deniedConfig,
+            logger,
+            sessionId,
+            messages: [createUserMessage(sessionId)] as any,
+            arguments: "manage",
+        })
+
+        assert.equal(promptCalls, 0)
+        assert.equal(state.managementTurns.length, 0)
+        assert.equal(state.compressionMapSnapshot?.triggerMessageId, "older-management-turn")
+        assert.equal(toasts.length, 1)
+        assert.match(toasts[0].body.message, /Enable both compression tools/)
+    })
+
+    it("sends a self-contained map-first reminder without an injected map and anchors cleanup to the generated prompt message ID", async () => {
         const sessionId = `session-manage-command-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
         state.persistenceSynchronized = true
+        state.compressionMapSnapshot = {
+            triggerMessageId: "older-management-turn",
+            entries: [
+                {
+                    key: 1,
+                    kind: "message",
+                    rawMessageIds: ["m1"],
+                    toolIds: [],
+                    tokenEstimate: 1,
+                },
+            ],
+        }
 
         let promptBody: any
         const generatedAssistantId = "msg_01900000000000000000000002"
@@ -144,26 +214,18 @@ describe("handleManageCommand", () => {
             const parts: any[] = promptBody.parts
             const reminderText = parts[0].text
             const fullPayload = parts.map((part) => part.text).join("\n\n")
-            const nonEmptyReminderLines = reminderText.split("\n").filter((line: string) => line.trim().length > 0)
-
             assert.match(reminderText, /<system-reminder>/)
-            assert.match(reminderText, /compress_map/)
-            assert.match(reminderText, /compress/)
+            assert.match(reminderText, /Call `compress_map` first/)
+            assert.match(reminderText, /Call `compress` once/)
+            assert.match(reminderText, /A failure means nothing was compressed/)
             assert.doesNotMatch(reminderText, /<compress-context-map>/)
-            assert.ok(
-                nonEmptyReminderLines.length <= 18,
-                `expected <= 18 non-empty reminder lines, got ${nonEmptyReminderLines.length}`,
-            )
-
-            // The map snapshot is injected as its own part, built from the pre-management
-            // conversation only (one prior user message here, no management turn yet).
-            assert.match(fullPayload, /<compress-context-map>/)
-            assert.match(fullPayload, /\[1\] user: "Please manage context"/)
-            assert.match(fullPayload, /Total: 1 messages \+ 0 blocks/)
+            assert.doesNotMatch(fullPayload, /<compress-context-map>/)
+            assert.equal(parts.length, 1)
 
             assert.match(promptBody.messageID, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
             assert.equal(state.managementTurns.length, 1)
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
+            assert.equal(state.compressionMapSnapshot, undefined)
         } finally {
             await cleanupSessionFile(sessionId)
         }

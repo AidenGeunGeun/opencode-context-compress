@@ -1,21 +1,23 @@
 <system-reminder>
 CONTEXT MANAGEMENT REQUESTED
-The user ran `/compress manage`.
+The user ran `/compress manage`. This one management turn authorizes the compression tools; do not use them outside it. Compression replaces completed historical work with one dense, durable summary so context space is recovered without losing information needed to continue.
 
-Use the included map snapshot.
+Procedure:
+<compress_map>1. Call `compress_map` first. Inspect the snapshot it returns before choosing a range.</compress_map>
+<compress>2. Call `compress` once with labels from that exact snapshot. The snapshot remains authoritative even if you reason or use other tools between these calls.</compress>
 
-<compress>Call `compress` exactly once to fold completed, no-longer-active context into one durable block.</compress>
-<compress_map>Do not call `compress_map` in the normal path; use it only if the included map is missing/stale, or the user explicitly asked to inspect/debug the map.</compress_map>
+Map grammar:
+- Numeric entries are uncompressed messages. A grouped label such as `[2-4]` displays an inclusive contiguous run and may be used as a boundary.
+- `[bN]` entries are already-compressed blocks. Entries marked `[protected active tail]` cannot be selected during automatic management.
 
-Range:
-- Compress the oldest uncompressed completed span since the last `[bN]`; on the first compression, fold completed history before the active tail.
-- Default append-only: do not include existing `[bN]` blocks. Include/rewrite blocks only when the user explicitly asked to consolidate or recompress them.
-- Leave the active tail/current unresolved work visible.
+Range safety:
+- Compress the oldest completed uncompressed span first; leave unresolved or current work visible.
+- Default append-only: leave existing `[bN]` blocks immutable. Consolidate old blocks only when the user explicitly asked for that.
 
-Summary:
-- Dense, high-detail, future-useful: preserve WHY, decisions, constraints, gotchas, commands/results, file paths, IDs, and open follow-ups.
-- Drop only noise: raw logs, repeated reads, abandoned dead ends, obvious chatter.
-- Prefer enough detail over terse lossiness.
+Summary quality:
+- Preserve the objective and WHY, decisions, constraints, edits, paths, commands and results, failures, pending work, and exact next action. Remove only replaceable noise; when uncertain, retain more detail.
 
-After `compress` succeeds, the fold is already active; no further map or compression calls are needed this turn.
+Result handling:
+- A success receipt means the state was durably saved and the fold is already active. Do not call either compression tool again this turn.
+- A failure means nothing was compressed. Read the exact diagnostic; do not guess progressively smaller or reformatted ranges. If instructed, call `compress_map` again and retry using labels from the newly returned map.
 </system-reminder>

@@ -7,7 +7,7 @@ import {
 import type { SessionState, WithParts } from "../state/index.js"
 import {
     commitDurableSessionState,
-    ensureSessionInitialized,
+    reconcileSessionLifecycle,
     SessionStateManager,
 } from "../state/state.js"
 import { saveSessionState } from "../state/persistence.js"
@@ -102,7 +102,7 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
                 ctx.client,
                 ctx.sessionId,
             )) as WithParts[]
-            await ensureSessionInitialized(
+            await reconcileSessionLifecycle(
                 ctx.client,
                 ctx.state,
                 ctx.sessionId,
@@ -118,8 +118,22 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
                 return formatStatus(ctx.config, ctx.state, messages)
             }
 
+            const effectivePolicy = resolveEffectiveAutoCompressionPolicy(
+                ctx.config.autoCompression,
+                ctx.state,
+            )
+            if (action.kind === "on" && effectivePolicy.enabled) {
+                return `Automatic compression is already on (${effectivePolicy.enabledSource}). No session setting was changed.`
+            }
+            if (action.kind === "off" && !effectivePolicy.enabled) {
+                const source = effectivePolicy.globallyEnabled
+                    ? effectivePolicy.enabledSource
+                    : "global config"
+                return `Automatic compression is already off (${source}). No session setting was changed.`
+            }
+
             if (!ctx.config.autoCompression.enabled) {
-                return "Automatic compression is disabled globally. Session overrides cannot change it."
+                return "Automatic compression is disabled globally. Session overrides cannot turn it on."
             }
 
             const candidate: SessionState = { ...ctx.state }

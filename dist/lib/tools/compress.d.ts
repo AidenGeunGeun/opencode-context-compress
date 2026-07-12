@@ -15,6 +15,7 @@ export interface CompressionRangeMetrics {
     incrementalCompressTokens: number;
 }
 export declare function calculateCompressionRangeMetrics(rawMessages: WithParts[], rawMessageIndexById: Map<string, number>, resolvedRange: ResolvedContextMapRange, providerId?: string): CompressionRangeMetrics;
+export declare function calculatePinnedCompressionRangeMetrics(resolvedRange: ResolvedContextMapRange): CompressionRangeMetrics;
 /**
  * Select the final stored summary for a compression range.
  *

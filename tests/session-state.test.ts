@@ -127,6 +127,18 @@ describe("native compaction reset", () => {
         state.autoCompressionContextWindowRatioOverride = 0.8
         state.compressionCooldownAfterMessageId = "compress-anchor"
         state.compressed.messageIds.add("old-message")
+        state.compressionMapSnapshot = {
+            triggerMessageId: "manage-trigger",
+            entries: [
+                {
+                    key: 1,
+                    kind: "message",
+                    rawMessageIds: ["old-message"],
+                    toolIds: [],
+                    tokenEstimate: 3,
+                },
+            ],
+        }
 
         resetOnCompaction(state)
 
@@ -135,6 +147,7 @@ describe("native compaction reset", () => {
         assert.equal(state.autoCompressionContextWindowRatioOverride, 0.8)
         assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
         assert.equal(state.compressed.messageIds.size, 0)
+        assert.equal(state.compressionMapSnapshot, undefined)
     })
 })
 
@@ -177,6 +190,35 @@ describe("ensureSessionInitialized", () => {
         assert.equal(state.sessionId, sessionId)
         assert.equal(state.variant, "cached-variant")
         assert.equal(state.currentTurn, 1)
+    })
+
+    it("does not mark an observed compaction as reconciled during initialization", async () => {
+        const sessionId = `session-state-compaction-baseline-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFiles(sessionId)
+        const state = createSessionState()
+        const compaction = {
+            ...createMessage("native-compaction", sessionId, "assistant"),
+            info: {
+                ...createMessage("native-compaction", sessionId, "assistant").info,
+                summary: true,
+                time: { created: Date.now() + 1 },
+            },
+        }
+
+        try {
+            await ensureSessionInitialized(
+                { session: { get: async () => ({ data: {} }) } },
+                state,
+                sessionId,
+                logger,
+                [compaction] as any,
+            )
+
+            assert.equal(state.initialized, true)
+            assert.equal(state.lastCompaction, 0)
+        } finally {
+            await cleanupSessionFiles(sessionId)
+        }
     })
 
     it("clears persisted compression only when the session file is definitively absent", async () => {
@@ -322,6 +364,20 @@ describe("saveSessionState", () => {
             state.autoCompressionTokenThresholdOverride = 425_000
             state.autoCompressionContextWindowRatioOverride = 0.82
             state.compressionCooldownAfterMessageId = "m-compress"
+            state.lastCompaction = 123_456
+            state.compressionMapSnapshot = {
+                triggerMessageId: "m4",
+                entries: [
+                    {
+                        key: 1,
+                        kind: "message",
+                        rawMessageIds: ["m2"],
+                        protected: true,
+                        toolIds: ["tool-1"],
+                        tokenEstimate: 8,
+                    },
+                ],
+            }
 
             await saveSessionState(state, logger, "session-name")
 
@@ -364,6 +420,8 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, 425_000)
             assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(loadResult.state.compressionCooldownAfterMessageId, "m-compress")
+            assert.equal(loadResult.state.lastCompaction, 123_456)
+            assert.deepEqual(loadResult.state.compressionMapSnapshot, state.compressionMapSnapshot)
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
 
@@ -379,6 +437,8 @@ describe("saveSessionState", () => {
             assert.equal(reloadedState.autoCompressionTokenThresholdOverride, 425_000)
             assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
+            assert.equal(reloadedState.lastCompaction, 123_456)
+            assert.deepEqual(reloadedState.compressionMapSnapshot, state.compressionMapSnapshot)
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -428,6 +488,53 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, undefined)
             assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, undefined)
             assert.equal(loadResult.state.compressionCooldownAfterMessageId, undefined)
+        } finally {
+            await cleanupSessionFiles(sessionId)
+        }
+    })
+
+    it("drops a malformed execution snapshot without rejecting otherwise valid state", async () => {
+        const sessionId = `session-state-malformed-pin-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFiles(sessionId)
+
+        try {
+            await mkdir(storageDir, { recursive: true })
+            await writeFile(
+                getSessionFilePath(sessionId),
+                JSON.stringify({
+                    compressed: { toolIds: [], messageIds: [] },
+                    compressSummaries: [],
+                    managementTurns: [{ triggerMessageId: "manage-trigger" }],
+                    compressionMapSnapshot: {
+                        triggerMessageId: "manage-trigger",
+                        entries: [
+                            {
+                                key: 1,
+                                kind: "message",
+                                rawMessageIds: ["m1"],
+                                toolIds: [],
+                                tokenEstimate: 1,
+                            },
+                            {
+                                key: 2,
+                                kind: "message",
+                                rawMessageIds: ["m1"],
+                                toolIds: [],
+                                tokenEstimate: 1,
+                            },
+                        ],
+                    },
+                    stats: { compressTokenCounter: 0, totalCompressTokens: 0 },
+                    lastUpdated: new Date().toISOString(),
+                }),
+                "utf-8",
+            )
+
+            const loaded = await loadSessionState(sessionId, logger)
+            assert.equal(loaded.status, "loaded")
+            if (loaded.status !== "loaded") throw new Error("expected valid state")
+            assert.equal(loaded.state.compressionMapSnapshot, undefined)
+            assert.equal(loaded.state.managementTurns.length, 1)
         } finally {
             await cleanupSessionFiles(sessionId)
         }

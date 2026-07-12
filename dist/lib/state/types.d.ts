@@ -40,6 +40,20 @@ export interface ManagementTurn {
     /** The assistant message ID that carried the completing `compress` tool call. */
     completedMessageId?: string;
 }
+export interface CompressionMapSnapshotEntry {
+    key: number | string;
+    kind: "message" | "block";
+    rawMessageIds: string[];
+    anchorMessageId?: string;
+    protected?: boolean;
+    toolIds: string[];
+    tokenEstimate: number;
+}
+/** The one executable map most recently returned during the current management turn. */
+export interface CompressionMapSnapshot {
+    triggerMessageId: string;
+    entries: CompressionMapSnapshotEntry[];
+}
 export interface Compressed {
     toolIds: Set<string>;
     messageIds: Set<string>;
@@ -55,6 +69,7 @@ export interface SessionState {
     compressed: Compressed;
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
+    compressionMapSnapshot?: CompressionMapSnapshot;
     stats: SessionStats;
     /** Session-local override. Missing inherits the process-level auto setting. */
     autoCompressionEnabledOverride?: boolean;
@@ -66,6 +81,7 @@ export interface SessionState {
     compressionCooldownAfterMessageId?: string;
     toolParameters: Map<string, ToolParameterEntry>;
     toolIdList: string[];
+    /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number;
     currentTurn: number;
     variant: string | undefined;

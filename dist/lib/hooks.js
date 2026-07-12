@@ -8,8 +8,11 @@ import { handleHelpCommand } from "./commands/help.js";
 import { handleManageCommand } from "./commands/manage.js";
 import { handleAutoCommand } from "./commands/auto.js";
 import { suppressDefaultCommandExecution } from "./commands/suppress.js";
-import { ensureSessionInitialized } from "./state/state.js";
+import { reconcileSessionLifecycle } from "./state/state.js";
 import { listSessionMessages } from "./sdk/client.js";
+import { commitDurableSessionState } from "./state/state.js";
+import { saveSessionState } from "./state/persistence.js";
+import { isIgnoredUserMessage } from "./messages/utils.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -27,6 +30,8 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
         const transformed = await stateManager.runExclusive(sessionId, async () => {
             const syncResult = await checkSession(client, state, logger, output.messages);
             if (state.isSubAgent)
+                return false;
+            if (!state.persistenceSynchronized)
                 return false;
             const messageIds = new Set(output.messages.map((message) => message.info.id));
             const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter((id) => messageIds.has(id)).length;
@@ -49,6 +54,35 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
         }
     };
 }
+export function createChatMessageHandler(stateManager, logger) {
+    return async (input, output) => {
+        const message = output?.message;
+        const parts = Array.isArray(output?.parts) ? output.parts : [];
+        if (message && isIgnoredUserMessage({ info: message, parts }))
+            return;
+        const state = stateManager.get(input.sessionID);
+        state.variant = input.variant;
+        logger.debug("Cached variant from chat.message hook", { variant: input.variant });
+        const messageId = input.messageID ?? message?.id;
+        await stateManager.runExclusive(input.sessionID, async () => {
+            const snapshot = state.compressionMapSnapshot;
+            if (!snapshot || messageId === snapshot.triggerMessageId)
+                return;
+            if (!state.persistenceSynchronized)
+                return;
+            const candidate = {
+                ...state,
+                compressionMapSnapshot: undefined,
+            };
+            const persisted = await saveSessionState(candidate, logger);
+            if (!persisted) {
+                state.persistenceSynchronized = false;
+                return;
+            }
+            commitDurableSessionState(state, candidate);
+        });
+    };
+}
 export function createCommandExecuteHandler(client, stateManager, logger, config) {
     return async (input, output) => {
         if (!config.commands.enabled) {
@@ -58,7 +92,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
             const state = stateManager.get(input.sessionID);
             const messages = await stateManager.runExclusive(input.sessionID, async () => {
                 const currentMessages = (await listSessionMessages(client, input.sessionID));
-                await ensureSessionInitialized(client, state, input.sessionID, logger, currentMessages);
+                await reconcileSessionLifecycle(client, state, input.sessionID, logger, currentMessages);
                 return currentMessages;
             });
             const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean);

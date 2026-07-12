@@ -12,8 +12,11 @@ import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
 import { handleAutoCommand } from "./commands/auto.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
-import { ensureSessionInitialized } from "./state/state.js"
+import { reconcileSessionLifecycle } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
+import { commitDurableSessionState } from "./state/state.js"
+import { saveSessionState } from "./state/persistence.js"
+import { isIgnoredUserMessage } from "./messages/utils.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -39,6 +42,7 @@ export function createChatMessageTransformHandler(
         const transformed = await stateManager.runExclusive(sessionId, async () => {
             const syncResult = await checkSession(client, state, logger, output.messages)
             if (state.isSubAgent) return false
+            if (!state.persistenceSynchronized) return false
 
             const messageIds = new Set(output.messages.map((message) => message.info.id))
             const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter(
@@ -69,6 +73,46 @@ export function createChatMessageTransformHandler(
     }
 }
 
+export function createChatMessageHandler(
+    stateManager: SessionStateManager,
+    logger: Logger,
+) {
+    return async (
+        input: {
+            sessionID: string
+            messageID?: string
+            variant?: string
+        },
+        output: { message?: any; parts?: any[] },
+    ) => {
+        const message = output?.message
+        const parts = Array.isArray(output?.parts) ? output.parts : []
+        if (message && isIgnoredUserMessage({ info: message, parts } as WithParts)) return
+
+        const state = stateManager.get(input.sessionID)
+        state.variant = input.variant
+        logger.debug("Cached variant from chat.message hook", { variant: input.variant })
+
+        const messageId = input.messageID ?? message?.id
+        await stateManager.runExclusive(input.sessionID, async () => {
+            const snapshot = state.compressionMapSnapshot
+            if (!snapshot || messageId === snapshot.triggerMessageId) return
+            if (!state.persistenceSynchronized) return
+
+            const candidate = {
+                ...state,
+                compressionMapSnapshot: undefined,
+            }
+            const persisted = await saveSessionState(candidate, logger)
+            if (!persisted) {
+                state.persistenceSynchronized = false
+                return
+            }
+            commitDurableSessionState(state, candidate)
+        })
+    }
+}
+
 export function createCommandExecuteHandler(
     client: any,
     stateManager: SessionStateManager,
@@ -90,7 +134,7 @@ export function createCommandExecuteHandler(
                     client,
                     input.sessionID,
                 )) as WithParts[]
-                await ensureSessionInitialized(
+                await reconcileSessionLifecycle(
                     client,
                     state,
                     input.sessionID,
