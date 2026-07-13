@@ -57,9 +57,12 @@ export interface CompressionMapSnapshotEntry {
     tokenEstimate: number
 }
 
-/** The one executable map most recently returned during the current management turn. */
+/** The one executable map most recently returned for the current agent or management turn. */
 export interface CompressionMapSnapshot {
+    source: "management" | "normal"
     triggerMessageId: string
+    /** Cooldown observed when a normal-turn map was created. */
+    cooldownRemaining?: number
     entries: CompressionMapSnapshotEntry[]
 }
 

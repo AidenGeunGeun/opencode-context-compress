@@ -217,7 +217,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 if (!state.persistenceSynchronized) {
                     throw new Error(
-                        "compress cannot trust saved session state. Nothing was compressed. Call compress_map first inside the current management turn; if it cannot synchronize state, only the user can restart management with `/compress manage`.",
+                        "compress cannot trust saved session state. Nothing was compressed. Call compress_map again in the current turn; if it cannot synchronize state, stop and report the failure.",
                     )
                 }
 
@@ -226,12 +226,19 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     .reverse()
                     .find((turn) => !turn.completedAt)
                 const activeManagementTurn =
-                    snapshot?.triggerMessageId === latestIncompleteTurn?.triggerMessageId
+                    snapshot?.source === "management" &&
+                    snapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
                         ? latestIncompleteTurn
                         : undefined
-                if (!snapshot || !activeManagementTurn) {
+                if (!snapshot || (snapshot.source === "management" && !activeManagementTurn)) {
                     throw new Error(
-                        "compress has no authoritative map for the current management turn. Nothing was compressed. Call compress_map first and use labels from the map it returns. Outside a management turn, only the user can authorize one with `/compress manage`.",
+                        "compress has no authoritative map for the current turn. Nothing was compressed. Call compress_map first and use labels from the map it returns.",
+                    )
+                }
+                if (snapshot.source === "normal" && (snapshot.cooldownRemaining ?? 0) > 0) {
+                    const remaining = snapshot.cooldownRemaining!
+                    throw new Error(
+                        `Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}, then refresh with compress_map before retrying. Only the user may override this cooldown by explicitly running \`/compress manage\`.`,
                     )
                 }
 
@@ -278,7 +285,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
 
                 const resolvedRange = resolveContextMapRange(contextMap, range.from!, range.to!)
                 if (
-                    activeManagementTurn.source === "automatic" &&
+                    activeManagementTurn?.source === "automatic" &&
                     resolvedRange.entries.some((entry) => entry.protected)
                 ) {
                     throw new Error(
@@ -357,7 +364,8 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 })
 
                 const completedAt = new Date().toISOString()
-                const candidateManagementTurns = state.managementTurns.map((turn) =>
+                const candidateManagementTurns = activeManagementTurn
+                    ? state.managementTurns.map((turn) =>
                           turn === activeManagementTurn
                               ? {
                                     ...turn,
@@ -370,6 +378,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                                 }
                               : turn,
                       )
+                    : [...state.managementTurns]
 
                 const candidateStats = {
                     compressTokenCounter: 0,
@@ -421,7 +430,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                               .slice(0, resolvedRange.startPosition)
                               .filter((entry) => entry.kind === "block").length}`
                         : undefined,
-                    continueTask: activeManagementTurn.source === "automatic",
+                    continueTask: activeManagementTurn?.source === "automatic",
                 }
             })
 

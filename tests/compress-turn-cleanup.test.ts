@@ -628,6 +628,37 @@ describe("legacy residue repair by content signature", () => {
         ])
     })
 
+    it("preserves a genuine final reply after normal-turn compression", () => {
+        const sessionId = "session-cleanup-normal-compression"
+        const state = createState(sessionId)
+        state.compressed.messageIds = new Set(["normal-old-user", "normal-old-assistant"])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "normal-old-user",
+                messageIds: ["normal-old-user", "normal-old-assistant"],
+                summary: "Earlier work was completed.",
+                topic: "Earlier Work",
+            },
+        ]
+        const messages = [
+            textMessage("normal-old-user", sessionId, "Earlier request"),
+            textMessage("normal-old-assistant", sessionId, "Earlier result", "assistant"),
+            textMessage("normal-current-user", sessionId, "Continue and compress old context if useful"),
+            toolMessage("normal-map", sessionId, "compress_map", "<compress-context-map>current</compress-context-map>"),
+            toolMessage("normal-compress", sessionId, "compress", "Compression complete"),
+            statusNotificationMessage("normal-notification", sessionId, "4.0K tokens"),
+            textMessage("normal-final", sessionId, "The requested implementation is complete.", "assistant"),
+            textMessage("normal-next-user", sessionId, "Now add the follow-up"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.equal(messages.some((message: WithParts) => message.info.id === "normal-final"), true)
+        assert.equal(messages.some((message: WithParts) => message.info.id === "normal-next-user"), true)
+        assert.equal(messages.some((message: WithParts) => message.info.id === "normal-notification"), false)
+        assert.match(messageTexts(messages), /The requested implementation is complete\./)
+    })
+
     it("prevents residue drift across repeated cycles even when managementTurns bookkeeping is wrong or missing", () => {
         const sessionId = "session-cleanup-many-legacy"
         const state = createState(sessionId)

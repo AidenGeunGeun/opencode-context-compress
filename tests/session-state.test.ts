@@ -128,6 +128,7 @@ describe("native compaction reset", () => {
         state.compressionCooldownAfterMessageId = "compress-anchor"
         state.compressed.messageIds.add("old-message")
         state.compressionMapSnapshot = {
+            source: "management",
             triggerMessageId: "manage-trigger",
             entries: [
                 {
@@ -366,6 +367,7 @@ describe("saveSessionState", () => {
             state.compressionCooldownAfterMessageId = "m-compress"
             state.lastCompaction = 123_456
             state.compressionMapSnapshot = {
+                source: "management",
                 triggerMessageId: "m4",
                 entries: [
                     {
@@ -506,6 +508,7 @@ describe("saveSessionState", () => {
                     compressSummaries: [],
                     managementTurns: [{ triggerMessageId: "manage-trigger" }],
                     compressionMapSnapshot: {
+                        source: "management",
                         triggerMessageId: "manage-trigger",
                         entries: [
                             {

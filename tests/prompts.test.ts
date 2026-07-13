@@ -110,6 +110,7 @@ describe("loadPrompt", () => {
         assert.equal(typeof output, "string")
         assert.ok(output.length > 0)
         assert.match(output, /after `compress_map` has successfully returned/i)
+        assert.match(output, /during normal work or/i)
         assert.doesNotMatch(output, /`ranges` is an array/)
     })
 
@@ -136,6 +137,8 @@ describe("loadPrompt", () => {
 
         assert.match(output, /Call `compress_map` before `compress`/)
         assert.match(output, /sole execution source of truth/)
+        assert.match(output, /during normal work or/i)
+        assert.match(output, /current visible user request.*excluded/i)
         assert.doesNotMatch(output, /prefer the refreshed map returned by that tool/i)
         assert.doesNotMatch(output, /after a `compress` call/i)
     })

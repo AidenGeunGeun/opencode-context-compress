@@ -7,9 +7,9 @@ import { isIgnoredUserMessage } from "./utils.js";
  * artifacts directly from message content.
  *
  * Matching is intentionally conservative: a suppressible span must start at a "strong"
- * signature (the rendered manage system-reminder, an ignored status notification, or an
- * assistant message carrying a `compress_map`/`compress` tool part) that this plugin alone
- * produces. Weaker signals (compression-only user requests, plain assistant chatter) are
+ * signature (the rendered manage system-reminder) that this plugin alone produces. Compression
+ * tools are also valid during normal work, so their presence must never seed a management span.
+ * Weaker signals (compression-only user requests, plugin status, tool calls, assistant chatter) are
  * only absorbed when adjacent to a strong signature - never as a standalone trigger - so
  * ordinary conversation that merely mentions "compress" is never touched. A span is only
  * suppressed once it is bounded by a following real (non-artifact) message; an unbounded
@@ -55,9 +55,6 @@ function isStatusNotificationMessage(message) {
     const text = getMessageText(message);
     return STATUS_NOTIFICATION_HEADER.test(text) || STATUS_NOTIFICATION_PROGRESS.test(text);
 }
-function isCompressToolCallMessage(message) {
-    return message.info.role === "assistant" && hasToolPart(message, isCompressToolName);
-}
 function isCompressionOnlyUserRequest(message) {
     if (message.info.role !== "user" || isIgnoredUserMessage(message)) {
         return false;
@@ -69,9 +66,7 @@ function isCompressionOnlyUserRequest(message) {
     return COMPRESSION_ONLY_REQUEST.test(text);
 }
 function isStrongArtifact(message) {
-    return (isManagePromptMessage(message) ||
-        isStatusNotificationMessage(message) ||
-        isCompressToolCallMessage(message));
+    return isManagePromptMessage(message);
 }
 function isWeakArtifact(message) {
     if (message.info.role === "assistant") {
@@ -93,6 +88,14 @@ export function buildLegacyResidueSuppressionPlan(rawMessages) {
     const retainedTextByMessageId = new Map();
     let i = 0;
     while (i < rawMessages.length) {
+        if (isStatusNotificationMessage(rawMessages[i])) {
+            // Chat notifications are always plugin-owned, but they can follow a legitimate
+            // normal-turn compression. Remove only the notification unless a preceding manage
+            // reminder already anchored a broader legacy-management span.
+            suppressed.add(rawMessages[i].info.id);
+            i++;
+            continue;
+        }
         if (!isStrongArtifact(rawMessages[i])) {
             i++;
             continue;

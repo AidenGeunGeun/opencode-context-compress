@@ -21,7 +21,7 @@ Treat this as a stateful OpenCode protocol plugin, not a text-rewriting utility.
 - Use `lib/commands/manage.ts` and `lib/auto-compression.ts` for manual and automatic management-turn initiation. Both open map-first reminders with no injected map text; automatic turns stage protected-tail IDs at start.
 - Use `lib/auto-policy.ts` for effective global/session policy and transcript-derived cooldown logic; use `lib/commands/auto.ts` for session-scoped `/compress auto` controls, including idempotent on/off.
 - Use `lib/messages/context-map.ts` for model-visible range labels, execution-skeleton creation, and pin-backed range resolution; use `lib/messages/compress-transform.ts` for persisted overlays and management residue cleanup.
-- Use `lib/tools/compress-map.ts` for active-turn-only map authority: build pre-management map, reapply automatic protected IDs, persist one same-turn pin, then return map text.
+- Use `lib/tools/compress-map.ts` for normal or managed map authority: build history before the current visible-user/management boundary, reapply automatic protected IDs when relevant, persist one same-turn pin, then return map text.
 - Use `lib/tools/compress.ts` for pin-backed range validation, no live transcript rebuild, atomic state commits, pin clear, completion markers, and the tool receipt.
 - Use `lib/state/` for per-session state and disk compatibility, including the single optional `compressionMapSnapshot`. Never replace `SessionStateManager` with shared singleton state.
 - Use `lib/sdk/client.ts` for all session/TUI calls. Keep both nested v1 plugin-host and flat v2 SDK request shapes working.
@@ -31,6 +31,7 @@ Treat this as a stateful OpenCode protocol plugin, not a text-rewriting utility.
 
 - Keep compression state scoped by session ID and persisted atomically before hiding any original context.
 - Keep management map-first: reminders never inject `<compress-context-map>`; the agent must call `compress_map` before `compress`; both tools must be available or management does not open.
+- Keep the same map-first tools agentically available during normal work. Normal maps exclude the current visible user request and subsequent in-progress activity; successful normal compression does not invent a management completion marker.
 - Keep at most one durable same-turn execution skeleton per session. Replace it on successful `compress_map`; clear it on successful `compress`, new management turn, later visible user message, or compaction. Do not accumulate snapshot history, map text, previews, or transcript copies.
 - Keep `compress` pinned to the map the agent was shown. Resolve ranges from that skeleton's physical IDs/metrics; do not fetch/rebuild a live renumbered map for execution.
 - Keep session auto overrides and the cooldown anchor durable. Global `autoCompression.enabled: false` remains the master kill switch, and cooldown progress is derived idempotently from the transcript. `/compress auto on|off` must no-op when the effective state already matches.

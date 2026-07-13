@@ -3,7 +3,7 @@
 // To modify, edit system.md and run `npm run generate:prompts`
 export const SYSTEM = `<system-reminder>
 CONTEXT MANAGEMENT REQUESTED
-The user ran \`/compress manage\`. This one management turn authorizes the compression tools; do not use them outside it. Compression replaces completed historical work with one dense, durable summary so context space is recovered without losing information needed to continue.
+The user ran \`/compress manage\`. Compression replaces completed historical work with one dense, durable summary so context space is recovered without losing information needed to continue. The same map-first tools may also be used agentically during normal work; this reminder asks you to use them now.
 
 Procedure:
 <compress_map>1. Call \`compress_map\` first. Inspect the snapshot it returns before choosing a range.</compress_map>

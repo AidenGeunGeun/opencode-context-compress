@@ -24,6 +24,9 @@ or let the plugin initiate the same workflow before a primary session fills its 
   through the plugin config hook so the two mechanisms cannot race.
 - Both manual and automatic management use a map-first protocol: the reminder does not include a
   map; the agent must call `compress_map`, then `compress` against that same-turn snapshot.
+- The same map-first tools are available agentically during normal work. A normal-turn map excludes
+  the current visible user request and in-progress agent/tool activity, so only prior history is
+  selectable.
 - Both `compress_map` and `compress` must be permitted. If either tool is denied, management does
   not open an unusable model turn.
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
@@ -56,9 +59,9 @@ overridden from a session.
 
 ## Agentic Workflow
 
-For both `/compress manage` and an automatic threshold trigger, the plugin opens a single
-model-visible management turn with a self-contained reminder and no map text. Inside that turn
-the agent must:
+During normal work the agent may choose this map-first flow itself. `/compress manage` and an
+automatic threshold trigger additionally open a model-visible management turn with a self-contained
+reminder and no map text. In either case the agent:
 
 1. Call `compress_map` and read the returned `<compress-context-map>`. That successful same-turn
    snapshot becomes the sole execution source of truth.
@@ -79,6 +82,10 @@ excluded because their transform and effective tool-permission contract is diffe
 sessions. Automatic turns stage protected active-tail IDs at start and reapply them when the agent
 opens the map.
 
+Normal-turn compression still respects the three-response post-compression cooldown. Reading
+`compress_map` remains available during cooldown, but `compress` asks the agent to wait and refresh
+the map later; an explicit user `/compress manage` remains the override.
+
 While the management turn is still open, the agent can see the reminder, map tool result, and
 other tool activity. The instant `compress` succeeds, the manage prompt, map output, and status
 notifications are hidden from the very next model turn — no further user message is needed. The
@@ -90,8 +97,8 @@ placeholder behind.
 
 ## Context Map
 
-`compress_map` returns the structured map the agent must use. `compress` executes against that
-pinned same-turn snapshot, not a freshly rebuilt numbering:
+`compress_map` returns the structured map the agent must use during either normal or managed work.
+`compress` executes against that pinned same-turn snapshot, not a freshly rebuilt numbering:
 
 ```text
 <compress-context-map>
@@ -215,7 +222,7 @@ Stored fields include:
 - compressed message IDs
 - compression summaries
 - manual and automatic management-turn cleanup markers, including automatic protected-tail IDs
-- at most one bounded same-turn compression-map execution skeleton (entry keys/kinds, physical
+- at most one bounded current-turn compression-map execution skeleton (entry keys/kinds, physical
   message IDs, optional block anchors, protected flags, tool IDs, and approximate metrics needed
   to execute without rebuilding the transcript)
 - per-session compression stats

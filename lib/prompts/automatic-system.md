@@ -2,7 +2,7 @@
 AUTOMATIC CONTEXT COMPRESSION REQUIRED
 You are in the middle of an ongoing task, but its working context reached ~{{context_tokens}} tokens; this session's effective threshold is ~{{threshold_tokens}} tokens ({{threshold_reason}}). Compression is maintenance, not task completion: replace completed history with one dense, durable summary, then immediately resume the interrupted task.
 
-This one management turn authorizes the compression tools; do not use them outside it.
+The same map-first tools may be used agentically during normal work; this automatic management turn requires using them now before resuming the task.
 
 Procedure:
 <compress_map>1. Call `compress_map` first and inspect the snapshot it returns.</compress_map>

@@ -147,17 +147,22 @@ export function createCompressTool(ctx) {
             const state = stateManager.get(sessionId);
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 if (!state.persistenceSynchronized) {
-                    throw new Error("compress cannot trust saved session state. Nothing was compressed. Call compress_map first inside the current management turn; if it cannot synchronize state, only the user can restart management with `/compress manage`.");
+                    throw new Error("compress cannot trust saved session state. Nothing was compressed. Call compress_map again in the current turn; if it cannot synchronize state, stop and report the failure.");
                 }
                 const snapshot = state.compressionMapSnapshot;
                 const latestIncompleteTurn = [...state.managementTurns]
                     .reverse()
                     .find((turn) => !turn.completedAt);
-                const activeManagementTurn = snapshot?.triggerMessageId === latestIncompleteTurn?.triggerMessageId
+                const activeManagementTurn = snapshot?.source === "management" &&
+                    snapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
                     ? latestIncompleteTurn
                     : undefined;
-                if (!snapshot || !activeManagementTurn) {
-                    throw new Error("compress has no authoritative map for the current management turn. Nothing was compressed. Call compress_map first and use labels from the map it returns. Outside a management turn, only the user can authorize one with `/compress manage`.");
+                if (!snapshot || (snapshot.source === "management" && !activeManagementTurn)) {
+                    throw new Error("compress has no authoritative map for the current turn. Nothing was compressed. Call compress_map first and use labels from the map it returns.");
+                }
+                if (snapshot.source === "normal" && (snapshot.cooldownRemaining ?? 0) > 0) {
+                    const remaining = snapshot.cooldownRemaining;
+                    throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}, then refresh with compress_map before retrying. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
                 }
                 const range = args;
                 if (typeof range !== "object" || !range) {
@@ -188,7 +193,7 @@ export function createCompressTool(ctx) {
                     throw new Error(`The pinned map contains block [${String(missingBlock.key)}] without a matching durable summary. Nothing was compressed. Call compress_map again before retrying.`);
                 }
                 const resolvedRange = resolveContextMapRange(contextMap, range.from, range.to);
-                if (activeManagementTurn.source === "automatic" &&
+                if (activeManagementTurn?.source === "automatic" &&
                     resolvedRange.entries.some((entry) => entry.protected)) {
                     throw new Error("Automatic compression cannot include entries labeled [protected active tail]. Nothing was compressed. Use an older unprotected range from the pinned map; do not guess a smaller or differently formatted boundary.");
                 }
@@ -236,17 +241,19 @@ export function createCompressTool(ctx) {
                     topic: range.topic,
                 });
                 const completedAt = new Date().toISOString();
-                const candidateManagementTurns = state.managementTurns.map((turn) => turn === activeManagementTurn
-                    ? {
-                        ...turn,
-                        completedAt,
-                        ...(typeof toolCtx.callID === "string" &&
-                            toolCtx.callID
-                            ? { completedCallId: toolCtx.callID }
-                            : {}),
-                        completedMessageId: toolCtx.messageID,
-                    }
-                    : turn);
+                const candidateManagementTurns = activeManagementTurn
+                    ? state.managementTurns.map((turn) => turn === activeManagementTurn
+                        ? {
+                            ...turn,
+                            completedAt,
+                            ...(typeof toolCtx.callID === "string" &&
+                                toolCtx.callID
+                                ? { completedCallId: toolCtx.callID }
+                                : {}),
+                            completedMessageId: toolCtx.messageID,
+                        }
+                        : turn)
+                    : [...state.managementTurns];
                 const candidateStats = {
                     compressTokenCounter: 0,
                     totalCompressTokens: state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
@@ -290,7 +297,7 @@ export function createCompressTool(ctx) {
                             .slice(0, resolvedRange.startPosition)
                             .filter((entry) => entry.kind === "block").length}`
                         : undefined,
-                    continueTask: activeManagementTurn.source === "automatic",
+                    continueTask: activeManagementTurn?.source === "automatic",
                 };
             });
             await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.mapEntryCount, outcome.topic, outcome.finalSummary, { messageIndex: outcome.startPosition }, { messageIndex: outcome.endPosition }, outcome.contextMapEntryCount, outcome.currentParams, outcome.estimatedCompressedTokens);

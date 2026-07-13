@@ -8,6 +8,7 @@ import {
     resetOnCompaction,
 } from "./utils.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
+import { isIgnoredUserMessage } from "../messages/utils.js"
 
 export interface SessionStateSyncResult {
     source: "memory" | "disk-load" | "disk-reload" | "disk-cleared"
@@ -218,9 +219,21 @@ export async function reconcileSessionLifecycle(
 
     const snapshot = state.compressionMapSnapshot
     const activeTurn = snapshot ? findActiveManagementTurn(state, messages) : undefined
+    let latestVisibleUserMessageId: string | undefined
+    if (snapshot?.source === "normal") {
+        for (let index = messages.length - 1; index >= 0; index--) {
+            const message = messages[index]
+            if (message.info.role === "user" && !isIgnoredUserMessage(message)) {
+                latestVisibleUserMessageId = message.info.id
+                break
+            }
+        }
+    }
     const snapshotIsStale =
         snapshot !== undefined &&
-        activeTurn?.turn.triggerMessageId !== snapshot.triggerMessageId
+        (snapshot.source === "management"
+            ? activeTurn?.turn.triggerMessageId !== snapshot.triggerMessageId
+            : activeTurn !== undefined || latestVisibleUserMessageId !== snapshot.triggerMessageId)
     if (requiresCompactionReset || unresolvedNewCompaction || snapshotIsStale) {
         const candidate: SessionState = {
             ...state,

@@ -17,6 +17,7 @@ import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import type { CompressToolContext } from "./types.js"
 import { listSessionMessages } from "../sdk/client.js"
 import { getPostCompressionCooldownRemaining } from "../auto-policy.js"
+import { isIgnoredUserMessage } from "../messages/utils.js"
 
 const COMPRESS_MAP_TOOL_DESCRIPTION = loadPrompt("compress-map-tool-spec")
 
@@ -40,13 +41,8 @@ export function createCompressMapTool(ctx: CompressToolContext): ReturnType<type
                     }
 
                     const activeTurn = findActiveManagementTurn(state, rawMessages)
-                    if (!activeTurn) {
-                        throw new Error(
-                            "compress_map is available only inside a current compression-management turn. Nothing changed. Only the user can authorize manual compression by running `/compress manage`.",
-                        )
-                    }
                     if (
-                        activeTurn.turn.source === "automatic" &&
+                        activeTurn?.turn.source === "automatic" &&
                         getPostCompressionCooldownRemaining(state, rawMessages) > 0
                     ) {
                         throw new Error(
@@ -61,22 +57,50 @@ export function createCompressMapTool(ctx: CompressToolContext): ReturnType<type
                         metadata: {},
                     })
 
-                    const preManagementMessages = rawMessages.slice(0, activeTurn.triggerIndex)
-                    const currentParams = getCurrentParams(state, preManagementMessages, logger)
+                    let boundaryMessageId: string
+                    let mapMessages: WithParts[]
+                    let source: "management" | "normal"
+                    let cooldownRemaining: number | undefined
+                    if (activeTurn) {
+                        boundaryMessageId = activeTurn.turn.triggerMessageId
+                        mapMessages = rawMessages.slice(0, activeTurn.triggerIndex)
+                        source = "management"
+                    } else {
+                        let boundaryIndex = -1
+                        for (let index = rawMessages.length - 1; index >= 0; index--) {
+                            const message = rawMessages[index]
+                            if (message.info.role === "user" && !isIgnoredUserMessage(message)) {
+                                boundaryIndex = index
+                                break
+                            }
+                        }
+                        if (boundaryIndex === -1) {
+                            throw new Error(
+                                "compress_map could not find a current visible user turn. No new map became authoritative.",
+                            )
+                        }
+                        boundaryMessageId = rawMessages[boundaryIndex].info.id
+                        mapMessages = rawMessages.slice(0, boundaryIndex)
+                        source = "normal"
+                        cooldownRemaining = getPostCompressionCooldownRemaining(state, rawMessages)
+                    }
+
+                    const currentParams = getCurrentParams(state, mapMessages, logger)
                     const contextMap = buildContextMap(
-                        preManagementMessages,
+                        mapMessages,
                         state,
                         logger,
                         currentParams.providerId,
-                        activeTurn.turn.source === "automatic"
+                        activeTurn?.turn.source === "automatic"
                             ? { protectedMessageIds: activeTurn.turn.protectedMessageIds ?? [] }
                             : undefined,
                     )
                     const candidateState: SessionState = {
                         ...state,
                         compressionMapSnapshot: createCompressionMapSnapshot(
-                            activeTurn.turn.triggerMessageId,
+                            boundaryMessageId,
                             contextMap,
+                            { source, cooldownRemaining },
                         ),
                     }
                     const persisted = await saveSessionState(candidateState, logger)

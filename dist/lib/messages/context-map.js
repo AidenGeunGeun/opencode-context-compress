@@ -313,9 +313,13 @@ export function buildContextMap(rawMessages, state, logger, providerId, options)
         protectedMessageIds,
     };
 }
-export function createCompressionMapSnapshot(triggerMessageId, contextMap) {
+export function createCompressionMapSnapshot(triggerMessageId, contextMap, options) {
     return {
+        source: options?.source ?? "management",
         triggerMessageId,
+        ...(typeof options?.cooldownRemaining === "number" && options.cooldownRemaining > 0
+            ? { cooldownRemaining: options.cooldownRemaining }
+            : {}),
         entries: contextMap.entries.map((entry) => ({
             key: entry.key,
             kind: entry.kind,

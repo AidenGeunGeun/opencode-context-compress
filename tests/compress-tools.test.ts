@@ -281,15 +281,21 @@ describe("compression management tools", () => {
         }
     })
 
-    it("rejects compress_map outside an active management turn without creating a snapshot", async () => {
-        const sessionId = `session-compress-map-unauthorized-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    it("allows compress_map during normal work and excludes the current user turn", async () => {
+        const sessionId = `session-compress-map-normal-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
         let askCalls = 0
+        const messages = [
+            textMessage("old-user", sessionId, "Earlier request"),
+            textMessage("old-assistant", sessionId, "Earlier result", "assistant"),
+            textMessage("current-user", sessionId, "Inspect and compress if useful"),
+            textMessage("current-assistant", sessionId, "In-progress reasoning", "assistant"),
+        ]
         const mapTool = createCompressMapTool({
-            client: createClient([textMessage("m1", sessionId, "Ordinary work")]),
+            client: createClient(messages),
             stateManager,
             logger,
             config,
@@ -297,20 +303,102 @@ describe("compression management tools", () => {
         })
 
         try {
-            await assert.rejects(
-                mapTool.execute(
-                    {} as any,
-                    {
-                        ...createToolContext(sessionId, "unauthorized-map"),
-                        ask: async () => {
-                            askCalls++
-                        },
-                    } as any,
-                ),
-                /Only the user can authorize.*`\/compress manage`/,
+            const output = await mapTool.execute(
+                {} as any,
+                {
+                    ...createToolContext(sessionId, "normal-map"),
+                    ask: async () => {
+                        askCalls++
+                    },
+                } as any,
             )
-            assert.equal(askCalls, 0)
+            assert.match(output, /Total: 2 messages \+ 0 blocks/)
+            assert.doesNotMatch(output, /Inspect and compress if useful|In-progress reasoning/)
+            assert.equal(askCalls, 1)
+            assert.equal(state.compressionMapSnapshot?.source, "normal")
+            assert.equal(state.compressionMapSnapshot?.triggerMessageId, "current-user")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("allows normal-turn compression after compress_map without completing a management turn", async () => {
+        const sessionId = `session-compress-normal-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const messages = [
+            textMessage("old-user", sessionId, "Earlier request"),
+            textMessage("old-assistant", sessionId, "Earlier result", "assistant"),
+            textMessage("current-user", sessionId, "Continue the active task"),
+        ]
+        const stateManager = new SessionStateManager()
+        const mapTool = createCompressMapTool({
+            client: createClient(messages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+        const compressTool = createCompressTool({
+            client: createClient(messages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            await mapTool.execute({} as any, createToolContext(sessionId, "normal-map") as any)
+            const output = await compressTool.execute(
+                {
+                    from: 1,
+                    to: 2,
+                    topic: "Earlier Work",
+                    summary: "The earlier request and result are preserved.",
+                },
+                createToolContext(sessionId, "normal-compress") as any,
+            )
+            const state = stateManager.get(sessionId)
+            assert.match(output, /^Compression complete/)
+            assert.deepEqual(state.compressSummaries[0].messageIds, ["old-user", "old-assistant"])
+            assert.deepEqual(state.managementTurns, [])
             assert.equal(state.compressionMapSnapshot, undefined)
+            assert.equal(state.compressionCooldownAfterMessageId, "message-normal-compress")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("reloads a normal-turn pin while the same visible user boundary remains current", async () => {
+        const sessionId = `session-compress-normal-reload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const messages = [
+            textMessage("old-user", sessionId, "Earlier request"),
+            textMessage("old-assistant", sessionId, "Earlier result", "assistant"),
+            textMessage("current-user", sessionId, "Continue"),
+        ]
+        const firstManager = new SessionStateManager()
+        const mapTool = createCompressMapTool({
+            client: createClient(messages),
+            stateManager: firstManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
+
+        try {
+            await mapTool.execute({} as any, createToolContext(sessionId, "normal-map-reload") as any)
+
+            const reloadedManager = new SessionStateManager()
+            const transform = createChatMessageTransformHandler(
+                { session: { get: async () => ({ data: {} }) } },
+                reloadedManager,
+                logger,
+                config,
+            )
+            await transform({}, { messages: structuredClone(messages) as any })
+            const reloadedState = reloadedManager.get(sessionId)
+            assert.equal(reloadedState.compressionMapSnapshot?.source, "normal")
+            assert.equal(reloadedState.compressionMapSnapshot?.triggerMessageId, "current-user")
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -1232,7 +1320,7 @@ describe("compression management tools", () => {
         }
     })
 
-    it("blocks compression outside a user-authorized management turn before asking permission", async () => {
+    it("allows a normal map but blocks normal compression during cooldown before asking permission", async () => {
         const sessionId = `session-compress-cooldown-block-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const rawMessages = [
@@ -1251,12 +1339,20 @@ describe("compression management tools", () => {
                     time: { created: Date.now(), completed: Date.now() },
                 },
             },
+            textMessage("current-user", sessionId, "Inspect context"),
         ]
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
         state.compressionCooldownAfterMessageId = "compress-anchor"
         let askCalls = 0
+        const mapTool = createCompressMapTool({
+            client: createClient(rawMessages),
+            stateManager,
+            logger,
+            config,
+            workingDirectory: "/tmp",
+        })
         const tool = createCompressTool({
             client: createClient(rawMessages),
             stateManager,
@@ -1271,12 +1367,16 @@ describe("compression management tools", () => {
             },
         }
 
+        await mapTool.execute({} as any, createToolContext(sessionId, "cooldown-map") as any)
+        assert.equal(state.compressionMapSnapshot?.source, "normal")
+        assert.equal(state.compressionMapSnapshot?.cooldownRemaining, 2)
+
         await assert.rejects(
             tool.execute(
                 { from: 1, to: 1, topic: "Blocked", summary: "Must not be stored." },
                 toolContext as any,
             ),
-            /Call compress_map first.*only the user can .*`\/compress manage`/is,
+            /Wait 2 more assistant responses.*refresh with compress_map.*`\/compress manage`/is,
         )
         assert.equal(askCalls, 0)
         assert.equal(state.compressSummaries.length, 0)

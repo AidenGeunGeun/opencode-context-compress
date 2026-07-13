@@ -12,7 +12,8 @@ Core contract:
 - The active agent chooses the range and writes the summary; there is no separate summarizer loop.
 - Management is map-first: the reminder does not include a map. The agent must call `compress_map`,
   then `compress` against that same-turn pinned snapshot. Both tools must be available.
-- During either management turn, the primary agent can use `compress_map` and `compress`.
+- The primary agent may also use the same map-first pair during normal work; normal maps exclude
+  the current visible user request and subsequent in-progress activity.
 
 ## Build and Test
 
@@ -44,16 +45,18 @@ lib/commands/auto.ts
   idempotent: already-matching effective state reports source without writing.
 
 lib/tools/compress-map.ts
-  Active-management-only map tool. Builds the pre-management map, reapplies
-  automatic protected IDs, persists one same-turn execution skeleton, then
-  returns `<compress-context-map>` text only after that pin is durable.
+  Agentic map tool for normal or managed work. Builds history before the current
+  user/management boundary, reapplies automatic protected IDs when relevant,
+  persists one same-turn execution skeleton, then returns map text only after
+  that pin is durable.
 
 lib/tools/compress.ts
   Compression tool implementation. Requires a matching current-turn pinned
   snapshot, validates one range against that pin (no live transcript rebuild),
   requests permission, uses pinned IDs/metrics, stores summaries, atomically
-  persists state, clears the pin, and marks the active management turn
-  completed. Success is a tiny receipt, not a refreshed map.
+  persists state, clears the pin, and marks an active management turn completed
+  when one exists. Normal-turn success stores the fold without inventing a
+  management marker. Success is a tiny receipt, not a refreshed map.
 
 lib/messages/compress-transform.ts
   Applies persisted compression decisions and completed management-turn cleanup
@@ -92,7 +95,9 @@ lib/state/*
 1. Startup loads config and initializes state.
 2. Hooks cache model limits, observe completed assistant usage, sync tool cache, apply
    compression transforms, and route `/compress` commands.
-3. `/compress manage` opens a management turn with a self-contained reminder and no map.
+3. During normal work the agent may call `compress_map`, then `compress`; the map excludes the
+   current visible user request and in-progress activity. `/compress manage` opens a management
+   turn with a self-contained reminder and no map.
    The agent must call `compress_map`, then `compress` against that same-turn pin. Both tools
    must be permitted or the command fails user-only before opening a model turn.
 4. `/compress auto` reads or changes the current session's persisted auto-compression
@@ -130,10 +135,10 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
 Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
-markers, at most one same-turn compression-map execution skeleton, compression stats, persisted
+markers, at most one current-turn compression-map execution skeleton, compression stats, persisted
 auto-compression overrides and cooldown anchor, subagent status, initialization, and runtime-only
 threshold metadata.
-The execution skeleton is tied to the active turn's trigger ID and holds only the minimal keys,
+The execution skeleton is tied to a management trigger or normal visible-user boundary and holds only the minimal keys,
 kinds, physical message IDs, optional block anchors, protected flags, tool IDs, and approximate
 metrics needed to execute the map the agent was shown. It is replaced, never appended, and cleared
 on success, a new turn, a later visible user message, or compaction.
@@ -170,10 +175,10 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 ## Notes
 
-- `compress_map` and `compress` are for manual or plugin-initiated management turns only.
-  Management is map-first: `compress_map` creates the pin; `compress` executes that pin and does
-  not rebuild a live numeric map. Automatic protected-tail enforcement is staged at turn start,
-  reapplied on the map, and enforced from the pin; manual range choice remains model-directed.
+- `compress_map` and `compress` are available during normal work and manual/plugin-initiated
+  management turns. Every path is map-first: `compress_map` creates the pin; `compress` executes
+  that pin and does not rebuild a live numeric map. Automatic protected-tail enforcement is staged
+  at turn start, reapplied on the map, and enforced from the pin.
 - Both tools must be available for manual or automatic management to start. There is no injected-map
   fallback when one tool is denied.
 - Completed management turns leave no model-visible machinery marker; future prompts show blocks,

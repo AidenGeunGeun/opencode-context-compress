@@ -115,6 +115,7 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         state.compressionMapSnapshot = {
+            source: "management",
             triggerMessageId: "older-management-turn",
             entries: [
                 {
@@ -174,6 +175,7 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         state.compressionMapSnapshot = {
+            source: "management",
             triggerMessageId: "older-management-turn",
             entries: [
                 {

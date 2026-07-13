@@ -46,7 +46,10 @@ export declare function deriveAutomaticProtectedTail(rawMessages: WithParts[], s
     hasSelectableMessages: boolean;
 };
 export declare function buildContextMap(rawMessages: WithParts[], state: SessionState, logger: Logger, providerId?: string, options?: ContextMapOptions): ContextMapResult;
-export declare function createCompressionMapSnapshot(triggerMessageId: string, contextMap: ContextMapResult): CompressionMapSnapshot;
+export declare function createCompressionMapSnapshot(triggerMessageId: string, contextMap: ContextMapResult, options?: {
+    source?: CompressionMapSnapshot["source"];
+    cooldownRemaining?: number;
+}): CompressionMapSnapshot;
 export declare function contextMapFromCompressionSnapshot(snapshot: CompressionMapSnapshot): ContextMapResult;
 export declare function resolveContextMapRange(contextMap: ContextMapResult, from: number | string, to: number | string): ResolvedContextMapRange;
 //# sourceMappingURL=context-map.d.ts.map

@@ -1,6 +1,7 @@
 import { loadSessionState, saveSessionState } from "./persistence.js";
 import { isSubAgentSession, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
 import { findActiveManagementTurn } from "../messages/compress-transform.js";
+import { isIgnoredUserMessage } from "../messages/utils.js";
 export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
     state.compressSummaries = candidate.compressSummaries;
@@ -171,8 +172,20 @@ export async function reconcileSessionLifecycle(client, state, sessionId, logger
             (compactionOrder === "unknown" && unresolvedNewCompaction));
     const snapshot = state.compressionMapSnapshot;
     const activeTurn = snapshot ? findActiveManagementTurn(state, messages) : undefined;
+    let latestVisibleUserMessageId;
+    if (snapshot?.source === "normal") {
+        for (let index = messages.length - 1; index >= 0; index--) {
+            const message = messages[index];
+            if (message.info.role === "user" && !isIgnoredUserMessage(message)) {
+                latestVisibleUserMessageId = message.info.id;
+                break;
+            }
+        }
+    }
     const snapshotIsStale = snapshot !== undefined &&
-        activeTurn?.turn.triggerMessageId !== snapshot.triggerMessageId;
+        (snapshot.source === "management"
+            ? activeTurn?.turn.triggerMessageId !== snapshot.triggerMessageId
+            : activeTurn !== undefined || latestVisibleUserMessageId !== snapshot.triggerMessageId);
     if (requiresCompactionReset || unresolvedNewCompaction || snapshotIsStale) {
         const candidate = {
             ...state,

@@ -140,6 +140,13 @@ function normalizeCompressionMapSnapshot(value) {
         !Array.isArray(snapshot.entries)) {
         return undefined;
     }
+    const source = snapshot.source === "normal" ? "normal" : "management";
+    const cooldownRemaining = source === "normal" &&
+        typeof snapshot.cooldownRemaining === "number" &&
+        Number.isSafeInteger(snapshot.cooldownRemaining) &&
+        snapshot.cooldownRemaining > 0
+        ? snapshot.cooldownRemaining
+        : undefined;
     const keys = new Set();
     const physicalMessageIds = new Set();
     const physicalToolIds = new Set();
@@ -219,7 +226,9 @@ function normalizeCompressionMapSnapshot(value) {
         });
     }
     return {
+        source,
         triggerMessageId: snapshot.triggerMessageId,
+        ...(cooldownRemaining !== undefined ? { cooldownRemaining } : {}),
         entries,
     };
 }
@@ -410,7 +419,9 @@ export async function loadSessionState(sessionId, logger, messages) {
     const completeBlockOrderIsValid = !allSummariesArePinned ||
         snapshotBlocks.every((entry, index) => entry.key === `b${index}`);
     const snapshotMatchesState = Boolean(normalizedSnapshot &&
-        normalizedSnapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId &&
+        (normalizedSnapshot.source === "management"
+            ? normalizedSnapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
+            : true) &&
         snapshotBlocksMatchSummaries &&
         completeBlockOrderIsValid);
     const compressionMapSnapshot = snapshotMatchesState ? normalizedSnapshot : undefined;

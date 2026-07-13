@@ -240,6 +240,14 @@ function normalizeCompressionMapSnapshot(value: unknown): CompressionMapSnapshot
     ) {
         return undefined
     }
+    const source = snapshot.source === "normal" ? "normal" : "management"
+    const cooldownRemaining =
+        source === "normal" &&
+        typeof snapshot.cooldownRemaining === "number" &&
+        Number.isSafeInteger(snapshot.cooldownRemaining) &&
+        snapshot.cooldownRemaining > 0
+            ? snapshot.cooldownRemaining
+            : undefined
 
     const keys = new Set<number | string>()
     const physicalMessageIds = new Set<string>()
@@ -326,7 +334,9 @@ function normalizeCompressionMapSnapshot(value: unknown): CompressionMapSnapshot
     }
 
     return {
+        source,
         triggerMessageId: snapshot.triggerMessageId,
+        ...(cooldownRemaining !== undefined ? { cooldownRemaining } : {}),
         entries,
     }
 }
@@ -567,7 +577,9 @@ export async function loadSessionState(
         snapshotBlocks.every((entry, index) => entry.key === `b${index}`)
     const snapshotMatchesState = Boolean(
         normalizedSnapshot &&
-            normalizedSnapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId &&
+            (normalizedSnapshot.source === "management"
+                ? normalizedSnapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
+                : true) &&
             snapshotBlocksMatchSummaries &&
             completeBlockOrderIsValid,
     )
