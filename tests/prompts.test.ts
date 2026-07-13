@@ -31,6 +31,8 @@ describe("renderSystemPrompt", () => {
         assert.equal(output.includes(MAP_FIRST_GUIDANCE), true)
         assert.equal(output.includes(PINNED_MAP_GUIDANCE), true)
         assert.match(output, /\/compress manage/)
+        assert.match(output, /<user-message>.*specific instructions.*compression turn/is)
+        assert.match(output, /Follow it as closely as possible/i)
         assert.doesNotMatch(output, /<compress-context-map>/)
         assert.doesNotMatch(output, /EXHAUSTIVE/)
     })

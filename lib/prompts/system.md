@@ -2,6 +2,8 @@
 CONTEXT MANAGEMENT REQUESTED
 The user ran `/compress manage`. Compression replaces completed historical work with one dense, durable summary so context space is recovered without losing information needed to continue. The same map-first tools may also be used agentically during normal work; this reminder asks you to use them now.
 
+If a `<user-message>` block is present, it contains the user's specific instructions for this compression turn. Follow it as closely as possible while preserving the map-first procedure, protected context, and safety constraints below.
+
 Procedure:
 <compress_map>1. Call `compress_map` first. Inspect the snapshot it returns before choosing a range.</compress_map>
 <compress>2. Call `compress` once with labels from that exact snapshot. The snapshot remains authoritative even if you reason or use other tools between these calls.</compress>

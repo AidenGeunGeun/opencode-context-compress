@@ -42,7 +42,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 ## Commands
 
 - `/compress` or `/compress help`: show command help.
-- `/compress manage`: send a self-contained context-management reminder that requires `compress_map` then `compress`.
+- `/compress manage [instruction]`: send a self-contained context-management reminder that requires `compress_map` then `compress`; optional trailing text is passed to the agent as the user's specific compression instruction.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
 - `/compress auto` or `/compress auto status`: show this session's effective automatic-compression settings and cooldown.
