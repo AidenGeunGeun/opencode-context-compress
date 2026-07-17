@@ -70,6 +70,11 @@ reminder and no map text. In either case the agent:
 3. Get back a short durable-success receipt (e.g. `Stored [b4] "..." durably; the fold is already in effect`), not a refreshed map —
    the fold is already in effect. Do not call either compression tool again that turn after success.
 
+By default, that one range covers the entire eligible uncompressed history after the newest `[bN]`,
+not merely one completed phase or branch. Automatic management stops immediately before the
+protected active tail; manual or normal use includes all numeric entries unless the user explicitly
+requests a narrower range.
+
 `compress` resolves the submitted range against the pinned physical IDs from the map the agent
 actually saw. It does not fetch or renumber a live transcript map. A later successful
 `compress_map` in the same turn replaces the pin; a failed map fetch or save leaves the last

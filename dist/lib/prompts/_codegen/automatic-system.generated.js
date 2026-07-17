@@ -16,7 +16,9 @@ Map grammar:
 - Never select an entry labeled \`[protected active tail]\`; it contains recent execution state needed to continue.
 
 Range and summary:
-- Select the oldest completed uncompressed span first. Default append-only: leave \`[bN]\` blocks untouched unless the user explicitly requested consolidation. Leave unresolved/current work visible.
+- Compress the entire eligible uncompressed range in ONE call, not a convenient partial phase or branch. Starting after the newest \`[bN]\`, select every numeric entry through the entry immediately before \`[protected active tail]\`.
+- The protected tail is the only default exclusion for current work. Do not preserve an additional large uncompressed tail; carry its exact state and next action in the summary.
+- Default append-only: leave \`[bN]\` blocks untouched unless the user explicitly requested consolidation.
 - Preserve the exact user objective and WHY, current plan, decisions, constraints, edits, file paths, commands and results, failures, completed and pending work, and precise next action. Remove only replaceable noise.
 
 Result handling:

@@ -13,7 +13,8 @@ Map grammar:
 - `[bN]` entries are already-compressed blocks. Entries marked `[protected active tail]` cannot be selected during automatic management.
 
 Range safety:
-- Compress the oldest completed uncompressed span first; leave unresolved or current work visible.
+- Default to the entire eligible uncompressed range in ONE call, not a convenient partial phase or branch. Select every numeric entry after the newest `[bN]`, from the first such entry through the final numeric entry in the map, unless a `<user-message>` explicitly requests a narrower range.
+- Do not leave a large active-work tail merely because some work is ongoing; preserve its exact state and next action in the summary. The current management turn itself is already outside the map.
 - Default append-only: leave existing `[bN]` blocks immutable. Consolidate old blocks only when the user explicitly asked for that.
 
 Summary quality:
