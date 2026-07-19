@@ -9,10 +9,14 @@ export async function isSubAgentSession(client, sessionID) {
         return false;
     }
 }
+export function isCompletedNativeCompaction(message) {
+    const info = message.info;
+    return info.role === "assistant" && info.summary === true && !!info.finish && !info.error;
+}
 export function findLastCompactionTimestamp(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
-        if (msg.info.role === "assistant" && msg.info.summary === true) {
+        if (isCompletedNativeCompaction(msg)) {
             return msg.info.time.created;
         }
     }
@@ -40,6 +44,7 @@ export function resetOnCompaction(state) {
     state.compressSummaries = [];
     state.managementTurns = [];
     state.compressionMapSnapshot = undefined;
+    state.goalOverflowRecovery = undefined;
     state.autoCompressionStarting = false;
     state.lastAutoTriggeredMessageId = undefined;
 }

@@ -3,6 +3,7 @@ import type { Logger } from "../logger.js"
 import { loadSessionState, saveSessionState } from "./persistence.js"
 import {
     isSubAgentSession,
+    isCompletedNativeCompaction,
     findLastCompactionTimestamp,
     countTurns,
     resetOnCompaction,
@@ -27,6 +28,7 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.autoCompressionContextWindowRatioOverride =
         candidate.autoCompressionContextWindowRatioOverride
     state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId
+    state.goalOverflowRecovery = candidate.goalOverflowRecovery
     state.lastCompaction = candidate.lastCompaction
     state.hasPersistedState = candidate.hasPersistedState
     state.persistedLastUpdated = candidate.persistedLastUpdated
@@ -56,6 +58,7 @@ function applyPersistedState(state: SessionState, persisted: Awaited<ReturnType<
     state.autoCompressionContextWindowRatioOverride =
         persistedState.autoCompressionContextWindowRatioOverride
     state.compressionCooldownAfterMessageId = persistedState.compressionCooldownAfterMessageId
+    state.goalOverflowRecovery = persistedState.goalOverflowRecovery
     state.lastCompaction = persistedState.lastCompaction ?? 0
     state.hasPersistedState = true
     state.persistedLastUpdated = persistedState.lastUpdated || null
@@ -77,6 +80,7 @@ function clearPersistedCompressionState(state: SessionState): void {
     state.autoCompressionTokenThresholdOverride = undefined
     state.autoCompressionContextWindowRatioOverride = undefined
     state.compressionCooldownAfterMessageId = undefined
+    state.goalOverflowRecovery = undefined
     state.lastCompaction = 0
     state.hasPersistedState = false
     state.persistedLastUpdated = null
@@ -140,7 +144,7 @@ async function refreshPersistedSessionState(
 function findLastCompactionIndex(messages: WithParts[]): number {
     for (let index = messages.length - 1; index >= 0; index--) {
         const message = messages[index]
-        if (message.info.role === "assistant" && message.info.summary === true) {
+        if (isCompletedNativeCompaction(message)) {
             return index
         }
     }
@@ -374,6 +378,7 @@ export function createSessionState(): SessionState {
         autoCompressionTokenThresholdOverride: undefined,
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
+        goalOverflowRecovery: undefined,
         toolParameters: new Map<string, ToolParameterEntry>(),
         toolIdList: [],
         lastCompaction: 0,

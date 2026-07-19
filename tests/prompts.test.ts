@@ -84,7 +84,7 @@ describe("renderSystemPrompt", () => {
 })
 
 describe("renderAutomaticSystemPrompt", () => {
-    it("preserves the active task, protected tail, and immediate continuation contract", () => {
+    it("preserves the protected tail and restores the evidenced task disposition", () => {
         const output = renderAutomaticSystemPrompt(
             { compress: true, compress_map: true },
             {
@@ -95,8 +95,8 @@ describe("renderAutomaticSystemPrompt", () => {
         )
 
         assert.match(output, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
-        assert.match(output, /middle of an ongoing task/)
-        assert.match(output, /dense, durable summary/)
+        assert.match(output, /threshold says nothing by itself.*active, blocked, complete, or awaiting the user/i)
+        assert.match(output, /only model-visible representation/)
         assert.match(output, /Call `compress_map` first/)
         assert.match(output, /310,000 tokens/)
         assert.match(output, /300,000 tokens/)
@@ -104,7 +104,8 @@ describe("renderAutomaticSystemPrompt", () => {
         assert.match(output, /entire eligible uncompressed range in ONE call/i)
         assert.match(output, /protected tail is the only default exclusion/i)
         assert.match(output, /exact user objective/)
-        assert.match(output, /immediately continue the original task/i)
+        assert.match(output, /continue immediately only when work was genuinely active/i)
+        assert.match(output, /do not reopen work or duplicate a final response/i)
         assert.match(output, /Make no more compression calls/i)
         assert.doesNotMatch(output, /\{\{/)
     })
@@ -131,7 +132,7 @@ describe("loadPrompt", () => {
         assert.match(output, /success receipt/i)
         assert.match(output, /entire eligible uncompressed range/i)
         assert.match(output, /after automatic compression/i)
-        assert.match(output, /immediately resume the original task/i)
+        assert.match(output, /resume only if work was genuinely active/i)
         assert.doesNotMatch(output, /nothing further to call or check this turn/i)
     })
 
@@ -186,7 +187,7 @@ describe("loadPrompt", () => {
         const output = renderSystemPrompt({ compress: true, compress_map: true })
 
         assert.match(output, /Call `compress` once/)
-        assert.match(output, /one dense, durable summary/)
+        assert.match(output, /one durable summary block/)
         assert.doesNotMatch(output, /single call constraint/i)
         assert.doesNotMatch(output, /submit all ranges/i)
         assert.doesNotMatch(output, /2 blocks, 3 max/i)

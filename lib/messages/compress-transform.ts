@@ -4,6 +4,7 @@ import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js"
 import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js"
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js"
 import type { UserMessage } from "@opencode-ai/sdk/v2"
+import { isGoalContinuationMessage } from "../goal.js"
 
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT =
     "[Output removed to save context - information superseded or no longer needed]"
@@ -33,7 +34,7 @@ interface ManagementTurnSuppressionPlan {
 }
 
 function isVisibleUserMessage(message: WithParts): boolean {
-    return message.info.role === "user" && !isIgnoredUserMessage(message)
+    return message.info.role === "user" && !isIgnoredUserMessage(message) && !isGoalContinuationMessage(message)
 }
 
 /**

@@ -58,7 +58,8 @@ export function createChatMessageHandler(stateManager, logger) {
     return async (input, output) => {
         const message = output?.message;
         const parts = Array.isArray(output?.parts) ? output.parts : [];
-        if (message && isIgnoredUserMessage({ info: message, parts }))
+        const userMessage = message ? { info: message, parts } : undefined;
+        if (userMessage && isIgnoredUserMessage(userMessage))
             return;
         const state = stateManager.get(input.sessionID);
         state.variant = input.variant;
@@ -67,6 +68,10 @@ export function createChatMessageHandler(stateManager, logger) {
         await stateManager.runExclusive(input.sessionID, async () => {
             const snapshot = state.compressionMapSnapshot;
             if (!snapshot || messageId === snapshot.triggerMessageId)
+                return;
+            // The running management turn may still consume its immutable pin. If it does not,
+            // transcript reconciliation clears the stale pin before the later user executes.
+            if (snapshot.source === "management" && message?.role === "user")
                 return;
             if (!state.persistenceSynchronized)
                 return;

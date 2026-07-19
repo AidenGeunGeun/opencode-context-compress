@@ -153,6 +153,7 @@ export async function stageManagementTurnWithinLock(ctx) {
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
         compressionMapSnapshot: undefined,
+        ...(ctx.goalOverflowRecovery ? { goalOverflowRecovery: ctx.goalOverflowRecovery } : {}),
     };
     const statePersisted = await saveSessionState(candidateState, logger);
     if (!statePersisted) {

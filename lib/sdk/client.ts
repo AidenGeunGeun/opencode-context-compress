@@ -21,6 +21,19 @@ export interface SessionPromptInput {
     messageId?: string
 }
 
+export interface SessionGoalInfo {
+    id: string
+    sessionID: string
+    objective: string
+    status: "active" | "paused" | "blocked" | "complete"
+    time: { created: number; updated: number }
+}
+
+export interface SessionGoalOwner {
+    goalID: string
+    timeUpdated: number
+}
+
 function unwrapClientData<T>(response: T | { data?: T }): T {
     if (response && typeof response === "object" && "data" in response) {
         return (response as { data?: T }).data as T
@@ -35,6 +48,37 @@ function usesFlatRequestShape(client: unknown): boolean {
 
     const record = client as { _client?: unknown; client?: unknown }
     return "client" in record && !("_client" in record)
+}
+
+function unwrapGoalResponse(response: unknown): SessionGoalInfo | null {
+    if (response && typeof response === "object" && "error" in response && response.error) {
+        throw new Error(`Goal request failed: ${JSON.stringify(response.error)}`)
+    }
+    return (unwrapClientData(response) as SessionGoalInfo | null | undefined) ?? null
+}
+
+export async function getSessionGoal(client: unknown, sessionId: string): Promise<SessionGoalInfo | null | undefined> {
+    const sessionClient = (client as { session?: { goal?: (input: unknown) => Promise<unknown> } })?.session
+    if (typeof sessionClient?.goal !== "function") return undefined
+    return unwrapGoalResponse(
+        usesFlatRequestShape(client)
+            ? await sessionClient.goal({ sessionID: sessionId })
+            : await sessionClient.goal({ path: { id: sessionId } }),
+    )
+}
+
+export async function resumeSessionGoal(
+    client: unknown,
+    sessionId: string,
+    owner: SessionGoalOwner,
+): Promise<SessionGoalInfo | undefined> {
+    const sessionClient = (client as { session?: { goalUpdate?: (input: unknown) => Promise<unknown> } })?.session
+    if (typeof sessionClient?.goalUpdate !== "function") return undefined
+    return unwrapGoalResponse(
+        usesFlatRequestShape(client)
+            ? await sessionClient.goalUpdate({ sessionID: sessionId, body: { action: "resume", owner } })
+            : await sessionClient.goalUpdate({ path: { id: sessionId }, body: { action: "resume", owner } }),
+    ) ?? undefined
 }
 
 export async function getSession(client: unknown, sessionId: string): Promise<Record<string, unknown> | undefined> {

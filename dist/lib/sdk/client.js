@@ -11,6 +11,28 @@ function usesFlatRequestShape(client) {
     const record = client;
     return "client" in record && !("_client" in record);
 }
+function unwrapGoalResponse(response) {
+    if (response && typeof response === "object" && "error" in response && response.error) {
+        throw new Error(`Goal request failed: ${JSON.stringify(response.error)}`);
+    }
+    return unwrapClientData(response) ?? null;
+}
+export async function getSessionGoal(client, sessionId) {
+    const sessionClient = client?.session;
+    if (typeof sessionClient?.goal !== "function")
+        return undefined;
+    return unwrapGoalResponse(usesFlatRequestShape(client)
+        ? await sessionClient.goal({ sessionID: sessionId })
+        : await sessionClient.goal({ path: { id: sessionId } }));
+}
+export async function resumeSessionGoal(client, sessionId, owner) {
+    const sessionClient = client?.session;
+    if (typeof sessionClient?.goalUpdate !== "function")
+        return undefined;
+    return unwrapGoalResponse(usesFlatRequestShape(client)
+        ? await sessionClient.goalUpdate({ sessionID: sessionId, body: { action: "resume", owner } })
+        : await sessionClient.goalUpdate({ path: { id: sessionId }, body: { action: "resume", owner } })) ?? undefined;
+}
 export async function getSession(client, sessionId) {
     const sessionClient = client?.session;
     if (typeof sessionClient?.get !== "function") {

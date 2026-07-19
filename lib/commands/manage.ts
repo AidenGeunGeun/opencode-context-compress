@@ -10,6 +10,7 @@ import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
 import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js"
+import type { GoalOverflowRecovery } from "../goal.js"
 
 export interface ManageCommandContext {
     client: any
@@ -38,6 +39,7 @@ export interface ManagementTurnStartContext {
     thresholdTokens?: number
     protectedTurns?: number
     asyncPrompt?: boolean
+    goalOverflowRecovery?: GoalOverflowRecovery
 }
 
 export type StagedManagementTurn = () => Promise<boolean>
@@ -246,6 +248,7 @@ export async function stageManagementTurnWithinLock(
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
         compressionMapSnapshot: undefined,
+        ...(ctx.goalOverflowRecovery ? { goalOverflowRecovery: ctx.goalOverflowRecovery } : {}),
     }
     const statePersisted = await saveSessionState(candidateState, logger)
     if (!statePersisted) {

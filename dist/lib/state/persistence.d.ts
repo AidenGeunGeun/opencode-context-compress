@@ -4,6 +4,7 @@
  * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
  */
 import type { SessionState, SessionStats, CompressSummary, ManagementTurn, CompressionMapSnapshot, WithParts } from "./types.js";
+import type { GoalOverflowRecovery } from "../goal.js";
 import type { Logger } from "../logger.js";
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
 export interface PersistedCompressed {
@@ -21,6 +22,7 @@ export interface PersistedSessionState {
     autoCompressionTokenThresholdOverride?: number;
     autoCompressionContextWindowRatioOverride?: number;
     compressionCooldownAfterMessageId?: string;
+    goalOverflowRecovery?: GoalOverflowRecovery;
     lastCompaction?: number;
     lastUpdated: string;
 }

@@ -86,19 +86,19 @@ const assistantMessage = (id: string, sessionID: string, text: string) => ({
 })
 
 describe("automatic compression thresholds", () => {
-    it("defaults the absolute initiation threshold to 300,000 tokens", () => {
-        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 300_000)
+    it("defaults the absolute initiation threshold to 350,000 tokens", () => {
+        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 350_000)
         assert.equal(DEFAULT_AUTO_COMPRESSION.contextWindowRatio, 0.9)
         assert.equal(DEFAULT_AUTO_COMPRESSION.protectedTurns, 3)
     })
 
     it("uses the earlier of 90% of the context window and the absolute threshold", () => {
         const small = resolveAutomaticCompressionThreshold(180_000, DEFAULT_AUTO_COMPRESSION, 200_000)
-        const large = resolveAutomaticCompressionThreshold(300_000, DEFAULT_AUTO_COMPRESSION, 1_000_000)
+        const large = resolveAutomaticCompressionThreshold(350_000, DEFAULT_AUTO_COMPRESSION, 1_000_000)
 
         assert.equal(small.thresholdTokens, 180_000)
         assert.equal(small.reason, "context-window-ratio")
-        assert.equal(large.thresholdTokens, 300_000)
+        assert.equal(large.thresholdTokens, 350_000)
         assert.equal(large.reason, "absolute-token-threshold")
     })
 
@@ -540,7 +540,7 @@ describe("automatic compression lifecycle", () => {
                                 input: 10_000,
                                 output: 1_000,
                                 reasoning: 0,
-                                cache: { read: 294_000, write: 0 },
+                                cache: { read: 344_000, write: 0 },
                             },
                         },
                     },
@@ -554,10 +554,12 @@ describe("automatic compression lifecycle", () => {
             const body = promptCalls[0].body
             const payload = body.parts.map((part: any) => part.text).join("\n\n")
             assert.match(payload, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
-            assert.match(payload, /305,000 tokens/)
-            assert.match(payload, /300,000 tokens/)
+            assert.match(payload, /355,000 tokens/)
+            assert.match(payload, /350,000 tokens/)
             assert.match(payload, /protected active tail/)
-            assert.match(payload, /immediately continue the original task/i)
+            assert.match(payload, /threshold says nothing by itself.*active, blocked, complete, or awaiting the user/i)
+            assert.match(payload, /continue immediately only when work was genuinely active/i)
+            assert.match(payload, /do not reopen work or duplicate a final response/i)
             assert.match(payload, /Call `compress_map` first/)
             assert.doesNotMatch(payload, /<compress-context-map>/)
 
@@ -566,7 +568,7 @@ describe("automatic compression lifecycle", () => {
             assert.equal(state.managementTurns[0].source, "automatic")
             assert.equal(state.managementTurns[0].triggeredByMessageId, "m8")
             assert.deepEqual(state.managementTurns[0].protectedMessageIds, ["m4", "m5", "m6", "m7", "m8"])
-            assert.equal(state.managementTurns[0].thresholdTokens, 300_000)
+            assert.equal(state.managementTurns[0].thresholdTokens, 350_000)
             assert.equal(state.autoCompressionStarting, false)
         } finally {
             await cleanupSessionFile(sessionId)
@@ -607,5 +609,101 @@ describe("automatic compression lifecycle", () => {
         } as any)
 
         assert.equal(promptCalls, 0)
+    })
+
+    it("stages one bounded recovery for the exact blocked Goal on context overflow", async () => {
+        const sessionId = `session-goal-overflow-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const overflow = {
+            ...assistantMessage("overflow", sessionId, ""),
+            info: {
+                ...assistantMessage("overflow", sessionId, "").info,
+                error: { name: "ContextOverflowError", message: "request too large" },
+            },
+        }
+        const messages: any[] = [userMessage("user", sessionId, "Continue Goal"), overflow]
+        const promptCalls: any[] = []
+        const owner = { goalID: "goa_overflow", timeUpdated: 1_700_000_000_000 }
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: messages }),
+                goal: async () => ({
+                    data: {
+                        id: owner.goalID,
+                        sessionID: sessionId,
+                        objective: "Recover once",
+                        status: "blocked",
+                        time: { created: 1, updated: owner.timeUpdated },
+                    },
+                }),
+                promptAsync: async (input: any) => {
+                    promptCalls.push(input)
+                    return { data: undefined }
+                },
+            },
+        }
+        const stateManager = new SessionStateManager()
+
+        try {
+            const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, {
+                ...config,
+                autoCompression: { ...config.autoCompression, protectedTurns: 0 },
+            })
+            const event = { event: { type: "message.updated", properties: { info: overflow.info } } }
+            await handler(event as any)
+            await handler(event as any)
+
+            assert.equal(promptCalls.length, 1)
+            assert.match(
+                promptCalls[0].body.parts.map((part: any) => part.text).join("\n"),
+                /CONTEXT OVERFLOW RECOVERY/,
+            )
+            assert.deepEqual(stateManager.get(sessionId).goalOverflowRecovery, {
+                overflowMessageId: overflow.info.id,
+                ...owner,
+            })
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("keeps ordinary automatic compression working when the host has no Goal API", async () => {
+        const sessionId = `session-no-goal-api-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const latest = {
+            ...assistantMessage("latest", sessionId, "Large ordinary turn"),
+            info: {
+                ...assistantMessage("latest", sessionId, "Large ordinary turn").info,
+                tokens: { total: 400_000 },
+            },
+        }
+        const messages: any[] = [userMessage("user", sessionId, "Ordinary work"), latest]
+        const promptCalls: any[] = []
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: {} }),
+                messages: async () => ({ data: messages }),
+                promptAsync: async (input: any) => {
+                    promptCalls.push(input)
+                    return { data: undefined }
+                },
+            },
+        }
+
+        try {
+            const handler = createAutomaticCompressionEventHandler(client, new SessionStateManager(), logger, {
+                ...config,
+                autoCompression: { ...config.autoCompression, protectedTurns: 0 },
+            })
+            await handler({ event: { type: "message.updated", properties: { info: latest.info } } } as any)
+            assert.equal(promptCalls.length, 1)
+            assert.match(
+                promptCalls[0].body.parts.map((part: any) => part.text).join("\n"),
+                /AUTOMATIC CONTEXT COMPRESSION REQUIRED/,
+            )
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
     })
 })

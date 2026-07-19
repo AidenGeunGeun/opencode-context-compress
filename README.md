@@ -19,7 +19,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - No separate summarizer or hidden compaction model: the active agent chooses and summarizes the range.
 - Manual compression runs when you trigger `/compress manage`.
 - Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
-  the model-reported context window or 300,000 tokens by default.
+  the model-reported context window or 350,000 tokens by default.
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
 - Both manual and automatic management use a map-first protocol: the reminder does not include a
@@ -192,7 +192,7 @@ Default runtime config:
     "autoCompression": {
         "enabled": true,
         "contextWindowRatio": 0.9,
-        "tokenThreshold": 300000,
+        "tokenThreshold": 350000,
         "protectedTurns": 3
     },
     "turnProtection": {
@@ -232,14 +232,86 @@ Stored fields include:
   to execute without rebuilding the transcript)
 - per-session compression stats
 - session automatic-compression overrides and the post-compression cooldown anchor
+- optional one-shot Goal overflow recovery owner (`goalOverflowRecovery`: overflow message id +
+  `{ goalID, timeUpdated }`) when the host blocked a Goal on `ContextOverflowError`
 
 The execution skeleton is replaced on each successful `compress_map`, and cleared on successful
-`compress`, a new management turn, a later visible user message, or native compaction/reset. It is
-not a map-text cache, transcript copy, or snapshot history.
+`compress`, a new management turn, or native compaction/reset. A normal-turn pin still clears
+immediately when a later real visible user is admitted. A management pin from successful
+`compress_map` survives that admission so the existing in-flight management `compress` can
+consume it; if it is not consumed, the next transcript transform/reconciliation clears the stale
+pin before the later user's provider request. There is no queue, worker, or extra scheduler
+state. Goal synthetic continuations remain non-invalidating exceptions (see below). It is not a
+map-text cache, transcript copy, or snapshot history.
 
 The raw conversation history still exists in OpenCode storage, but completed management machinery
 is suppressed from future model prompts. Restarting the session reloads the saved cleanup markers,
 so old management turns do not reappear in the model-visible stream.
+
+## Session Goal compatibility
+
+This plugin coexists with OpenCode’s native Session Goal (`/goal`) when the host exposes it. Goal
+lifecycle stays host-owned; the plugin only recognizes Goal continuation text at management
+boundaries and may resume a blocked Goal after one bounded overflow recovery.
+
+Host Goal responses may include objective and timestamps; for overflow recovery the plugin only
+requires Goal `id`, `status`, and `time.updated` (lifecycle owner/version CAS — not an elapsed
+metric). There is no Goal token/elapsed accounting on the host API, and this plugin does not track
+Goal metrics.
+
+### Continuation marker (management boundary only)
+
+Goal continuations are synthetic user text that remains **model-visible** (not `ignored`). Stable
+recognition requires all of:
+
+1. User text part with `synthetic: true`
+2. Exact prefix: `Continue pursuing the active session goal.`
+3. A line `Goal reference: goa_* <timestamp>` (Goal id + owner `time.updated`)
+
+The plugin ignores that combination only as a management-boundary / map-pin invalidator exception
+so ordinary Goal steering does not close an open management turn or clear its pin. The marker is
+**not** stripped from model context. Recognition is fail-open: missing prefix or reference → treat
+as a normal user boundary.
+
+Do not pause/resume the Goal around ordinary automatic management turns. Host prompt admission may
+self-heal when a newer durable user (including a management turn) was admitted while a joined run
+exits; that recheck is generic OpenCode behavior, not plugin-specific.
+
+### Overflow recovery
+
+When automatic compression is enabled and the host reports assistant `ContextOverflowError` for a
+session whose Goal is `blocked`:
+
+1. Store the exact owner `{ goalID, timeUpdated }` with the overflow message id in per-session state.
+2. Open **one** map-first recovery management turn.
+3. After successful `compress`, feature-detect `session.goal` / `session.goalUpdate` and resume only
+   if the same Goal is still blocked with the same owner token (optional CAS on the host resume API).
+4. Never resume after edit, replacement, manual pause, completion, or a different blocked Goal.
+5. Failed compression leaves the Goal blocked and does not loop.
+6. Hosts without Goal APIs: recovery is disabled only; ordinary automatic compression still works
+   (absent Goal methods remain graceful — feature detection returns no Goal data and skips resume).
+
+Implementation: `lib/goal.ts`, SDK adapters in `lib/sdk/client.ts` (`SessionGoalInfo`: `id`,
+`sessionID`, `objective`, `status`, `time.{created,updated}`), state field `goalOverflowRecovery`,
+auto handler in `lib/auto-compression.ts`, post-success path in `lib/tools/compress.ts`, marker
+exceptions in transform/policy/hooks.
+
+### Tests and dist
+
+- Plugin source tests: `tests/goal-compatibility.test.ts`, overflow cases in
+  `tests/auto-compression.test.ts` (marker boundary, one-shot recovery, owner payload, stale/manual/
+  no-API/resume failure).
+- Joint host tests live in the OpenCode fork
+  (`packages/opencode/test/session/prompt.test.ts`): real built `dist/index.js` loaded against
+  scripted local-provider OpenCode for common Goal+compression, overflow success once, failed
+  compression no loop, and stale edit/manual pause no resume.
+- `npm test` rebuilds committed `dist/` and must pass before handoff.
+- Evidence from polish completion: `npm test` 192 pass / 0 fail; `npm run typecheck` pass.
+- No install/restart/config edit is required for docs-only or already-referenced `file://` loads;
+  restart OpenCode only after Aiden chooses to install/use a newly built plugin or host binary.
+
+Future merge/removal: if OpenCode drops Goals or changes continuation text, delete marker exceptions
+and overflow recovery here and rebuild `dist/`. Do not teach broad OpenCode core about this plugin.
 
 ## Development
 

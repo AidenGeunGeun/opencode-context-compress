@@ -1,6 +1,7 @@
 import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js";
 import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js";
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js";
+import { isGoalContinuationMessage } from "../goal.js";
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output removed to save context - information superseded or no longer needed]";
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
@@ -12,7 +13,7 @@ export const applyCompressTransforms = (state, logger, messages) => {
     stripToolErrors(state, messages);
 };
 function isVisibleUserMessage(message) {
-    return message.info.role === "user" && !isIgnoredUserMessage(message);
+    return message.info.role === "user" && !isIgnoredUserMessage(message) && !isGoalContinuationMessage(message);
 }
 /**
  * Finds the session's currently open management turn, if any: a turn that is not yet

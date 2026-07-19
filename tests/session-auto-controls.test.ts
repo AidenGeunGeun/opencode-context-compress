@@ -168,7 +168,7 @@ describe("session automatic-compression commands", () => {
             assert.equal(loaded.state.compressionCooldownAfterMessageId, "compress-anchor")
 
             const reset = await run("auto reset")
-            assert.equal(reset, "Defaults reset to 300,000 tokens and 90% threshold.")
+            assert.equal(reset, "Defaults reset to 350,000 tokens and 90% threshold.")
             assert.equal(state.autoCompressionEnabledOverride, false)
             assert.equal(state.autoCompressionTokenThresholdOverride, undefined)
             assert.equal(state.autoCompressionContextWindowRatioOverride, undefined)

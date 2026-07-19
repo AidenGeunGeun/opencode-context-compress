@@ -1,5 +1,5 @@
 import { loadSessionState, saveSessionState } from "./persistence.js";
-import { isSubAgentSession, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
+import { isSubAgentSession, isCompletedNativeCompaction, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
 import { findActiveManagementTurn } from "../messages/compress-transform.js";
 import { isIgnoredUserMessage } from "../messages/utils.js";
 export function commitDurableSessionState(state, candidate) {
@@ -14,6 +14,7 @@ export function commitDurableSessionState(state, candidate) {
     state.autoCompressionContextWindowRatioOverride =
         candidate.autoCompressionContextWindowRatioOverride;
     state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId;
+    state.goalOverflowRecovery = candidate.goalOverflowRecovery;
     state.lastCompaction = candidate.lastCompaction;
     state.hasPersistedState = candidate.hasPersistedState;
     state.persistedLastUpdated = candidate.persistedLastUpdated;
@@ -40,6 +41,7 @@ function applyPersistedState(state, persisted) {
     state.autoCompressionContextWindowRatioOverride =
         persistedState.autoCompressionContextWindowRatioOverride;
     state.compressionCooldownAfterMessageId = persistedState.compressionCooldownAfterMessageId;
+    state.goalOverflowRecovery = persistedState.goalOverflowRecovery;
     state.lastCompaction = persistedState.lastCompaction ?? 0;
     state.hasPersistedState = true;
     state.persistedLastUpdated = persistedState.lastUpdated || null;
@@ -60,6 +62,7 @@ function clearPersistedCompressionState(state) {
     state.autoCompressionTokenThresholdOverride = undefined;
     state.autoCompressionContextWindowRatioOverride = undefined;
     state.compressionCooldownAfterMessageId = undefined;
+    state.goalOverflowRecovery = undefined;
     state.lastCompaction = 0;
     state.hasPersistedState = false;
     state.persistedLastUpdated = null;
@@ -110,7 +113,7 @@ async function refreshPersistedSessionState(state, sessionId, logger, messages) 
 function findLastCompactionIndex(messages) {
     for (let index = messages.length - 1; index >= 0; index--) {
         const message = messages[index];
-        if (message.info.role === "assistant" && message.info.summary === true) {
+        if (isCompletedNativeCompaction(message)) {
             return index;
         }
     }
@@ -307,6 +310,7 @@ export function createSessionState() {
         autoCompressionTokenThresholdOverride: undefined,
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
+        goalOverflowRecovery: undefined,
         toolParameters: new Map(),
         toolIdList: [],
         lastCompaction: 0,

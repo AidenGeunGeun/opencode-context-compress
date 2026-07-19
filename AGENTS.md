@@ -33,11 +33,20 @@ index.ts
 lib/auto-compression.ts
   Reads completed assistant usage events, resolves the relative/absolute trigger,
   deduplicates per-session starts, skips subagents, and opens an asynchronous
-  automatic management turn.
+  automatic management turn. On host `ContextOverflowError` with a blocked Goal,
+  stages one bounded recovery turn and persists `goalOverflowRecovery` owner state.
 
 lib/auto-policy.ts
   Resolves global and session-level automatic-compression policy and derives the
   fixed post-compression cooldown from persisted anchors plus the raw transcript.
+  Visible-user boundary detection excludes recognized Goal continuation messages.
+
+lib/goal.ts
+  Goal continuation recognition (synthetic + exact prefix + `Goal reference: goa_* <ts>`),
+  `ContextOverflowError` detection, overflow recovery prompt text, and
+  `recoverGoalAfterCompression` (feature-detected resume with owner CAS on `id` /
+  `status` / `time.updated` only; fail-open when the host has no Goal API). No Goal
+  token/elapsed metrics.
 
 lib/commands/auto.ts
   Implements session-scoped `/compress auto` status, on/off, threshold, ratio,
@@ -56,18 +65,23 @@ lib/tools/compress.ts
   requests permission, uses pinned IDs/metrics, stores summaries, atomically
   persists state, clears the pin, and marks an active management turn completed
   when one exists. Normal-turn success stores the fold without inventing a
-  management marker. Success is a tiny receipt, not a refreshed map.
+  management marker. Success is a tiny receipt, not a refreshed map. After
+  success, if this turn was Goal overflow recovery, calls
+  `recoverGoalAfterCompression` and annotates the receipt when the Goal changed
+  or the host API is unavailable.
 
 lib/messages/compress-transform.ts
   Applies persisted compression decisions and completed management-turn cleanup
   to outgoing message context. `findActiveManagementTurn` identifies the
   session's still-open management turn (not yet completed by `compress`, not
-  yet bounded by a later visible user message). Once a turn is completed, its
-  span is hidden immediately - no next user message is required - except the
-  completing `compress` tool call, which stays briefly with its literal input
-  intact to preserve a protocol-valid tool-call/result pair without synthetic
-  placeholder text. Also reconciles a stale same-turn map pin after restart or
-  a later visible user boundary.
+  yet bounded by a later visible user message). Goal continuation messages do
+  not count as visible-user boundaries. Once a turn is completed, its span is
+  hidden immediately - no next user message is required - except the completing
+  `compress` tool call, which stays briefly with its literal input intact to
+  preserve a protocol-valid tool-call/result pair without synthetic placeholder
+  text. Also reconciles a stale same-turn map pin after restart, or when a later
+  real user bounds the turn without a successful `compress` (unconsumed
+  management pins clear here before that user's provider request).
 
 lib/messages/context-map.ts
   Builds <compress-context-map> with numeric entries and compressed [bN] blocks,
@@ -80,14 +94,33 @@ lib/commands/manage.ts
   Starts both manual and automatic management turns: requires both compression
   tools, stages automatic protected-tail IDs when needed, clears any prior map
   pin, persists the cleanup anchor, and sends a self-contained reminder that
-  requires `compress_map` then `compress` (no map text is injected).
+  requires `compress_map` then `compress` (no map text is injected). Optional
+  `goalOverflowRecovery` is staged with automatic overflow recovery turns.
+
+lib/hooks.ts
+  Transform, slash-command routing, chat.message pin invalidation. Normal pins
+  clear immediately on a later real user. Management pins from successful
+  `compress_map` survive that admission so the in-flight management `compress`
+  can consume them; unconsumed stale pins clear on the next transform/
+  reconciliation before the later user's provider request. Goal continuation
+  messages do not invalidate an open management map pin. No queue, worker, or
+  extra pin state.
 
 lib/config.ts
   Config schema + layered loading/merge (global/config-dir/project), defaults,
   validation, and command/tool permission normalization.
 
+lib/sdk/client.ts
+  Nested v1 / flat v2 SDK adapter for session and TUI calls, plus feature-detected
+  `getSessionGoal` / `resumeSessionGoal`. Local `SessionGoalInfo` matches the reduced
+  host shape (`id`, `sessionID`, `objective`, `status`, `time.created` / `time.updated`);
+  overflow recovery only needs `id`, `status`, and `time.updated`. Optional owner CAS
+  on resume; missing Goal methods return `undefined` without breaking compression.
+
 lib/state/*
   Session state, persistence, compaction resets, and tool metadata cache.
+  Durable optional `goalOverflowRecovery` owner payload for one-shot overflow
+  recovery; cleared with other session resets.
 ```
 
 ## Runtime Flow
@@ -106,7 +139,8 @@ lib/state/*
 5. Automatic compression starts the same map-first workflow once usage reaches the earlier of
    the configured context-window ratio and absolute token threshold, only when both tools are
    available. Protected active-tail IDs are staged at turn start and reapplied by `compress_map`;
-   the success receipt instructs task continuation.
+   the success receipt instructs task continuation. Separately, a host `ContextOverflowError` on
+   a blocked Goal stages one recovery management turn with `goalOverflowRecovery` owner state.
 6. Successful `compress_map` atomically replaces the session's one bounded execution skeleton
    before returning map text. `compress` resolves the range from that pin's physical IDs and
    metrics without fetching or renumbering a live transcript map.
@@ -114,13 +148,20 @@ lib/state/*
    marker, and cooldown anchor are stored together while the pin is cleared. The fold takes
    effect for the very next model continuation - no further visible user message is required -
    and a three-eligible-response cooldown is armed before another automatic or model-initiated
-   compression may run.
+   compression may run. If the completed turn was Goal overflow recovery, the plugin re-reads
+   the Goal and resumes only the exact blocked owner via the public Goal API when present.
 8. While the management turn is still open (before `compress` succeeds), its reminder and tool
    results stay visible so the agent can work; the completing `compress` tool call itself
-   remains afterward too, with its literal input intact until the turn is historical.
+   remains afterward too, with its literal input intact until the turn is historical. Synthetic
+   Goal continuation messages do not bound or pin-invalidate that open management turn.
 9. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
-   inter-compress conversation, and the active tail remain model-visible. A later visible user
-   message, new management turn, successful compress, or native compaction clears any leftover pin.
+   inter-compress conversation, active tail, and model-visible Goal continuation text remain.
+   Normal pins clear immediately when a later real visible user is admitted. A management pin
+   from successful `compress_map` survives that admission for the in-flight management
+   `compress`; if unused, the next transform/reconciliation clears it before that user's
+   provider request. Successful compress, a new management turn, or native compaction also
+   clear any leftover pin. No queue/worker/extra state. Goal synthetic continuations remain
+   non-invalidating exceptions.
 
 ## Prompt Generation
 
@@ -136,12 +177,14 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 
 Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
 markers, at most one current-turn compression-map execution skeleton, compression stats, persisted
-auto-compression overrides and cooldown anchor, subagent status, initialization, and runtime-only
-threshold metadata.
+auto-compression overrides and cooldown anchor, optional `goalOverflowRecovery` owner payload,
+subagent status, initialization, and runtime-only threshold metadata.
 The execution skeleton is tied to a management trigger or normal visible-user boundary and holds only the minimal keys,
 kinds, physical message IDs, optional block anchors, protected flags, tool IDs, and approximate
 metrics needed to execute the map the agent was shown. It is replaced, never appended, and cleared
-on success, a new turn, a later visible user message, or compaction.
+on success, a new turn, or compaction. Normal pins also clear immediately on a later real visible
+user; management pins survive that admission for the in-flight `compress`, then clear on the next
+transform if unused.
 Durable fields are persisted at `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`.
 The `initialized` flag prevents repeated subagent/compaction bootstrap work; persisted state is
 still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
@@ -160,6 +203,11 @@ Plugin commands must prevent OpenCode from also running the default slash-comman
 ## SDK Client Adapter
 
 OpenCode plugin hosts still expose the v1 nested SDK client (`{ path, body }`). External callers and tests may use the v2 flat client (`{ sessionID, parts, ... }`). All session/TUI calls go through `lib/sdk/client.ts`, which detects the client generation via runtime `_client` vs `client` markers.
+
+Goal helpers `getSessionGoal` / `resumeSessionGoal` are feature-detected: missing methods return
+`undefined` (recovery unavailable) without breaking ordinary compression. Resume sends optional
+owner CAS `{ goalID, timeUpdated }` on `{ action: "resume", owner }`. The host Goal public shape
+has no token/elapsed fields; `time.updated` is lifecycle versioning only.
 
 ## Publishing & Loading
 
@@ -182,11 +230,21 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 - Both tools must be available for manual or automatic management to start. There is no injected-map
   fallback when one tool is denied.
 - Completed management turns leave no model-visible machinery marker; future prompts show blocks,
-  inter-compress normal conversation, and active tail.
+  inter-compress normal conversation, and active tail (Goal continuation text stays model-visible).
 - Manual context maps do not emit a hardcoded active footer. Automatic maps label only the
   configured recent tail as `[protected active tail]`.
 - `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order in `state.compressSummaries`.
+- Goal continuation recognition is fail-open and limited to the exact synthetic prefix +
+  `Goal reference: goa_* <timestamp>` contract documented in README. Do not mark host Goal
+  continuations `ignored`.
+- Overflow recovery is one-shot, owner-CAS gated on Goal `id` / `status` / `time.updated`, and
+  disabled cleanly when Goal APIs are absent. Do not depend on Goal metrics fields.
 - Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
 - Debug logs and context snapshots are written under `~/.config/opencode/logs/compress/` when debug is enabled.
 - Diagnostic logs prefixed with `[DIAG:]` bypass the `enabled` check in the logger — they always write regardless of debug config. Use for temporary debugging, remove before release.
+- Focused Goal tests: `tests/goal-compatibility.test.ts` and Goal overflow cases in
+  `tests/auto-compression.test.ts`. Full `npm test` builds `dist` (192 pass / 0 fail at polish
+  completion). Joint host tests live in the OpenCode fork `prompt.test.ts` harness.
+- Do not edit live OpenCode install/config or restart hosts during plugin work unless Aiden
+  explicitly asks; both PM and Orchestrator already reference this repo’s `dist/index.js`.

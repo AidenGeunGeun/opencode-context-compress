@@ -44,7 +44,7 @@ export interface AutoCompression {
 export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     enabled: true,
     contextWindowRatio: 0.9,
-    tokenThreshold: 300_000,
+    tokenThreshold: 350_000,
     protectedTurns: 3,
 }
 

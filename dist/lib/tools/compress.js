@@ -6,6 +6,7 @@ import { estimateTokensBatch } from "../token-utils.js";
 import { collectContentInRange, collectToolIdsInRange, } from "./utils.js";
 import { sendCompressNotification } from "../ui/notification.js";
 import { contextMapFromCompressionSnapshot, resolveContextMapRange, } from "../messages/context-map.js";
+import { recoverGoalAfterCompression } from "../goal.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 export function removeSubsumedCompressSummaries(summaries, containedMessageIds) {
     const containedIds = new Set(containedMessageIds);
@@ -298,10 +299,21 @@ export function createCompressTool(ctx) {
                             .filter((entry) => entry.kind === "block").length}`
                         : undefined,
                     continueTask: activeManagementTurn?.source === "automatic",
+                    goalOverflowRecovery: activeManagementTurn?.triggeredByMessageId === state.goalOverflowRecovery?.overflowMessageId
+                        ? state.goalOverflowRecovery
+                        : undefined,
                 };
             });
             await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.mapEntryCount, outcome.topic, outcome.finalSummary, { messageIndex: outcome.startPosition }, { messageIndex: outcome.endPosition }, outcome.contextMapEntryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
-            return buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
+            const recovery = outcome.goalOverflowRecovery
+                ? await recoverGoalAfterCompression(client, sessionId, outcome.goalOverflowRecovery)
+                : undefined;
+            const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, recovery ? recovery === "resumed" : outcome.continueTask);
+            if (recovery === "changed")
+                return `${receipt} The blocked Goal changed, so it was not resumed.`;
+            if (recovery === "unavailable")
+                return `${receipt} Goal recovery is unavailable on this host, so no Goal was resumed.`;
+            return receipt;
         },
     });
 }

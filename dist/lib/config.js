@@ -6,7 +6,7 @@ import { showToast } from "./sdk/client.js";
 export const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
-    tokenThreshold: 300_000,
+    tokenThreshold: 350_000,
     protectedTurns: 3,
 };
 const DEFAULT_PROTECTED_TOOLS = [

@@ -2,8 +2,10 @@ import { stageManagementTurnWithinLock, } from "./commands/manage.js";
 import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { renderAutomaticSystemPrompt } from "./prompts/index.js";
 import { listSessionMessages, showToast } from "./sdk/client.js";
+import { getSessionGoal } from "./sdk/client.js";
 import { reconcileSessionLifecycle } from "./state/index.js";
 import { isMessageWithinPostCompressionCooldown, messageContainsCompressCall, resolveEffectiveAutoCompressionPolicy, } from "./auto-policy.js";
+import { isContextOverflowError, renderGoalOverflowRecoveryPrompt } from "./goal.js";
 function positiveFinite(value) {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
@@ -75,16 +77,17 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
         if (input.event?.type !== "message.updated")
             return;
         const info = input.event.properties?.info;
+        const overflow = isContextOverflowError(info?.error);
         if (!info ||
             info.role !== "assistant" ||
             info.summary === true ||
-            info.error ||
+            (info.error && !overflow) ||
             !info.time?.completed) {
             return;
         }
         const state = stateManager.get(info.sessionID);
         const contextTokens = getAssistantContextTokens(info.tokens);
-        if (state.initialized && state.persistenceSynchronized) {
+        if (!overflow && state.initialized && state.persistenceSynchronized) {
             const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
             const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
             // Cooldown progress is derived from the transcript when it is next needed, so
@@ -129,6 +132,43 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                     config.tools.compress_map.permission === "deny" ||
                     cooldownApplies) {
                     return undefined;
+                }
+                if (overflow) {
+                    if (state.goalOverflowRecovery?.overflowMessageId === info.id ||
+                        state.autoCompressionStarting ||
+                        state.lastAutoTriggeredMessageId === info.id ||
+                        findActiveManagementTurn(state, messages)) {
+                        return undefined;
+                    }
+                    const goal = await getSessionGoal(client, info.sessionID);
+                    if (goal === undefined || !goal || goal.status !== "blocked")
+                        return undefined;
+                    state.autoCompressionStarting = true;
+                    state.lastAutoTriggeredMessageId = info.id;
+                    attemptedStart = true;
+                    const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
+                    const staged = await stageManagementTurnWithinLock({
+                        client,
+                        stateManager,
+                        state,
+                        config,
+                        logger,
+                        sessionId: info.sessionID,
+                        messages,
+                        systemPrompt: renderGoalOverflowRecoveryPrompt(),
+                        source: "automatic",
+                        triggeredByMessageId: info.id,
+                        contextTokens,
+                        thresholdTokens: threshold.thresholdTokens,
+                        protectedTurns: config.autoCompression.protectedTurns,
+                        asyncPrompt: true,
+                        goalOverflowRecovery: {
+                            overflowMessageId: info.id,
+                            goalID: goal.id,
+                            timeUpdated: goal.time.updated,
+                        },
+                    });
+                    return staged ? { staged, threshold, contextTokens } : undefined;
                 }
                 const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
                 if (contextTokens < threshold.thresholdTokens)

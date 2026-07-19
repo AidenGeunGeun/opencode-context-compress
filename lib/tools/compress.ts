@@ -15,6 +15,7 @@ import {
     resolveContextMapRange,
     type ResolvedContextMapRange,
 } from "../messages/context-map.js"
+import { recoverGoalAfterCompression } from "../goal.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
 
@@ -431,6 +432,10 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                               .filter((entry) => entry.kind === "block").length}`
                         : undefined,
                     continueTask: activeManagementTurn?.source === "automatic",
+                    goalOverflowRecovery:
+                        activeManagementTurn?.triggeredByMessageId === state.goalOverflowRecovery?.overflowMessageId
+                            ? state.goalOverflowRecovery
+                            : undefined,
                 }
             })
 
@@ -451,11 +456,18 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 outcome.estimatedCompressedTokens,
             )
 
-            return buildCompressReceipt(
+            const recovery = outcome.goalOverflowRecovery
+                ? await recoverGoalAfterCompression(client, sessionId, outcome.goalOverflowRecovery)
+                : undefined
+
+            const receipt = buildCompressReceipt(
                 outcome.topic,
                 outcome.storedBlockId,
-                outcome.continueTask,
+                recovery ? recovery === "resumed" : outcome.continueTask,
             )
+            if (recovery === "changed") return `${receipt} The blocked Goal changed, so it was not resumed.`
+            if (recovery === "unavailable") return `${receipt} Goal recovery is unavailable on this host, so no Goal was resumed.`
+            return receipt
         },
     })
 }

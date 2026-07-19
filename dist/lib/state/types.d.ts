@@ -1,4 +1,5 @@
 import { Message, Part } from "@opencode-ai/sdk/v2";
+import type { GoalOverflowRecovery } from "../goal.js";
 export interface WithParts {
     info: Message;
     parts: Part[];
@@ -82,6 +83,8 @@ export interface SessionState {
     autoCompressionContextWindowRatioOverride?: number;
     /** Assistant message carrying the most recent successful `compress` call. */
     compressionCooldownAfterMessageId?: string;
+    /** Exact blocked Goal version associated with the one overflow recovery attempt. */
+    goalOverflowRecovery?: GoalOverflowRecovery;
     toolParameters: Map<string, ToolParameterEntry>;
     toolIdList: string[];
     /** Latest native compaction whose compression-state reset was durably reconciled. */
