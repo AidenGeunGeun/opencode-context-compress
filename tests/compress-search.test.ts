@@ -3,7 +3,6 @@ import assert from "node:assert/strict"
 
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { transformMessagesForSearch } from "../lib/messages/compress-transform.ts"
-import { removeSubsumedCompressSummaries } from "../lib/tools/compress.ts"
 import { backfillCompressSummaryMessageIds } from "../lib/state/persistence.ts"
 import type { CompressSummary, SessionState } from "../lib/state/types.ts"
 
@@ -71,47 +70,6 @@ describe("compressed message transformation", () => {
         assert.equal((transformed[1] as any).parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
     })
 
-    it("subsumes old summary when new range includes its anchor", () => {
-        const summaryInRange: CompressSummary = {
-            anchorMessageId: "m2",
-            messageIds: ["m2", "m3"],
-            summary: "legacy block summary",
-        }
-        const summaryOutsideRange: CompressSummary = {
-            anchorMessageId: "m8",
-            messageIds: ["m8"],
-            summary: "keep me",
-        }
-
-        const result = removeSubsumedCompressSummaries(
-            [summaryInRange, summaryOutsideRange],
-            ["m1", "m2", "m3", "m4"],
-        )
-
-        assert.equal(result.length, 1)
-        assert.equal(result[0].anchorMessageId, "m8")
-    })
-
-    it("subsumes old summary when messageIds overlap even if anchor stays outside the new range", () => {
-        const overlappingSummary: CompressSummary = {
-            anchorMessageId: "m1",
-            messageIds: ["m1", "m2", "m3"],
-            summary: "legacy overlapping block",
-        }
-        const untouchedSummary: CompressSummary = {
-            anchorMessageId: "m8",
-            messageIds: ["m8", "m9"],
-            summary: "keep me",
-        }
-
-        const result = removeSubsumedCompressSummaries(
-            [overlappingSummary, untouchedSummary],
-            ["m2", "m3", "m4"],
-        )
-
-        assert.equal(result.length, 1)
-        assert.equal(result[0].anchorMessageId, "m8")
-    })
 })
 
 describe("compress summary maintenance", () => {

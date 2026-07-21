@@ -1,7 +1,5 @@
 import { loadSessionState, saveSessionState } from "./persistence.js";
 import { isSubAgentSession, isCompletedNativeCompaction, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
-import { findActiveManagementTurn } from "../messages/compress-transform.js";
-import { isIgnoredUserMessage } from "../messages/utils.js";
 export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
     state.compressSummaries = candidate.compressSummaries;
@@ -30,7 +28,7 @@ function applyPersistedState(state, persisted) {
     };
     state.compressSummaries = persistedState.compressSummaries || [];
     state.managementTurns = persistedState.managementTurns || [];
-    state.compressionMapSnapshot = persistedState.compressionMapSnapshot;
+    state.compressionMapSnapshot = undefined;
     state.stats = {
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
@@ -131,14 +129,10 @@ function getCompressionStateCompactionOrder(state, messages, compactionIndex) {
         if (turn.completedMessageId)
             referencedMessageIds.add(turn.completedMessageId);
     }
-    if (state.compressionMapSnapshot) {
-        referencedMessageIds.add(state.compressionMapSnapshot.triggerMessageId);
-    }
     const hasCompressionState = referencedMessageIds.size > 0 ||
         state.compressed.toolIds.size > 0 ||
         state.compressSummaries.length > 0 ||
-        state.managementTurns.length > 0 ||
-        state.compressionMapSnapshot !== undefined;
+        state.managementTurns.length > 0;
     if (!hasCompressionState)
         return "after";
     if (referencedMessageIds.size === 0)
@@ -173,23 +167,8 @@ export async function reconcileSessionLifecycle(client, state, sessionId, logger
     const requiresCompactionReset = compactionIndex !== -1 &&
         (compactionOrder === "before" ||
             (compactionOrder === "unknown" && unresolvedNewCompaction));
-    const snapshot = state.compressionMapSnapshot;
-    const activeTurn = snapshot ? findActiveManagementTurn(state, messages) : undefined;
-    let latestVisibleUserMessageId;
-    if (snapshot?.source === "normal") {
-        for (let index = messages.length - 1; index >= 0; index--) {
-            const message = messages[index];
-            if (message.info.role === "user" && !isIgnoredUserMessage(message)) {
-                latestVisibleUserMessageId = message.info.id;
-                break;
-            }
-        }
-    }
-    const snapshotIsStale = snapshot !== undefined &&
-        (snapshot.source === "management"
-            ? activeTurn?.turn.triggerMessageId !== snapshot.triggerMessageId
-            : activeTurn !== undefined || latestVisibleUserMessageId !== snapshot.triggerMessageId);
-    if (requiresCompactionReset || unresolvedNewCompaction || snapshotIsStale) {
+    const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined;
+    if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
         const candidate = {
             ...state,
             ...(requiresCompactionReset
@@ -202,9 +181,7 @@ export async function reconcileSessionLifecycle(client, state, sessionId, logger
                     managementTurns: [],
                 }
                 : {}),
-            ...(requiresCompactionReset || snapshotIsStale
-                ? { compressionMapSnapshot: undefined }
-                : {}),
+            ...(hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {}),
             ...(unresolvedNewCompaction
                 ? { lastCompaction: compactionTimestamp }
                 : {}),

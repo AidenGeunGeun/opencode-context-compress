@@ -3,7 +3,7 @@
  * Persists compressed tool IDs across sessions so they survive OpenCode restarts.
  * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
  */
-import type { SessionState, SessionStats, CompressSummary, ManagementTurn, CompressionMapSnapshot, WithParts } from "./types.js";
+import type { SessionState, SessionStats, CompressSummary, ManagementTurn, WithParts } from "./types.js";
 import type { GoalOverflowRecovery } from "../goal.js";
 import type { Logger } from "../logger.js";
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
@@ -16,7 +16,6 @@ export interface PersistedSessionState {
     compressed: PersistedCompressed;
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
-    compressionMapSnapshot?: CompressionMapSnapshot;
     stats: SessionStats;
     autoCompressionEnabledOverride?: boolean;
     autoCompressionTokenThresholdOverride?: number;

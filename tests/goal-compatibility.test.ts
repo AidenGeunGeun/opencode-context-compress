@@ -7,10 +7,8 @@ import {
     recoverGoalAfterCompression,
     type GoalOverflowRecovery,
 } from "../lib/goal.ts"
-import { createChatMessageHandler } from "../lib/hooks.ts"
 import { findActiveManagementTurn } from "../lib/messages/compress-transform.ts"
-import { createCompressionMapSnapshot, buildContextMap } from "../lib/messages/context-map.ts"
-import { SessionStateManager } from "../lib/state/state.ts"
+import { createSessionState } from "../lib/state/state.ts"
 
 const logger = {
     info: () => {},
@@ -54,10 +52,9 @@ describe("Goal continuation compatibility", () => {
         assert.equal(isGoalContinuationMessage(message("other", "user", "Synthetic maintenance", true)), false)
     })
 
-    it("does not bound an open management turn or invalidate its pinned map", async () => {
+    it("does not bound an open management turn", () => {
         const sessionId = `ses_goal_boundary_${Date.now()}`
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
+        const state = createSessionState()
         const history = [message("old-user", "user", "Original request"), message("old-assistant", "assistant", "Work")]
         const trigger = message("manage-trigger", "user", "Automatic compression")
         const messages = [...history, trigger, { ...continuation, info: { ...continuation.info, sessionID: sessionId } }]
@@ -65,19 +62,8 @@ describe("Goal continuation compatibility", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         state.managementTurns = [{ triggerMessageId: trigger.info.id, source: "automatic" }]
-        state.compressionMapSnapshot = createCompressionMapSnapshot(
-            trigger.info.id,
-            buildContextMap(history as any, state, logger),
-            { source: "management" },
-        )
 
         assert.equal(findActiveManagementTurn(state, messages as any)?.turn.triggerMessageId, trigger.info.id)
-        const snapshot = state.compressionMapSnapshot
-        await createChatMessageHandler(stateManager, logger)(
-            { sessionID: sessionId, messageID: continuation.info.id },
-            { message: continuation.info, parts: continuation.parts },
-        )
-        assert.equal(state.compressionMapSnapshot, snapshot)
 
         messages.push(message("real-user", "user", "A real user boundary"))
         assert.equal(findActiveManagementTurn(state, messages as any), undefined)

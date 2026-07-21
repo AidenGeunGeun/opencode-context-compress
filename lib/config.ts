@@ -10,10 +10,6 @@ export interface CompressTool {
     showCompression: boolean
 }
 
-export interface PermissionTool {
-    permission: "ask" | "allow" | "deny"
-}
-
 export interface ToolSettings {
     protectedTools: string[]
 }
@@ -21,7 +17,6 @@ export interface ToolSettings {
 export interface Tools {
     settings: ToolSettings
     compress: CompressTool
-    compress_map: PermissionTool
 }
 
 export interface Commands {
@@ -38,14 +33,22 @@ export interface AutoCompression {
     enabled: boolean
     contextWindowRatio: number
     tokenThreshold: number
-    protectedTurns: number
 }
 
 export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     enabled: true,
     contextWindowRatio: 0.9,
     tokenThreshold: 350_000,
-    protectedTurns: 3,
+}
+
+export function resolveProtectedTurnsSetting(
+    layer: Record<string, any>,
+    fallback = 3,
+    hasExplicitTopLevel = false,
+): number {
+    if (layer.protectedTurns !== undefined) return layer.protectedTurns
+    if (hasExplicitTopLevel) return fallback
+    return layer.autoCompression?.protectedTurns ?? fallback
 }
 
 export interface PluginConfig {
@@ -53,6 +56,7 @@ export interface PluginConfig {
     debug: boolean
     notification: "off" | "minimal" | "detailed"
     notificationType: "chat" | "toast"
+    protectedTurns: number
     commands: Commands
     autoCompression: AutoCompression
     turnProtection: TurnProtection
@@ -65,7 +69,6 @@ const DEFAULT_PROTECTED_TOOLS = [
     "todowrite",
     "todoread",
     "compress",
-    "compress_map",
     "batch",
     "plan_enter",
     "plan_exit",
@@ -80,6 +83,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
+    "protectedTurns",
     "autoCompression",
     "autoCompression.enabled",
     "autoCompression.contextWindowRatio",
@@ -98,8 +102,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.compress",
     "tools.compress.permission",
     "tools.compress.showCompression",
-    "tools.compress_map",
-    "tools.compress_map.permission",
 ])
 
 // Extract all key paths from a config object for validation
@@ -137,6 +139,18 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
         errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug })
+    }
+    if (
+        config.protectedTurns !== undefined &&
+        (typeof config.protectedTurns !== "number" ||
+            !Number.isInteger(config.protectedTurns) ||
+            config.protectedTurns < 0)
+    ) {
+        errors.push({
+            key: "protectedTurns",
+            expected: "non-negative integer",
+            actual: JSON.stringify(config.protectedTurns),
+        })
     }
     if (config.notification !== undefined) {
         const validValues = ["off", "minimal", "detailed"]
@@ -322,18 +336,6 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
                 })
             }
         }
-        if (tools.compress_map) {
-            if (tools.compress_map.permission !== undefined) {
-                const validValues = ["ask", "allow", "deny"]
-                if (!validValues.includes(tools.compress_map.permission)) {
-                    errors.push({
-                        key: "tools.compress_map.permission",
-                        expected: '"ask" | "allow" | "deny"',
-                        actual: JSON.stringify(tools.compress_map.permission),
-                    })
-                }
-            }
-        }
     }
 
     return errors
@@ -386,6 +388,7 @@ const defaultConfig: PluginConfig = {
     debug: false,
     notification: "detailed",
     notificationType: "chat",
+    protectedTurns: 3,
     commands: {
         enabled: true,
         protectedTools: [...DEFAULT_PROTECTED_TOOLS],
@@ -403,9 +406,6 @@ const defaultConfig: PluginConfig = {
         compress: {
             permission: "allow",
             showCompression: false,
-        },
-        compress_map: {
-            permission: "allow",
         },
     },
 }
@@ -530,9 +530,6 @@ function mergeTools(
             permission: override.compress?.permission ?? base.compress.permission,
             showCompression: override.compress?.showCompression ?? base.compress.showCompression,
         },
-        compress_map: {
-            permission: override.compress_map?.permission ?? base.compress_map.permission,
-        },
     }
 }
 
@@ -558,7 +555,6 @@ function mergeAutoCompression(
         enabled: override.enabled ?? base.enabled,
         contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
         tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
-        protectedTurns: override.protectedTurns ?? base.protectedTurns,
     }
 }
 
@@ -578,13 +574,13 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
                 protectedTools: [...config.tools.settings.protectedTools],
             },
             compress: { ...config.tools.compress },
-            compress_map: { ...config.tools.compress_map },
         },
     }
 }
 
 export function getConfig(ctx: PluginInput): PluginConfig {
     let config = deepCloneConfig(defaultConfig)
+    let hasExplicitProtectedTurns = false
     const configPaths = getConfigPaths(ctx)
 
     // Load and merge global config
@@ -607,6 +603,11 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(
+                    result.data,
+                    config.protectedTurns,
+                    hasExplicitProtectedTurns,
+                ),
                 commands: mergeCommands(config.commands, result.data.commands as any),
                 autoCompression: mergeAutoCompression(
                     config.autoCompression,
@@ -624,6 +625,7 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 ],
                 tools: mergeTools(config.tools, result.data.tools as any),
             }
+            hasExplicitProtectedTurns = result.data.protectedTurns !== undefined
         }
     } else {
         // No config exists, create default
@@ -650,6 +652,11 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(
+                    result.data,
+                    config.protectedTurns,
+                    hasExplicitProtectedTurns,
+                ),
                 commands: mergeCommands(config.commands, result.data.commands as any),
                 autoCompression: mergeAutoCompression(
                     config.autoCompression,
@@ -667,6 +674,8 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 ],
                 tools: mergeTools(config.tools, result.data.tools as any),
             }
+            hasExplicitProtectedTurns =
+                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined
         }
     }
 
@@ -690,6 +699,11 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(
+                    result.data,
+                    config.protectedTurns,
+                    hasExplicitProtectedTurns,
+                ),
                 commands: mergeCommands(config.commands, result.data.commands as any),
                 autoCompression: mergeAutoCompression(
                     config.autoCompression,
@@ -707,6 +721,8 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 ],
                 tools: mergeTools(config.tools, result.data.tools as any),
             }
+            hasExplicitProtectedTurns =
+                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined
         }
     }
 

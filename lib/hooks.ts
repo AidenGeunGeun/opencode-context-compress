@@ -14,8 +14,6 @@ import { handleAutoCommand } from "./commands/auto.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { reconcileSessionLifecycle } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
-import { commitDurableSessionState } from "./state/state.js"
-import { saveSessionState } from "./state/persistence.js"
 import { isIgnoredUserMessage } from "./messages/utils.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
@@ -94,26 +92,6 @@ export function createChatMessageHandler(
         state.variant = input.variant
         logger.debug("Cached variant from chat.message hook", { variant: input.variant })
 
-        const messageId = input.messageID ?? message?.id
-        await stateManager.runExclusive(input.sessionID, async () => {
-            const snapshot = state.compressionMapSnapshot
-            if (!snapshot || messageId === snapshot.triggerMessageId) return
-            // The running management turn may still consume its immutable pin. If it does not,
-            // transcript reconciliation clears the stale pin before the later user executes.
-            if (snapshot.source === "management" && message?.role === "user") return
-            if (!state.persistenceSynchronized) return
-
-            const candidate = {
-                ...state,
-                compressionMapSnapshot: undefined,
-            }
-            const persisted = await saveSessionState(candidate, logger)
-            if (!persisted) {
-                state.persistenceSynchronized = false
-                return
-            }
-            commitDurableSessionState(state, candidate)
-        })
     }
 }
 

@@ -7,14 +7,19 @@ export const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
     tokenThreshold: 350_000,
-    protectedTurns: 3,
 };
+export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
+    if (layer.protectedTurns !== undefined)
+        return layer.protectedTurns;
+    if (hasExplicitTopLevel)
+        return fallback;
+    return layer.autoCompression?.protectedTurns ?? fallback;
+}
 const DEFAULT_PROTECTED_TOOLS = [
     "task",
     "todowrite",
     "todoread",
     "compress",
-    "compress_map",
     "batch",
     "plan_enter",
     "plan_exit",
@@ -28,6 +33,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
+    "protectedTurns",
     "autoCompression",
     "autoCompression.enabled",
     "autoCompression.contextWindowRatio",
@@ -46,8 +52,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.compress",
     "tools.compress.permission",
     "tools.compress.showCompression",
-    "tools.compress_map",
-    "tools.compress_map.permission",
 ]);
 // Extract all key paths from a config object for validation
 function getConfigKeyPaths(obj, prefix = "") {
@@ -74,6 +78,16 @@ function validateConfigTypes(config) {
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
         errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug });
+    }
+    if (config.protectedTurns !== undefined &&
+        (typeof config.protectedTurns !== "number" ||
+            !Number.isInteger(config.protectedTurns) ||
+            config.protectedTurns < 0)) {
+        errors.push({
+            key: "protectedTurns",
+            expected: "non-negative integer",
+            actual: JSON.stringify(config.protectedTurns),
+        });
     }
     if (config.notification !== undefined) {
         const validValues = ["off", "minimal", "detailed"];
@@ -240,18 +254,6 @@ function validateConfigTypes(config) {
                 });
             }
         }
-        if (tools.compress_map) {
-            if (tools.compress_map.permission !== undefined) {
-                const validValues = ["ask", "allow", "deny"];
-                if (!validValues.includes(tools.compress_map.permission)) {
-                    errors.push({
-                        key: "tools.compress_map.permission",
-                        expected: '"ask" | "allow" | "deny"',
-                        actual: JSON.stringify(tools.compress_map.permission),
-                    });
-                }
-            }
-        }
     }
     return errors;
 }
@@ -291,6 +293,7 @@ const defaultConfig = {
     debug: false,
     notification: "detailed",
     notificationType: "chat",
+    protectedTurns: 3,
     commands: {
         enabled: true,
         protectedTools: [...DEFAULT_PROTECTED_TOOLS],
@@ -308,9 +311,6 @@ const defaultConfig = {
         compress: {
             permission: "allow",
             showCompression: false,
-        },
-        compress_map: {
-            permission: "allow",
         },
     },
 };
@@ -418,9 +418,6 @@ function mergeTools(base, override) {
             permission: override.compress?.permission ?? base.compress.permission,
             showCompression: override.compress?.showCompression ?? base.compress.showCompression,
         },
-        compress_map: {
-            permission: override.compress_map?.permission ?? base.compress_map.permission,
-        },
     };
 }
 function mergeCommands(base, override) {
@@ -438,7 +435,6 @@ function mergeAutoCompression(base, override) {
         enabled: override.enabled ?? base.enabled,
         contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
         tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
-        protectedTurns: override.protectedTurns ?? base.protectedTurns,
     };
 }
 function deepCloneConfig(config) {
@@ -457,12 +453,12 @@ function deepCloneConfig(config) {
                 protectedTools: [...config.tools.settings.protectedTools],
             },
             compress: { ...config.tools.compress },
-            compress_map: { ...config.tools.compress_map },
         },
     };
 }
 export function getConfig(ctx) {
     let config = deepCloneConfig(defaultConfig);
+    let hasExplicitProtectedTurns = false;
     const configPaths = getConfigPaths(ctx);
     // Load and merge global config
     if (configPaths.global) {
@@ -485,6 +481,7 @@ export function getConfig(ctx) {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
@@ -499,6 +496,7 @@ export function getConfig(ctx) {
                 ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
+            hasExplicitProtectedTurns = result.data.protectedTurns !== undefined;
         }
     }
     else {
@@ -526,6 +524,7 @@ export function getConfig(ctx) {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
@@ -540,6 +539,8 @@ export function getConfig(ctx) {
                 ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
+            hasExplicitProtectedTurns =
+                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
         }
     }
     // Load and merge project config (overrides global)
@@ -563,6 +564,7 @@ export function getConfig(ctx) {
                 debug: result.data.debug ?? config.debug,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
+                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
                 turnProtection: {
@@ -577,6 +579,8 @@ export function getConfig(ctx) {
                 ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
+            hasExplicitProtectedTurns =
+                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
         }
     }
     return config;

@@ -1,8 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
 
 import {
     loadPrompt,
@@ -12,185 +11,75 @@ import {
 import { SYSTEM } from "../lib/prompts/_codegen/system.generated.ts"
 import { AUTOMATIC_SYSTEM } from "../lib/prompts/_codegen/automatic-system.generated.ts"
 import { COMPRESS } from "../lib/prompts/_codegen/compress.generated.ts"
-import { COMPRESS_MAP } from "../lib/prompts/_codegen/compress-map.generated.ts"
+import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const RETIRED_WORKFLOW = /compress_map|compress-context-map|pinned snapshot|numeric (?:entry|label)|from\/to|narrower range|consolidat(?:e|ion)/i
 
-const COMPRESS_GUIDANCE = "CONTEXT MANAGEMENT REQUESTED"
-const APPEND_ONLY_GUIDANCE = "Default append-only"
-const MAP_FIRST_GUIDANCE = "Call `compress_map` first"
-const PINNED_MAP_GUIDANCE = "labels from that exact snapshot"
-
-describe("renderSystemPrompt", () => {
-    it("includes compress section when flag is true", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
-
-        assert.match(output, /system-reminder/)
-        assert.equal(output.includes(COMPRESS_GUIDANCE), true)
-        assert.equal(output.includes(APPEND_ONLY_GUIDANCE), true)
-        assert.equal(output.includes(MAP_FIRST_GUIDANCE), true)
-        assert.equal(output.includes(PINNED_MAP_GUIDANCE), true)
-        assert.match(output, /\/compress manage/)
-        assert.match(output, /<user-message>.*specific instructions.*compression turn/is)
-        assert.match(output, /Follow it as closely as possible/i)
-        assert.match(output, /entire eligible uncompressed range in ONE call/i)
-        assert.match(output, /every numeric entry after the newest `\[bN\]`/i)
-        assert.match(output, /Do not leave a large active-work tail/i)
-        assert.doesNotMatch(output, /<compress-context-map>/)
-        assert.doesNotMatch(output, /EXHAUSTIVE/)
+describe("single-tool agent prompts", () => {
+    it("renders manual management as one compress call", () => {
+        const output = renderSystemPrompt()
+        assert.match(output, /Call `compress` once with `summary` and `topic`/)
+        assert.match(output, /newest configured execution steps verbatim/)
+        assert.match(output, /Existing compressed blocks are excluded automatically/)
+        assert.match(output, /Later evidence supersedes stale plans/i)
+        assert.match(output, /Do not invent one for completed work/i)
+        assert.doesNotMatch(output, RETIRED_WORKFLOW)
     })
 
-    it("does not describe same-turn iteration or a refreshed map returned by compress", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
-
-        assert.match(output, /call `compress_map` first/i)
-        assert.doesNotMatch(output, /refreshed map returned by `compress`/i)
-        assert.doesNotMatch(output, /returned map snapshot/i)
-        assert.doesNotMatch(output, /same-turn iteration/i)
-    })
-
-    it("still renders system prompt when tool flags are false", () => {
-        const output = renderSystemPrompt({ compress: false, compress_map: false })
-
-        assert.match(output, /<system-reminder>/)
-        assert.doesNotMatch(output, /<compress>/)
-        assert.doesNotMatch(output, /<compress_map>/)
-    })
-
-    it("strips raw conditional wrapper tags", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
-
-        assert.doesNotMatch(output, /<compress>/)
-        assert.doesNotMatch(output, /<\/compress>/)
-        assert.doesNotMatch(output, /<compress_map>/)
-        assert.doesNotMatch(output, /<\/compress_map>/)
-    })
-
-    it("omits removed legacy tool guidance", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
-
-        assert.doesNotMatch(output, /sweep/i)
-        assert.doesNotMatch(output, /startString/)
-        assert.doesNotMatch(output, /endString/)
-    })
-
-    it("does not mention string boundary matching fields", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
-
-        assert.doesNotMatch(output, /startString/)
-        assert.doesNotMatch(output, /endString/)
-        assert.doesNotMatch(output, /BOUNDARY MATCHING/)
-    })
-})
-
-describe("renderAutomaticSystemPrompt", () => {
-    it("preserves the protected tail and restores the evidenced task disposition", () => {
-        const output = renderAutomaticSystemPrompt(
-            { compress: true, compress_map: true },
-            {
-                context_tokens: "310,000",
-                threshold_tokens: "300,000",
-                threshold_reason: "the system-wide absolute token limit",
-            },
-        )
-
-        assert.match(output, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
-        assert.match(output, /threshold says nothing by itself.*active, blocked, complete, or awaiting the user/i)
-        assert.match(output, /only model-visible representation/)
-        assert.match(output, /Call `compress_map` first/)
-        assert.match(output, /310,000 tokens/)
-        assert.match(output, /300,000 tokens/)
-        assert.match(output, /protected active tail/)
-        assert.match(output, /entire eligible uncompressed range in ONE call/i)
-        assert.match(output, /protected tail is the only default exclusion/i)
-        assert.match(output, /exact user objective/)
+    it("renders automatic management with current variables and continuation rules", () => {
+        const output = renderAutomaticSystemPrompt({
+            context_tokens: "355,000",
+            threshold_tokens: "350,000",
+            threshold_reason: "the system-wide absolute token limit",
+        })
+        assert.match(output, /355,000/)
+        assert.match(output, /350,000/)
+        assert.match(output, /call `compress` once/i)
         assert.match(output, /continue immediately only when work was genuinely active/i)
-        assert.match(output, /do not reopen work or duplicate a final response/i)
-        assert.match(output, /Make no more compression calls/i)
-        assert.doesNotMatch(output, /\{\{/)
+        assert.match(output, /do not reopen completed work/i)
+        assert.doesNotMatch(output, RETIRED_WORKFLOW)
     })
-})
 
-describe("loadPrompt", () => {
-    it("returns non-empty content for compress-tool-spec", () => {
+    it("exposes only summary and topic concepts in the tool description", () => {
         const output = loadPrompt("compress-tool-spec")
-
-        assert.equal(typeof output, "string")
-        assert.ok(output.length > 0)
-        assert.match(output, /after `compress_map` has successfully returned/i)
-        assert.match(output, /Do not call this tool autonomously/i)
-        assert.match(output, /Tool availability alone is not authorization.*neither is a prior `compress_map` call/i)
-        assert.match(output, /explicit user request in the current message to compress context/i)
-        assert.doesNotMatch(output, /`ranges` is an array/)
+        assert.match(output, /Tool availability alone is not authorization/)
+        assert.match(output, /`summary`/)
+        assert.match(output, /`topic`/)
+        assert.match(output, /all eligible uncompressed history after the newest existing block/i)
+        assert.doesNotMatch(output, RETIRED_WORKFLOW)
     })
 
-    it("compress-tool-spec rejects stale returned-map same-turn iteration guidance", () => {
-        const output = loadPrompt("compress-tool-spec")
-
-        assert.doesNotMatch(output, /returned map snapshot/i)
-        assert.doesNotMatch(output, /use the fresh `<compress-context-map>` returned by the tool/i)
-        assert.match(output, /success receipt/i)
-        assert.match(output, /entire eligible uncompressed range/i)
-        assert.match(output, /after automatic compression/i)
-        assert.match(output, /resume only if work was genuinely active/i)
-        assert.doesNotMatch(output, /nothing further to call or check this turn/i)
-    })
-
-    it("returns non-empty content for compress-map-tool-spec", () => {
-        const output = loadPrompt("compress-map-tool-spec")
-
-        assert.equal(typeof output, "string")
-        assert.ok(output.length > 0)
-    })
-
-    it("compress-map-tool-spec frames itself as the required pinned source of truth", () => {
-        const output = loadPrompt("compress-map-tool-spec")
-
-        assert.match(output, /Call `compress_map` before `compress`/)
-        assert.match(output, /sole execution source of truth/)
-        assert.match(output, /entire eligible uncompressed range/i)
-        assert.match(output, /Do not call this tool autonomously/i)
-        assert.match(output, /Tool availability alone is not authorization/i)
-        assert.match(output, /explicit user request in the current message to inspect or compress context/i)
-        assert.match(output, /current visible user request.*excluded/i)
-        assert.doesNotMatch(output, /prefer the refreshed map returned by that tool/i)
-        assert.doesNotMatch(output, /after a `compress` call/i)
-    })
-
-    it("throws when prompt key does not exist", () => {
-        assert.throws(
-            () => loadPrompt("nonexistent"),
-            (error: unknown) => error instanceof Error && error.message.includes("Prompt not found"),
+    it("keeps generated prompt sources synchronized and free of retired workflow text", () => {
+        const root = process.cwd()
+        const systemSource = readFileSync(join(root, "lib/prompts/system.md"), "utf8")
+        const automaticSource = readFileSync(
+            join(root, "lib/prompts/automatic-system.md"),
+            "utf8",
         )
-    })
-
-    it("ignores vars that do not match placeholders", () => {
-        const output = loadPrompt("compress-tool-spec", { someVar: "value" })
-
-        assert.equal(typeof output, "string")
-        assert.ok(output.length > 0)
-    })
-
-    it("generated prompt code matches the markdown sources", () => {
-        const systemSource = readFileSync(join(__dirname, "../lib/prompts/system.md"), "utf-8")
-        const automaticSystemSource = readFileSync(join(__dirname, "../lib/prompts/automatic-system.md"), "utf-8")
-        const compressSource = readFileSync(join(__dirname, "../lib/prompts/compress.md"), "utf-8")
-        const compressMapSource = readFileSync(join(__dirname, "../lib/prompts/compress-map.md"), "utf-8")
-
+        const compressSource = readFileSync(join(root, "lib/prompts/compress.md"), "utf8")
         assert.equal(SYSTEM, systemSource)
-        assert.equal(AUTOMATIC_SYSTEM, automaticSystemSource)
+        assert.equal(AUTOMATIC_SYSTEM, automaticSource)
         assert.equal(COMPRESS, compressSource)
-        assert.equal(COMPRESS_MAP, compressMapSource)
+        assert.equal(SYSTEM.trim(), renderSystemPrompt())
+        assert.equal(COMPRESS.trim(), loadPrompt("compress-tool-spec").trim())
+        for (const generated of [SYSTEM, AUTOMATIC_SYSTEM, COMPRESS]) {
+            assert.doesNotMatch(generated, RETIRED_WORKFLOW)
+        }
+        assert.throws(() => loadPrompt("compress-map-tool-spec"), /Prompt not found/)
     })
 
-    it("system guidance reflects map-first single-block append-only compression", () => {
-        const output = renderSystemPrompt({ compress: true, compress_map: true })
+    it("uses the same one-call workflow for Goal overflow recovery", () => {
+        const output = renderGoalOverflowRecoveryPrompt()
+        assert.match(output, /call compress once/i)
+        assert.match(output, /newest configured execution steps/)
+        assert.doesNotMatch(output, RETIRED_WORKFLOW)
+    })
 
-        assert.match(output, /Call `compress` once/)
-        assert.match(output, /one durable summary block/)
-        assert.doesNotMatch(output, /single call constraint/i)
-        assert.doesNotMatch(output, /submit all ranges/i)
-        assert.doesNotMatch(output, /2 blocks, 3 max/i)
-        assert.doesNotMatch(output, /fold the newest/i)
+    it("has no removed prompt source or generated module", () => {
+        const root = process.cwd()
+        assert.throws(() => readFileSync(join(root, "lib/prompts/compress-map.md"), "utf8"))
+        assert.throws(() =>
+            readFileSync(join(root, "lib/prompts/_codegen/compress-map.generated.ts"), "utf8"),
+        )
     })
 })

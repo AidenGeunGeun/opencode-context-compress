@@ -3,16 +3,12 @@ export interface CompressTool {
     permission: "ask" | "allow" | "deny";
     showCompression: boolean;
 }
-export interface PermissionTool {
-    permission: "ask" | "allow" | "deny";
-}
 export interface ToolSettings {
     protectedTools: string[];
 }
 export interface Tools {
     settings: ToolSettings;
     compress: CompressTool;
-    compress_map: PermissionTool;
 }
 export interface Commands {
     enabled: boolean;
@@ -26,14 +22,15 @@ export interface AutoCompression {
     enabled: boolean;
     contextWindowRatio: number;
     tokenThreshold: number;
-    protectedTurns: number;
 }
 export declare const DEFAULT_AUTO_COMPRESSION: AutoCompression;
+export declare function resolveProtectedTurnsSetting(layer: Record<string, any>, fallback?: number, hasExplicitTopLevel?: boolean): number;
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
     notification: "off" | "minimal" | "detailed";
     notificationType: "chat" | "toast";
+    protectedTurns: number;
     commands: Commands;
     autoCompression: AutoCompression;
     turnProtection: TurnProtection;

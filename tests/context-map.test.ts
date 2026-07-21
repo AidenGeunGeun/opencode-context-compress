@@ -1,238 +1,89 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { buildContextMap } from "../lib/messages/context-map.ts"
-import type { CompressSummary, SessionState } from "../lib/state/types.ts"
-import { countTokens } from "../lib/token-utils.ts"
+import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
+import { createSessionState } from "../lib/state/state.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-} as any
+const logger = { info: () => {}, warn: () => {} } as any
 
-const textMessage = (id: string, text: string, role: "user" | "assistant" = "user") => ({
-    info: {
-        id,
-        role,
-        sessionID: "session-test",
-        agent: "agent-test",
-        model: "model-test",
-        time: { created: Date.now() },
-    },
-    parts: [{ type: "text", text }],
-})
-
-const toolMessage = (id: string, tool: string, output: string) => ({
-    info: {
-        id,
-        role: "assistant" as const,
-        sessionID: "session-test",
-        agent: "agent-test",
-        model: "model-test",
-        time: { created: Date.now() },
-    },
-    parts: [
-        {
-            type: "tool",
-            tool,
-            callID: `call-${id}`,
-            state: {
-                status: "completed",
-                input: { description: `${tool} call` },
-                output,
-            },
+function message(id: string, role: "user" | "assistant", stepStart = false) {
+    return {
+        info: {
+            id,
+            role,
+            sessionID: "selection-session",
+            time: { created: Date.now() },
         },
-    ],
-})
+        parts: [
+            ...(stepStart ? [{ type: "step-start" }] : []),
+            { type: "text", text: id },
+        ],
+    } as any
+}
 
-const createState = (
-    compressedMessageIds: string[] = [],
-    summaries: CompressSummary[] = [],
-): SessionState => ({
-    sessionId: "session-test",
-    initialized: true,
-    isSubAgent: false,
-    hasPersistedState: false,
-    persistedLastUpdated: null,
-    compressed: {
-        toolIds: new Set<string>(),
-        messageIds: new Set<string>(compressedMessageIds),
-    },
-    compressSummaries: summaries,
-    managementTurns: [],
-    stats: {
-        compressTokenCounter: 0,
-        totalCompressTokens: 0,
-    },
-    toolParameters: new Map(),
-    toolIdList: [],
-    lastCompaction: 0,
-    currentTurn: 0,
-    variant: undefined,
-})
-
-describe("buildContextMap", () => {
-    it("builds map text and lookup entries for grouped assistant ranges", () => {
-        const rawMessages = [
-            textMessage("m1", "Let's plan auth"),
-            toolMessage("m2", "read", "read output"),
-            toolMessage("m3", "bash", "bash output"),
-            textMessage("m4", "Looks good, implement it"),
-            textMessage("m5", "Implemented", "assistant"),
+describe("deterministic compression selection", () => {
+    it("preserves the newest configured execution steps", () => {
+        const state = createSessionState()
+        const messages = [
+            message("u1", "user"),
+            message("a1", "assistant", true),
+            message("u2", "user"),
+            message("a2", "assistant", true),
+            message("u3", "user"),
+            message("a3", "assistant", true),
         ]
-        const state = createState()
 
-        const result = buildContextMap(rawMessages as any, state, logger)
+        const span = selectDeterministicCompressionSpan(messages, state, logger, 2)
 
-        assert.match(result.mapText, /<compress-context-map>/)
-        assert.match(result.mapText, /\[1\] user:/)
-        assert.match(result.mapText, /\[2-3\] assistant: 2 tool calls -/)
-        assert.doesNotMatch(result.mapText, /\(read, bash\)/)
-        assert.doesNotMatch(result.mapText, /Active:/)
-        assert.match(result.mapText, /Total: 5 messages \+ 0 blocks/)
-
-        assert.deepEqual(result.lookup.get(1), ["m1"])
-        assert.deepEqual(result.lookup.get(2), ["m2"])
-        assert.deepEqual(result.lookup.get(3), ["m3"])
-        assert.deepEqual(result.lookup.get("2-3"), ["m2", "m3"])
+        assert.deepEqual(span.messageIds, ["u1", "a1", "u2"])
+        assert.deepEqual(span.protectedMessageIds, ["a2", "u3", "a3"])
     })
 
-    it("includes compressed blocks as bN entries and maps them to raw IDs", () => {
-        const summary: CompressSummary = {
-            anchorMessageId: "m2",
-            messageIds: ["m2", "m3"],
-            summary: "Database schema exploration and migration setup",
-        }
-
-        const rawMessages = [
-            textMessage("m1", "before block"),
-            textMessage("m2", "hidden old message", "assistant"),
-            textMessage("m3", "hidden old message 2", "assistant"),
-            textMessage("m4", "after block"),
+    it("uses the recent-message fallback when imported history has no step-start parts", () => {
+        const state = createSessionState()
+        const messages = [
+            message("m1", "user"),
+            message("m2", "assistant"),
+            message("m3", "user"),
+            message("m4", "assistant"),
         ]
-        const state = createState(["m2", "m3"], [summary])
 
-        const result = buildContextMap(rawMessages as any, state, logger)
+        const span = selectDeterministicCompressionSpan(messages, state, logger, 3)
 
-        assert.match(result.mapText, /\[b0\] \[compressed\]/)
-        assert.doesNotMatch(result.mapText, /Active:/)
-        assert.deepEqual(result.lookup.get("b0"), ["m2", "m3"])
-        assert.deepEqual(result.lookup.get(1), ["m1"])
-        assert.deepEqual(result.lookup.get(2), ["m4"])
+        assert.deepEqual(span.messageIds, ["m1"])
+        assert.deepEqual(span.protectedMessageIds, ["m2", "m3", "m4"])
     })
 
-    it("renders generated-image tool results as readable placeholder previews", () => {
-        const placeholder = "[generated image: call-image]"
-        const rawMessages = [
-            textMessage("m1", "Please make it bluer"),
+    it("protects nothing when protectedTurns is zero", () => {
+        const state = createSessionState()
+        const messages = [message("m1", "user"), message("m2", "assistant", true)]
+
+        const span = selectDeterministicCompressionSpan(messages, state, logger, 0)
+
+        assert.deepEqual(span.messageIds, ["m1", "m2"])
+        assert.deepEqual(span.protectedMessageIds, [])
+    })
+
+    it("fails closed when a durable block cannot be reconciled with the transcript", () => {
+        const state = createSessionState()
+        state.compressed.messageIds = new Set(["missing-anchor"])
+        state.compressSummaries = [
             {
-                info: {
-                    id: "m2",
-                    role: "assistant" as const,
-                    sessionID: "session-test",
-                    agent: "agent-test",
-                    model: "model-test",
-                    time: { created: Date.now() },
-                },
-                parts: [
-                    {
-                        type: "tool",
-                        tool: "image_generation",
-                        callID: "call-image",
-                        state: {
-                            status: "completed",
-                            output: JSON.stringify({ result: "A".repeat(4096) }),
-                        },
-                    },
-                ],
+                anchorMessageId: "missing-anchor",
+                messageIds: ["missing-anchor"],
+                summary: "durable block",
             },
         ]
 
-        const result = buildContextMap(rawMessages as any, createState(), logger)
-        const expectedTotalTokens = countTokens("Please make it bluer") + countTokens(placeholder)
-
-        assert.equal(
-            result.mapText,
-            [
-                "<compress-context-map>",
-                '[1] user: "Please make it bluer"',
-                `[2] assistant: 1 tool calls - ${placeholder} (~${countTokens(placeholder).toLocaleString()} tokens)`,
-                "---",
-                `Total: 2 messages + 0 blocks | ~${expectedTotalTokens.toLocaleString()} tokens`,
-                "</compress-context-map>",
-            ].join("\n"),
+        assert.throws(
+            () =>
+                selectDeterministicCompressionSpan(
+                    [message("visible", "user")],
+                    state,
+                    logger,
+                    0,
+                ),
+            /could not reconcile an existing compressed block/,
         )
-        assert.equal(result.entries[1]?.preview, placeholder)
-        assert.ok(result.entries[1]?.tokenEstimate < 100)
-    })
-
-    it("assigns bN labels by anchor position instead of summary array order", () => {
-        const earlySummary: CompressSummary = {
-            anchorMessageId: "m1",
-            messageIds: ["m1", "m2"],
-            summary: "Early block summary",
-            topic: "Early Block",
-        }
-        const middleSummary: CompressSummary = {
-            anchorMessageId: "m3",
-            messageIds: ["m3", "m4"],
-            summary: "Middle block summary",
-            topic: "Middle Block",
-        }
-        const lateSummary: CompressSummary = {
-            anchorMessageId: "m5",
-            messageIds: ["m5", "m6"],
-            summary: "Late block summary",
-            topic: "Late Block",
-        }
-
-        const rawMessages = [
-            textMessage("m1", "early request"),
-            textMessage("m2", "early result", "assistant"),
-            textMessage("m3", "middle request"),
-            textMessage("m4", "middle result", "assistant"),
-            textMessage("m5", "late request"),
-            textMessage("m6", "late result", "assistant"),
-            textMessage("m7", "active tail"),
-        ]
-        const state = createState(
-            ["m1", "m2", "m3", "m4", "m5", "m6"],
-            [middleSummary, lateSummary, earlySummary],
-        )
-
-        const result = buildContextMap(rawMessages as any, state, logger)
-
-        assert.match(
-            result.mapText,
-            /\[b0\] \[compressed\] "Early Block"[\s\S]*\[b1\] \[compressed\] "Middle Block"[\s\S]*\[b2\] \[compressed\] "Late Block"/,
-        )
-        assert.deepEqual(result.lookup.get("b0"), ["m1", "m2"])
-        assert.deepEqual(result.lookup.get("b1"), ["m3", "m4"])
-        assert.deepEqual(result.lookup.get("b2"), ["m5", "m6"])
-    })
-
-    it("labels only the derived automatic active tail and keeps older entries selectable", () => {
-        const rawMessages = [
-            textMessage("m1", "Old request"),
-            textMessage("m2", "Old result", "assistant"),
-            textMessage("m3", "Middle request"),
-            textMessage("m4", "Current request"),
-            textMessage("m5", "Current work", "assistant"),
-            textMessage("m6", "Latest work", "assistant"),
-        ]
-
-        const result = buildContextMap(
-            rawMessages as any,
-            createState(),
-            logger,
-            undefined,
-            { protectedTurns: 3 },
-        )
-
-        assert.deepEqual(result.protectedMessageIds, ["m4", "m5", "m6"])
-        assert.equal(result.entries.find((entry) => entry.key === 3)?.protected, false)
-        assert.equal(result.entries.find((entry) => entry.key === 4)?.protected, true)
-        assert.match(result.mapText, /\[4\] \[protected active tail\] user:/)
-        assert.match(result.mapText, /Protected active tail: 3 messages/)
     })
 })

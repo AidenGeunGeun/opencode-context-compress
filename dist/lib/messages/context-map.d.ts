@@ -1,55 +1,17 @@
 import type { Logger } from "../logger.js";
-import type { CompressionMapSnapshot, SessionState, WithParts } from "../state/index.js";
-export type ContextMapKey = number | string;
-export interface ContextMapEntry {
-    key: ContextMapKey;
-    position: number;
-    kind: "message" | "block";
-    role: string;
-    rawMessageIds: string[];
-    anchorMessageId?: string;
-    preview: string;
-    tokenEstimate: number;
-    compressionTokenEstimate: number;
-    toolCallCount: number;
-    toolIds: string[];
-    toolTypes: string[];
-    protected?: boolean;
-}
-export interface ContextMapResult {
-    mapText: string;
-    lookup: Map<number | string, string[]>;
-    entries: ContextMapEntry[];
-    keyOrder: Array<number | string>;
-    keyToPosition: Map<number | string, number>;
+import type { SessionState, WithParts } from "../state/index.js";
+export interface DeterministicCompressionSpan {
+    messages: WithParts[];
+    messageIds: string[];
     protectedMessageIds: string[];
 }
-export interface ContextMapOptions {
-    /** Derive and mark the newest N OpenCode execution turns as an unselectable tail. */
-    protectedTurns?: number;
-    /** Reapply a previously persisted automatic-turn tail to a fresh map snapshot. */
-    protectedMessageIds?: string[];
-}
-export interface ResolvedContextMapRange {
-    fromKey: ContextMapKey;
-    toKey: ContextMapKey;
-    startPosition: number;
-    endPosition: number;
-    mapEntryCount: number;
-    entries: ContextMapEntry[];
-    messageIds: string[];
-    nonBlockMessageIds: string[];
-    blockIds: string[];
-}
+/**
+ * Select every uncompressed physical message after the newest durable block, while
+ * preserving the configured newest execution steps verbatim.
+ */
+export declare function selectDeterministicCompressionSpan(rawHistory: WithParts[], state: SessionState, logger: Logger, protectedTurns: number): DeterministicCompressionSpan;
 export declare function deriveAutomaticProtectedTail(rawMessages: WithParts[], state: SessionState, logger: Logger, protectedTurns: number): {
     protectedMessageIds: string[];
     hasSelectableMessages: boolean;
 };
-export declare function buildContextMap(rawMessages: WithParts[], state: SessionState, logger: Logger, providerId?: string, options?: ContextMapOptions): ContextMapResult;
-export declare function createCompressionMapSnapshot(triggerMessageId: string, contextMap: ContextMapResult, options?: {
-    source?: CompressionMapSnapshot["source"];
-    cooldownRemaining?: number;
-}): CompressionMapSnapshot;
-export declare function contextMapFromCompressionSnapshot(snapshot: CompressionMapSnapshot): ContextMapResult;
-export declare function resolveContextMapRange(contextMap: ContextMapResult, from: number | string, to: number | string): ResolvedContextMapRange;
 //# sourceMappingURL=context-map.d.ts.map

@@ -1,249 +1,157 @@
 import { tool } from "@opencode-ai/plugin/tool";
-import { commitDurableSessionState } from "../state/index.js";
+import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js";
 import { saveSessionState } from "../state/persistence.js";
 import { loadPrompt } from "../prompts/index.js";
 import { estimateTokensBatch } from "../token-utils.js";
-import { collectContentInRange, collectToolIdsInRange, } from "./utils.js";
+import { collectContentInRange, collectToolIdsInRange } from "./utils.js";
 import { sendCompressNotification } from "../ui/notification.js";
-import { contextMapFromCompressionSnapshot, resolveContextMapRange, } from "../messages/context-map.js";
-import { recoverGoalAfterCompression } from "../goal.js";
+import { selectDeterministicCompressionSpan } from "../messages/context-map.js";
+import { findActiveManagementTurn } from "../messages/compress-transform.js";
+import { isIgnoredUserMessage } from "../messages/utils.js";
+import { isGoalContinuationMessage, recoverGoalAfterCompression } from "../goal.js";
+import { listSessionMessages } from "../sdk/client.js";
+import { getPostCompressionCooldownRemaining } from "../auto-policy.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
-export function removeSubsumedCompressSummaries(summaries, containedMessageIds) {
-    const containedIds = new Set(containedMessageIds);
-    return summaries.filter((summary) => {
-        if (containedIds.has(summary.anchorMessageId)) {
-            return false;
-        }
-        const summaryMessageIds = Array.isArray(summary.messageIds) ? summary.messageIds : [];
-        return !summaryMessageIds.some((messageId) => containedIds.has(messageId));
-    });
+function isVisibleUserMessage(message) {
+    return (message.info.role === "user" &&
+        !isIgnoredUserMessage(message) &&
+        !isGoalContinuationMessage(message));
 }
-/**
- * Strip recursive preservation/section markers from a summary to prevent
- * nested "[Preserved from previous compression] [Preserved from ..." chains
- * when blocks are re-compressed multiple times.
- */
-function stripPreservationMarkers(text) {
-    return text
-        .replace(/^\[Preserved from previous compression\]\s*/gm, "")
-        .replace(/^\[Preserved context\]\s*/gm, "")
-        .replace(/^\[New content\]\s*/gm, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+function findExecutingToolMessage(rawMessages, messageId, callId) {
+    const matches = rawMessages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => message.info.id === messageId);
+    if (matches.length !== 1 || matches[0].message.info.role !== "assistant")
+        return undefined;
+    const hasExecutingCall = matches[0].message.parts.some((part) => part.type === "tool" &&
+        part.tool === "compress" &&
+        (!callId || part.callID === callId));
+    return hasExecutingCall ? matches[0] : undefined;
 }
-export function composeSummaryWithPreservedBlocks(preservedSummaries, newSummary) {
-    if (preservedSummaries.length === 0) {
-        return newSummary.trim();
+export function resolveCompressionBoundary(rawMessages, state, toolMessageId, callId) {
+    const activeTurn = findActiveManagementTurn(state, rawMessages);
+    if (activeTurn) {
+        return {
+            history: rawMessages.slice(0, activeTurn.triggerIndex),
+            managementTurn: activeTurn.turn,
+        };
     }
-    const cleaned = preservedSummaries
-        .map(stripPreservationMarkers)
-        .filter(Boolean);
-    if (cleaned.length === 0) {
-        return newSummary.trim();
+    const executing = findExecutingToolMessage(rawMessages, toolMessageId, callId);
+    if (!executing) {
+        throw new Error("compress could not identify the executing tool call in the current session. Nothing was compressed.");
     }
-    return [
-        "[Preserved context]",
-        ...cleaned,
-        "",
-        "[New content]",
-        newSummary.trim(),
-    ].join("\n");
-}
-export function calculateCompressionRangeMetrics(rawMessages, rawMessageIndexById, resolvedRange, providerId) {
-    const nonBlockMessageIdsSet = new Set(resolvedRange.nonBlockMessageIds);
-    const nonBlockRawMessages = rawMessages
-        .filter((msg) => nonBlockMessageIdsSet.has(msg.info.id))
-        .sort((a, b) => (rawMessageIndexById.get(a.info.id) ?? Number.MAX_SAFE_INTEGER) -
-        (rawMessageIndexById.get(b.info.id) ?? Number.MAX_SAFE_INTEGER));
-    const toolIds = nonBlockRawMessages.length > 0
-        ? collectToolIdsInRange(nonBlockRawMessages, 0, nonBlockRawMessages.length - 1)
-        : [];
-    const nonBlockTokenEstimate = nonBlockRawMessages.length > 0
-        ? estimateTokensBatch(collectContentInRange(nonBlockRawMessages, 0, nonBlockRawMessages.length - 1), providerId)
-        : 0;
-    const blockTokenEstimate = resolvedRange.entries
-        .filter((entry) => entry.kind === "block")
-        .reduce((sum, entry) => sum + entry.tokenEstimate, 0);
-    return {
-        messageIds: resolvedRange.messageIds,
-        nonBlockMessageIds: resolvedRange.nonBlockMessageIds,
-        mapEntryCount: resolvedRange.mapEntryCount,
-        toolIds,
-        blockTokenEstimate,
-        nonBlockTokenEstimate,
-        estimatedCompressedTokens: blockTokenEstimate + nonBlockTokenEstimate,
-        incrementalCompressTokens: nonBlockTokenEstimate,
-    };
-}
-export function calculatePinnedCompressionRangeMetrics(resolvedRange) {
-    const toolIds = [
-        ...new Set(resolvedRange.entries
-            .filter((entry) => entry.kind === "message")
-            .flatMap((entry) => entry.toolIds)),
-    ];
-    const blockTokenEstimate = resolvedRange.entries
-        .filter((entry) => entry.kind === "block")
-        .reduce((sum, entry) => sum + entry.tokenEstimate, 0);
-    const nonBlockTokenEstimate = resolvedRange.entries
-        .filter((entry) => entry.kind === "message")
-        .reduce((sum, entry) => sum + entry.tokenEstimate, 0);
-    return {
-        messageIds: resolvedRange.messageIds,
-        nonBlockMessageIds: resolvedRange.nonBlockMessageIds,
-        mapEntryCount: resolvedRange.mapEntryCount,
-        toolIds,
-        blockTokenEstimate,
-        nonBlockTokenEstimate,
-        estimatedCompressedTokens: blockTokenEstimate + nonBlockTokenEstimate,
-        incrementalCompressTokens: nonBlockTokenEstimate,
-    };
-}
-/**
- * Select the final stored summary for a compression range.
- *
- * If the range contains only existing compressed blocks and no new raw messages
- * (pure-block condense), the model's summary is used directly — prepending the
- * old block content verbatim would double the stored size and defeat the purpose.
- *
- * If the range mixes blocks and new messages, the old block content is preserved
- * alongside the new summary so nothing is silently dropped.
- */
-export function selectFinalSummary(preservedSummaries, newSummary, nonBlockMessageIds) {
-    if (nonBlockMessageIds.length === 0) {
-        // Pure-block condense: model already has all block content in context,
-        // so its summary IS the condensed version — no need to re-wrap originals.
-        return newSummary.trim();
+    const parentId = executing.message.info.parentID;
+    if (typeof parentId !== "string" || parentId.length === 0) {
+        throw new Error("compress could not identify the visible user turn that owns this call. Nothing was compressed.");
     }
-    return composeSummaryWithPreservedBlocks(preservedSummaries, newSummary);
+    const parentMatches = rawMessages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => message.info.id === parentId && isVisibleUserMessage(message));
+    if (parentMatches.length !== 1 || parentMatches[0].index >= executing.index) {
+        throw new Error("compress could not unambiguously resolve this call's visible user boundary. Nothing was compressed.");
+    }
+    const owner = parentMatches[0];
+    const matchingManagementTurn = [...state.managementTurns]
+        .reverse()
+        .find((turn) => !turn.completedAt && turn.triggerMessageId === parentId);
+    if (matchingManagementTurn) {
+        return {
+            history: rawMessages.slice(0, owner.index),
+            managementTurn: matchingManagementTurn,
+        };
+    }
+    const interveningVisibleUser = rawMessages
+        .slice(owner.index + 1, executing.index)
+        .some(isVisibleUserMessage);
+    if (interveningVisibleUser) {
+        throw new Error("compress found another visible user turn between this call and its owner. Nothing was compressed.");
+    }
+    return { history: rawMessages.slice(0, owner.index) };
 }
-function buildCompressReceipt(topic, blockId, continueTask = false) {
-    const stored = blockId
-        ? `Compression complete. Stored [${blockId}] "${topic}" durably; the fold is already in effect.`
-        : `Compression complete. Stored "${topic}" durably; the fold is already in effect.`;
-    const finish = `${stored} Do not call compress or compress_map again this turn.`;
-    return continueTask
-        ? `${finish} Continue the original task now from the preserved active tail; do not stop for a compression report.`
+function buildCompressReceipt(topic, blockId, restoreDisposition) {
+    const stored = `Compression complete. Stored [${blockId}] "${topic}" durably; the fold is already in effect.`;
+    const finish = `${stored} Do not call compress again this turn.`;
+    return restoreDisposition
+        ? `${finish} Automatic compression finished. Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.`
         : finish;
 }
 export function createCompressTool(ctx) {
     return tool({
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            from: tool.schema
-                .union([tool.schema.number(), tool.schema.string()])
-                .describe("Range start index from <compress-context-map>, or block reference like 'b1'"),
-            to: tool.schema
-                .union([tool.schema.number(), tool.schema.string()])
-                .describe("Range end index from <compress-context-map>, or block reference like 'b1'"),
             summary: tool.schema
                 .string()
-                .describe("Complete technical summary replacing NEW content in this range"),
+                .describe("Truthful durable replacement for all eligible history"),
             topic: tool.schema
                 .string()
-                .describe("Short label (3-5 words) for display - e.g., 'Auth System Exploration'"),
+                .describe("Short block title, usually 3-5 words"),
         },
         async execute(args, toolCtx) {
             const { client, stateManager, logger } = ctx;
             const sessionId = toolCtx.sessionID;
             const state = stateManager.get(sessionId);
+            const input = args;
+            const summary = typeof input.summary === "string" ? input.summary.trim() : "";
+            const topic = typeof input.topic === "string" ? input.topic.trim() : "";
+            if (!summary)
+                throw new Error("compress requires a non-empty summary");
+            if (!topic)
+                throw new Error("compress requires a non-empty topic");
             const outcome = await stateManager.runExclusive(sessionId, async () => {
+                let rawMessages;
+                try {
+                    rawMessages = (await listSessionMessages(client, sessionId));
+                }
+                catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    throw new Error(`compress could not fetch session messages: ${message}. Nothing was compressed.`);
+                }
+                if (rawMessages.length === 0) {
+                    throw new Error("compress could not fetch any session messages. Nothing was compressed.");
+                }
+                await reconcileSessionLifecycle(client, state, sessionId, logger, rawMessages);
                 if (!state.persistenceSynchronized) {
-                    throw new Error("compress cannot trust saved session state. Nothing was compressed. Call compress_map again in the current turn; if it cannot synchronize state, stop and report the failure.");
+                    throw new Error("compress could not synchronize saved session state. Nothing was compressed.");
                 }
-                const snapshot = state.compressionMapSnapshot;
-                const latestIncompleteTurn = [...state.managementTurns]
-                    .reverse()
-                    .find((turn) => !turn.completedAt);
-                const activeManagementTurn = snapshot?.source === "management" &&
-                    snapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
-                    ? latestIncompleteTurn
-                    : undefined;
-                if (!snapshot || (snapshot.source === "management" && !activeManagementTurn)) {
-                    throw new Error("compress has no authoritative map for the current turn. Nothing was compressed. Call compress_map first and use labels from the map it returns.");
+                const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, typeof toolCtx.callID === "string" ? toolCtx.callID : undefined);
+                if (!boundary.managementTurn &&
+                    getPostCompressionCooldownRemaining(state, rawMessages) > 0) {
+                    const remaining = getPostCompressionCooldownRemaining(state, rawMessages);
+                    throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
                 }
-                if (snapshot.source === "normal" && (snapshot.cooldownRemaining ?? 0) > 0) {
-                    const remaining = snapshot.cooldownRemaining;
-                    throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}, then refresh with compress_map before retrying. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
+                const span = selectDeterministicCompressionSpan(boundary.history, state, logger, ctx.config.protectedTurns);
+                if (span.messages.length === 0) {
+                    return { kind: "empty" };
                 }
-                const range = args;
-                if (typeof range !== "object" || !range) {
-                    throw new Error("compress requires { from, to, summary, topic }");
-                }
-                if (!range.topic || typeof range.topic !== "string") {
-                    throw new Error("compress requires a non-empty topic");
-                }
-                if (!range.summary || typeof range.summary !== "string") {
-                    throw new Error("compress requires a non-empty summary");
-                }
-                if ((typeof range.from !== "number" && typeof range.from !== "string") ||
-                    (typeof range.to !== "number" && typeof range.to !== "string")) {
-                    throw new Error("compress requires valid from/to range boundaries");
-                }
-                const contextMap = contextMapFromCompressionSnapshot(snapshot);
-                const baselineSummaries = [...state.compressSummaries];
-                const baselineSummariesByAnchor = new Map(baselineSummaries.map((summary) => [summary.anchorMessageId, summary]));
-                const missingBlock = contextMap.entries.find((entry) => {
-                    if (entry.kind !== "block" || !entry.anchorMessageId)
-                        return false;
-                    const summary = baselineSummariesByAnchor.get(entry.anchorMessageId);
-                    return (!summary ||
-                        summary.messageIds.length !== entry.rawMessageIds.length ||
-                        summary.messageIds.some((messageId, index) => messageId !== entry.rawMessageIds[index]));
-                });
-                if (missingBlock) {
-                    throw new Error(`The pinned map contains block [${String(missingBlock.key)}] without a matching durable summary. Nothing was compressed. Call compress_map again before retrying.`);
-                }
-                const resolvedRange = resolveContextMapRange(contextMap, range.from, range.to);
-                if (activeManagementTurn?.source === "automatic" &&
-                    resolvedRange.entries.some((entry) => entry.protected)) {
-                    throw new Error("Automatic compression cannot include entries labeled [protected active tail]. Nothing was compressed. Use an older unprotected range from the pinned map; do not guess a smaller or differently formatted boundary.");
-                }
-                const rangeMetrics = calculatePinnedCompressionRangeMetrics(resolvedRange);
-                const containedMessageIds = rangeMetrics.messageIds;
-                if (containedMessageIds.length === 0) {
-                    throw new Error("Could not resolve raw message IDs for the requested range");
-                }
-                const preservedSummaries = resolvedRange.entries
-                    .filter((entry) => entry.kind === "block" && typeof entry.anchorMessageId === "string")
-                    .map((entry) => baselineSummariesByAnchor.get(entry.anchorMessageId)?.summary)
-                    .filter((summary) => typeof summary === "string" && summary.length > 0);
-                const finalSummary = selectFinalSummary(preservedSummaries, range.summary, rangeMetrics.nonBlockMessageIds);
-                const containedToolIds = rangeMetrics.toolIds;
-                const allExistingBlocksArePinned = baselineSummaries.every((summary) => contextMap.entries.some((entry) => entry.kind === "block" &&
-                    entry.anchorMessageId === summary.anchorMessageId));
-                const pinnedBlockOrderIsSafe = contextMap.entries
-                    .filter((entry) => entry.kind === "block")
-                    .every((entry, index) => entry.key === `b${index}`);
+                const containedToolIds = collectToolIdsInRange(span.messages, 0, span.messages.length - 1);
+                const estimatedCompressedTokens = estimateTokensBatch(collectContentInRange(span.messages, 0, span.messages.length - 1), state.modelContext?.providerId);
                 await toolCtx.ask({
                     permission: "compress",
                     patterns: ["*"],
                     always: ["*"],
                     metadata: {},
                 });
-                const startEntry = contextMap.entries[resolvedRange.startPosition];
-                const anchorMessageId = startEntry?.kind === "block" && startEntry.anchorMessageId
-                    ? startEntry.anchorMessageId
-                    : containedMessageIds[0];
                 const candidateCompressed = {
                     toolIds: new Set(state.compressed.toolIds),
                     messageIds: new Set(state.compressed.messageIds),
                 };
-                for (const id of containedToolIds) {
+                for (const id of containedToolIds)
                     candidateCompressed.toolIds.add(id);
-                }
-                for (const id of containedMessageIds) {
+                for (const id of span.messageIds)
                     candidateCompressed.messageIds.add(id);
-                }
-                const candidateSummaries = removeSubsumedCompressSummaries(state.compressSummaries, containedMessageIds);
-                candidateSummaries.push({
-                    anchorMessageId,
-                    messageIds: containedMessageIds,
-                    summary: finalSummary,
-                    topic: range.topic,
-                });
+                const anchorMessageId = span.messageIds[0];
+                const candidateSummaries = [
+                    ...state.compressSummaries,
+                    {
+                        anchorMessageId,
+                        messageIds: span.messageIds,
+                        summary,
+                        topic,
+                    },
+                ];
                 const completedAt = new Date().toISOString();
-                const candidateManagementTurns = activeManagementTurn
-                    ? state.managementTurns.map((turn) => turn === activeManagementTurn
+                const candidateManagementTurns = boundary.managementTurn
+                    ? state.managementTurns.map((turn) => turn === boundary.managementTurn
                         ? {
                             ...turn,
                             completedAt,
@@ -255,64 +163,59 @@ export function createCompressTool(ctx) {
                         }
                         : turn)
                     : [...state.managementTurns];
-                const candidateStats = {
-                    compressTokenCounter: 0,
-                    totalCompressTokens: state.stats.totalCompressTokens + rangeMetrics.incrementalCompressTokens,
-                };
                 const candidateState = {
                     ...state,
                     compressed: candidateCompressed,
                     compressSummaries: candidateSummaries,
                     managementTurns: candidateManagementTurns,
-                    stats: candidateStats,
+                    stats: {
+                        compressTokenCounter: 0,
+                        totalCompressTokens: state.stats.totalCompressTokens + estimatedCompressedTokens,
+                    },
                     compressionCooldownAfterMessageId: toolCtx.messageID,
                     compressionMapSnapshot: undefined,
                 };
                 const persisted = await saveSessionState(candidateState, logger);
                 if (!persisted) {
-                    throw new Error("compress could not persist compression state - the range was not compressed");
+                    throw new Error("compress could not persist compression state. Nothing was compressed.");
                 }
-                // Commit only now that the new state is durable, so a failed save leaves the
-                // live in-memory state exactly as it was and no transform hides content as if
-                // compression had succeeded.
                 commitDurableSessionState(state, candidateState);
                 return {
                     kind: "compressed",
+                    containedToolIds,
+                    selectedMessageCount: span.messageIds.length,
+                    visibleHistoryCount: span.messageIds.length + span.protectedMessageIds.length,
+                    topic,
+                    summary,
+                    estimatedCompressedTokens,
+                    storedBlockId: `b${candidateSummaries.length - 1}`,
+                    continueTask: boundary.managementTurn?.source === "automatic",
+                    goalOverflowRecovery: boundary.managementTurn?.triggeredByMessageId ===
+                        state.goalOverflowRecovery?.overflowMessageId
+                        ? state.goalOverflowRecovery
+                        : undefined,
                     currentParams: {
                         providerId: state.modelContext?.providerId,
                         modelId: state.modelContext?.modelId,
                         agent: toolCtx.agent,
                         variant: state.variant,
                     },
-                    containedToolIds,
-                    mapEntryCount: rangeMetrics.mapEntryCount,
-                    topic: range.topic,
-                    finalSummary,
-                    startPosition: resolvedRange.startPosition,
-                    endPosition: resolvedRange.endPosition,
-                    contextMapEntryCount: contextMap.entries.length,
-                    estimatedCompressedTokens: rangeMetrics.estimatedCompressedTokens,
-                    anchorMessageId,
-                    storedBlockId: allExistingBlocksArePinned && pinnedBlockOrderIsSafe
-                        ? `b${contextMap.entries
-                            .slice(0, resolvedRange.startPosition)
-                            .filter((entry) => entry.kind === "block").length}`
-                        : undefined,
-                    continueTask: activeManagementTurn?.source === "automatic",
-                    goalOverflowRecovery: activeManagementTurn?.triggeredByMessageId === state.goalOverflowRecovery?.overflowMessageId
-                        ? state.goalOverflowRecovery
-                        : undefined,
                 };
             });
-            await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.mapEntryCount, outcome.topic, outcome.finalSummary, { messageIndex: outcome.startPosition }, { messageIndex: outcome.endPosition }, outcome.contextMapEntryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
+            if (outcome.kind === "empty") {
+                return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
+            }
+            await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
             const recovery = outcome.goalOverflowRecovery
                 ? await recoverGoalAfterCompression(client, sessionId, outcome.goalOverflowRecovery)
                 : undefined;
             const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, recovery ? recovery === "resumed" : outcome.continueTask);
-            if (recovery === "changed")
+            if (recovery === "changed") {
                 return `${receipt} The blocked Goal changed, so it was not resumed.`;
-            if (recovery === "unavailable")
+            }
+            if (recovery === "unavailable") {
                 return `${receipt} Goal recovery is unavailable on this host, so no Goal was resumed.`;
+            }
             return receipt;
         },
     });

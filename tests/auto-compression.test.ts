@@ -30,6 +30,7 @@ const config: PluginConfig = {
     debug: false,
     notification: "off",
     notificationType: "chat",
+    protectedTurns: 3,
     commands: { enabled: true, protectedTools: [] },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
     turnProtection: { enabled: false, turns: 0 },
@@ -37,7 +38,6 @@ const config: PluginConfig = {
     tools: {
         settings: { protectedTools: [] },
         compress: { permission: "allow", showCompression: false },
-        compress_map: { permission: "allow" },
     },
 }
 
@@ -89,7 +89,7 @@ describe("automatic compression thresholds", () => {
     it("defaults the absolute initiation threshold to 350,000 tokens", () => {
         assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 350_000)
         assert.equal(DEFAULT_AUTO_COMPRESSION.contextWindowRatio, 0.9)
-        assert.equal(DEFAULT_AUTO_COMPRESSION.protectedTurns, 3)
+        assert.equal(config.protectedTurns, 3)
     })
 
     it("uses the earlier of 90% of the context window and the absolute threshold", () => {
@@ -388,20 +388,6 @@ describe("automatic compression lifecycle", () => {
             toolDenied,
         )(event as any)
 
-        const mapToolDenied = {
-            ...config,
-            tools: {
-                ...config.tools,
-                compress_map: { ...config.tools.compress_map, permission: "deny" as const },
-            },
-        }
-        await createAutomaticCompressionEventHandler(
-            client,
-            new SessionStateManager(),
-            logger,
-            mapToolDenied,
-        )(event as any)
-
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
@@ -556,18 +542,18 @@ describe("automatic compression lifecycle", () => {
             assert.match(payload, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
             assert.match(payload, /355,000 tokens/)
             assert.match(payload, /350,000 tokens/)
-            assert.match(payload, /protected active tail/)
-            assert.match(payload, /threshold says nothing by itself.*active, blocked, complete, or awaiting the user/i)
+            assert.match(payload, /preserves the newest configured execution steps verbatim/)
+            assert.match(payload, /Compression is context maintenance, not a task-status transition/i)
             assert.match(payload, /continue immediately only when work was genuinely active/i)
-            assert.match(payload, /do not reopen work or duplicate a final response/i)
-            assert.match(payload, /Call `compress_map` first/)
-            assert.doesNotMatch(payload, /<compress-context-map>/)
+            assert.match(payload, /do not reopen completed work, duplicate a final response/i)
+            assert.match(payload, /call `compress` once/i)
+            assert.doesNotMatch(payload, /compress_map|context-map/i)
 
             const state = stateManager.get(sessionId)
             assert.equal(state.managementTurns.length, 1)
             assert.equal(state.managementTurns[0].source, "automatic")
             assert.equal(state.managementTurns[0].triggeredByMessageId, "m8")
-            assert.deepEqual(state.managementTurns[0].protectedMessageIds, ["m4", "m5", "m6", "m7", "m8"])
+            assert.equal(state.managementTurns[0].protectedMessageIds, undefined)
             assert.equal(state.managementTurns[0].thresholdTokens, 350_000)
             assert.equal(state.autoCompressionStarting, false)
         } finally {
@@ -648,7 +634,7 @@ describe("automatic compression lifecycle", () => {
         try {
             const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, {
                 ...config,
-                autoCompression: { ...config.autoCompression, protectedTurns: 0 },
+                protectedTurns: 0,
             })
             const event = { event: { type: "message.updated", properties: { info: overflow.info } } }
             await handler(event as any)
@@ -694,7 +680,7 @@ describe("automatic compression lifecycle", () => {
         try {
             const handler = createAutomaticCompressionEventHandler(client, new SessionStateManager(), logger, {
                 ...config,
-                autoCompression: { ...config.autoCompression, protectedTurns: 0 },
+                protectedTurns: 0,
             })
             await handler({ event: { type: "message.updated", properties: { info: latest.info } } } as any)
             assert.equal(promptCalls.length, 1)

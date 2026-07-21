@@ -75,9 +75,9 @@ function assertHookContract(hooks: Hooks) {
     assert.equal(typeof hooks.config, "function")
 
     assert.equal(typeof hooks.tool, "object")
-    assert.deepEqual(Object.keys(hooks.tool ?? {}).sort(), ["compress", "compress_map"])
+    assert.deepEqual(Object.keys(hooks.tool ?? {}), ["compress"])
 
-    for (const toolName of ["compress", "compress_map"] as const) {
+    for (const toolName of ["compress"] as const) {
         const definition = hooks.tool?.[toolName]
         assert.equal(typeof definition?.description, "string")
         assert.equal(typeof definition?.args, "object")
@@ -150,8 +150,8 @@ describe("built Node ESM package", () => {
             await hooks.config?.(opencodeConfig as any)
             assert.equal(opencodeConfig.compaction.auto, false)
             assert.equal(opencodeConfig.command.compress.description, "Show available context compression commands")
-            assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress_map", "compress"])
-            assert.equal(opencodeConfig.permission.compress_map, "allow")
+            assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress"])
+            assert.equal("compress_map" in opencodeConfig.permission, false)
             assert.equal(opencodeConfig.permission.compress, "allow")
 
             await hooks["chat.message"]?.(
@@ -164,5 +164,47 @@ describe("built Node ESM package", () => {
                 { parts: [] },
             )
         })
+    })
+
+    it("ships the deterministic selector's fail-closed reconciliation guard", async () => {
+        const moduleUrl = pathToFileURL(
+            join(projectRoot, "dist", "lib", "messages", "context-map.js"),
+        ).href
+        const { selectDeterministicCompressionSpan } = (await import(moduleUrl)) as {
+            selectDeterministicCompressionSpan: (...args: any[]) => unknown
+        }
+        const state = {
+            compressed: { toolIds: new Set(), messageIds: new Set(["missing-anchor"]) },
+            compressSummaries: [
+                {
+                    anchorMessageId: "missing-anchor",
+                    messageIds: ["missing-anchor"],
+                    summary: "durable block",
+                },
+            ],
+            managementTurns: [],
+        }
+        const messages = [
+            {
+                info: {
+                    id: "visible",
+                    role: "user",
+                    sessionID: "dist-selection",
+                    time: { created: Date.now() },
+                },
+                parts: [{ type: "text", text: "visible" }],
+            },
+        ]
+
+        assert.throws(
+            () =>
+                selectDeterministicCompressionSpan(
+                    messages,
+                    state,
+                    { info: () => {}, warn: () => {} },
+                    0,
+                ),
+            /could not reconcile an existing compressed block/,
+        )
     })
 })

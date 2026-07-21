@@ -34,8 +34,9 @@ export function renderGoalOverflowRecoveryPrompt(): string {
         "<system-reminder>",
         "CONTEXT OVERFLOW RECOVERY REQUIRED",
         "The unchanged active session Goal was blocked because its provider turn exceeded the context window.",
-        "This is one bounded recovery attempt. Call compress_map once, then compress once using labels from that pinned map.",
-        "If either call fails, stop and surface the exact failure. Do not retry compression and do not change Goal state yourself.",
+        "This is one bounded recovery attempt. Review the conversation, then call compress once with one faithful summary and short topic.",
+        "The plugin preserves the newest configured execution steps and compresses all eligible earlier history after the newest existing block.",
+        "If the call fails, stop and surface the exact failure. Do not retry compression and do not change Goal state yourself.",
         "After durable compression, the plugin will resume only the exact blocked Goal version that caused this recovery.",
         "</system-reminder>",
     ].join("\n")

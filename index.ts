@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config.js"
 import { Logger } from "./lib/logger.js"
 import { SessionStateManager } from "./lib/state/index.js"
-import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js"
+import { createCompressTool } from "./lib/tools/index.js"
 import {
     createChatMessageHandler,
     createChatMessageTransformHandler,
@@ -55,15 +55,6 @@ const plugin: Plugin = (async (ctx) => {
             config,
         ),
         tool: {
-            ...(config.tools.compress_map.permission !== "deny" && {
-                compress_map: createCompressMapTool({
-                    client: ctx.client,
-                    stateManager,
-                    logger,
-                    config,
-                    workingDirectory: ctx.directory,
-                }),
-            }),
             ...(config.tools.compress.permission !== "deny" && {
                 compress: createCompressTool({
                     client: ctx.client,
@@ -91,7 +82,6 @@ const plugin: Plugin = (async (ctx) => {
             }
 
             const toolsToAdd: string[] = []
-            if (config.tools.compress_map.permission !== "deny") toolsToAdd.push("compress_map")
             if (config.tools.compress.permission !== "deny") toolsToAdd.push("compress")
 
             if (toolsToAdd.length > 0) {
@@ -109,7 +99,6 @@ const plugin: Plugin = (async (ctx) => {
             const permission = opencodeConfig.permission ?? {}
             opencodeConfig.permission = {
                 ...permission,
-                compress_map: config.tools.compress_map.permission,
                 compress: config.tools.compress.permission,
             } as typeof permission
         },

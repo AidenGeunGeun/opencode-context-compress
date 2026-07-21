@@ -29,6 +29,15 @@ for (const file of oldGeneratedFiles) {
 
 // Find all .md files in the prompts directory
 const mdFiles = readdirSync(PROMPTS_DIR).filter((f) => f.endsWith(".md"))
+const expectedGeneratedFiles = new Set(
+    mdFiles.map((file) => `${basename(file, ".md")}.generated.ts`),
+)
+for (const file of readdirSync(CODEGEN_DIR).filter((f) => f.endsWith(".generated.ts"))) {
+    if (!expectedGeneratedFiles.has(file)) {
+        unlinkSync(join(CODEGEN_DIR, file))
+        console.log(`Cleaned up removed prompt: ${file}`)
+    }
+}
 
 for (const mdFile of mdFiles) {
     const mdPath = join(PROMPTS_DIR, mdFile)

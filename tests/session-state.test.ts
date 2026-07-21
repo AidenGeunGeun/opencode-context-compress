@@ -423,7 +423,7 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(loadResult.state.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(loadResult.state.lastCompaction, 123_456)
-            assert.deepEqual(loadResult.state.compressionMapSnapshot, state.compressionMapSnapshot)
+            assert.equal(loadResult.state.compressionMapSnapshot, undefined)
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
 
@@ -440,7 +440,7 @@ describe("saveSessionState", () => {
             assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(reloadedState.lastCompaction, 123_456)
-            assert.deepEqual(reloadedState.compressionMapSnapshot, state.compressionMapSnapshot)
+            assert.equal(reloadedState.compressionMapSnapshot, undefined)
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -495,7 +495,7 @@ describe("saveSessionState", () => {
         }
     })
 
-    it("drops a malformed execution snapshot without rejecting otherwise valid state", async () => {
+    it("loads completed older blocks while ignoring a stale execution snapshot", async () => {
         const sessionId = `session-state-malformed-pin-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFiles(sessionId)
 
@@ -504,24 +504,31 @@ describe("saveSessionState", () => {
             await writeFile(
                 getSessionFilePath(sessionId),
                 JSON.stringify({
-                    compressed: { toolIds: [], messageIds: [] },
-                    compressSummaries: [],
-                    managementTurns: [{ triggerMessageId: "manage-trigger" }],
+                    compressed: { toolIds: [], messageIds: ["m1", "m2"] },
+                    compressSummaries: [
+                        {
+                            anchorMessageId: "m1",
+                            messageIds: ["m1", "m2"],
+                            summary: "completed older block",
+                            topic: "Older Block",
+                        },
+                    ],
+                    managementTurns: [
+                        {
+                            triggerMessageId: "manage-trigger",
+                            completedAt: new Date().toISOString(),
+                            completedMessageId: "compress-message",
+                        },
+                    ],
                     compressionMapSnapshot: {
                         source: "management",
                         triggerMessageId: "manage-trigger",
                         entries: [
                             {
-                                key: 1,
-                                kind: "message",
-                                rawMessageIds: ["m1"],
-                                toolIds: [],
-                                tokenEstimate: 1,
-                            },
-                            {
-                                key: 2,
-                                kind: "message",
-                                rawMessageIds: ["m1"],
+                                key: "b0",
+                                kind: "block",
+                                rawMessageIds: ["m1", "m2"],
+                                anchorMessageId: "m1",
                                 toolIds: [],
                                 tokenEstimate: 1,
                             },
@@ -538,6 +545,12 @@ describe("saveSessionState", () => {
             if (loaded.status !== "loaded") throw new Error("expected valid state")
             assert.equal(loaded.state.compressionMapSnapshot, undefined)
             assert.equal(loaded.state.managementTurns.length, 1)
+            assert.deepEqual(loaded.state.compressSummaries[0], {
+                anchorMessageId: "m1",
+                messageIds: ["m1", "m2"],
+                summary: "completed older block",
+                topic: "Older Block",
+            })
         } finally {
             await cleanupSessionFiles(sessionId)
         }

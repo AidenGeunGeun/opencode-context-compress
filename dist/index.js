@@ -1,7 +1,7 @@
 import { getConfig } from "./lib/config.js";
 import { Logger } from "./lib/logger.js";
 import { SessionStateManager } from "./lib/state/index.js";
-import { createCompressMapTool, createCompressTool } from "./lib/tools/index.js";
+import { createCompressTool } from "./lib/tools/index.js";
 import { createChatMessageHandler, createChatMessageTransformHandler, createCommandExecuteHandler, } from "./lib/hooks.js";
 import { configureClientAuth, isSecureMode } from "./lib/auth.js";
 import { createAutomaticCompressionEventHandler, createChatParamsHandler, } from "./lib/auto-compression.js";
@@ -24,15 +24,6 @@ const plugin = (async (ctx) => {
         "chat.message": createChatMessageHandler(stateManager, logger),
         "command.execute.before": createCommandExecuteHandler(ctx.client, stateManager, logger, config),
         tool: {
-            ...(config.tools.compress_map.permission !== "deny" && {
-                compress_map: createCompressMapTool({
-                    client: ctx.client,
-                    stateManager,
-                    logger,
-                    config,
-                    workingDirectory: ctx.directory,
-                }),
-            }),
             ...(config.tools.compress.permission !== "deny" && {
                 compress: createCompressTool({
                     client: ctx.client,
@@ -58,8 +49,6 @@ const plugin = (async (ctx) => {
                 };
             }
             const toolsToAdd = [];
-            if (config.tools.compress_map.permission !== "deny")
-                toolsToAdd.push("compress_map");
             if (config.tools.compress.permission !== "deny")
                 toolsToAdd.push("compress");
             if (toolsToAdd.length > 0) {
@@ -74,7 +63,6 @@ const plugin = (async (ctx) => {
             const permission = opencodeConfig.permission ?? {};
             opencodeConfig.permission = {
                 ...permission,
-                compress_map: config.tools.compress_map.permission,
                 compress: config.tools.compress.permission,
             };
         },

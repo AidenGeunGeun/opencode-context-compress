@@ -131,107 +131,6 @@ function normalizeManagementTurns(turns) {
     }
     return normalized;
 }
-function normalizeCompressionMapSnapshot(value) {
-    if (!value || typeof value !== "object")
-        return undefined;
-    const snapshot = value;
-    if (typeof snapshot.triggerMessageId !== "string" ||
-        snapshot.triggerMessageId.length === 0 ||
-        !Array.isArray(snapshot.entries)) {
-        return undefined;
-    }
-    const source = snapshot.source === "normal" ? "normal" : "management";
-    const cooldownRemaining = source === "normal" &&
-        typeof snapshot.cooldownRemaining === "number" &&
-        Number.isSafeInteger(snapshot.cooldownRemaining) &&
-        snapshot.cooldownRemaining > 0
-        ? snapshot.cooldownRemaining
-        : undefined;
-    const keys = new Set();
-    const physicalMessageIds = new Set();
-    const physicalToolIds = new Set();
-    const entries = [];
-    let nextNumericKey = 1;
-    for (const valueEntry of snapshot.entries) {
-        if (!valueEntry || typeof valueEntry !== "object")
-            return undefined;
-        const entry = valueEntry;
-        const key = entry.key;
-        const validKey = (typeof key === "number" && Number.isSafeInteger(key) && key > 0) ||
-            (typeof key === "string" && /^b\d+$/.test(key));
-        if (!validKey || keys.has(key))
-            return undefined;
-        if (entry.kind !== "message" && entry.kind !== "block")
-            return undefined;
-        if ((entry.kind === "message" && typeof key !== "number") ||
-            (entry.kind === "block" && typeof key !== "string")) {
-            return undefined;
-        }
-        if (entry.kind === "message" && key !== nextNumericKey++)
-            return undefined;
-        if (!Array.isArray(entry.rawMessageIds) ||
-            entry.rawMessageIds.length === 0 ||
-            !entry.rawMessageIds.every((messageId) => typeof messageId === "string" && messageId.length > 0)) {
-            return undefined;
-        }
-        const rawMessageIds = entry.rawMessageIds;
-        if (entry.kind === "message" && rawMessageIds.length !== 1)
-            return undefined;
-        if (new Set(rawMessageIds).size !== rawMessageIds.length)
-            return undefined;
-        if (rawMessageIds.some((messageId) => physicalMessageIds.has(messageId)))
-            return undefined;
-        if (!Array.isArray(entry.toolIds) ||
-            !entry.toolIds.every((toolId) => typeof toolId === "string" && toolId.length > 0)) {
-            return undefined;
-        }
-        const toolIds = entry.toolIds;
-        if (new Set(toolIds).size !== toolIds.length)
-            return undefined;
-        if (toolIds.some((toolId) => physicalToolIds.has(toolId)))
-            return undefined;
-        if (entry.kind === "block" && toolIds.length > 0)
-            return undefined;
-        if (typeof entry.tokenEstimate !== "number" ||
-            !Number.isFinite(entry.tokenEstimate) ||
-            entry.tokenEstimate < 0) {
-            return undefined;
-        }
-        if (entry.kind === "block" &&
-            (typeof entry.anchorMessageId !== "string" || entry.anchorMessageId.length === 0)) {
-            return undefined;
-        }
-        if (entry.kind === "block" &&
-            !rawMessageIds.includes(entry.anchorMessageId)) {
-            return undefined;
-        }
-        if (entry.kind === "message" && entry.anchorMessageId !== undefined)
-            return undefined;
-        if (entry.protected !== undefined && typeof entry.protected !== "boolean") {
-            return undefined;
-        }
-        keys.add(key);
-        rawMessageIds.forEach((messageId) => physicalMessageIds.add(messageId));
-        toolIds.forEach((toolId) => physicalToolIds.add(toolId));
-        entries.push({
-            key: key,
-            kind: entry.kind,
-            rawMessageIds,
-            ...(typeof entry.anchorMessageId === "string"
-                ? { anchorMessageId: entry.anchorMessageId }
-                : {}),
-            ...(entry.protected === true ? { protected: true } : {}),
-            toolIds,
-            tokenEstimate: entry.tokenEstimate,
-        });
-    }
-    return {
-        source,
-        triggerMessageId: snapshot.triggerMessageId,
-        ...(cooldownRemaining !== undefined ? { cooldownRemaining } : {}),
-        entries,
-    };
-}
 function normalizeGoalOverflowRecovery(value) {
     if (!value || typeof value !== "object")
         return undefined;
@@ -300,9 +199,6 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             },
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
-            ...(sessionState.compressionMapSnapshot
-                ? { compressionMapSnapshot: sessionState.compressionMapSnapshot }
-                : {}),
             stats: sessionState.stats,
             ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
                 ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
@@ -428,32 +324,12 @@ export async function loadSessionState(sessionId, logger, messages) {
         migrated,
     });
     const managementTurns = normalizeManagementTurns(state.managementTurns);
-    const normalizedSnapshot = normalizeCompressionMapSnapshot(state.compressionMapSnapshot);
-    const latestIncompleteTurn = [...managementTurns].reverse().find((turn) => !turn.completedAt);
-    const snapshotBlocks = normalizedSnapshot?.entries.filter((entry) => entry.kind === "block") ?? [];
-    const snapshotBlocksMatchSummaries = snapshotBlocks.every((entry) => {
-        const summary = compressSummaries.find((candidate) => candidate.anchorMessageId === entry.anchorMessageId);
-        return (summary !== undefined &&
-            summary.messageIds.length === entry.rawMessageIds.length &&
-            summary.messageIds.every((messageId, index) => messageId === entry.rawMessageIds[index]));
-    });
-    const allSummariesArePinned = compressSummaries.every((summary) => snapshotBlocks.some((entry) => entry.anchorMessageId === summary.anchorMessageId));
-    const completeBlockOrderIsValid = !allSummariesArePinned ||
-        snapshotBlocks.every((entry, index) => entry.key === `b${index}`);
-    const snapshotMatchesState = Boolean(normalizedSnapshot &&
-        (normalizedSnapshot.source === "management"
-            ? normalizedSnapshot.triggerMessageId === latestIncompleteTurn?.triggerMessageId
-            : true) &&
-        snapshotBlocksMatchSummaries &&
-        completeBlockOrderIsValid);
-    const compressionMapSnapshot = snapshotMatchesState ? normalizedSnapshot : undefined;
     const goalOverflowRecovery = normalizeGoalOverflowRecovery(state.goalOverflowRecovery);
     const result = {
         sessionName: state.sessionName,
         compressed: state.compressed,
         compressSummaries,
         managementTurns,
-        ...(compressionMapSnapshot ? { compressionMapSnapshot } : {}),
         stats: state.stats,
         ...(typeof state.autoCompressionEnabledOverride === "boolean"
             ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }

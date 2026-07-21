@@ -71,8 +71,7 @@ function formatThresholdReason(result, ratio) {
 export function createAutomaticCompressionEventHandler(client, stateManager, logger, config) {
     return async (input) => {
         if (!config.autoCompression.enabled ||
-            config.tools.compress.permission === "deny" ||
-            config.tools.compress_map.permission === "deny")
+            config.tools.compress.permission === "deny")
             return;
         if (input.event?.type !== "message.updated")
             return;
@@ -129,7 +128,6 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                 const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
                 if (!policy.enabled ||
                     config.tools.compress.permission === "deny" ||
-                    config.tools.compress_map.permission === "deny" ||
                     cooldownApplies) {
                     return undefined;
                 }
@@ -160,7 +158,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                         triggeredByMessageId: info.id,
                         contextTokens,
                         thresholdTokens: threshold.thresholdTokens,
-                        protectedTurns: config.autoCompression.protectedTurns,
+                        protectedTurns: config.protectedTurns,
                         asyncPrompt: true,
                         goalOverflowRecovery: {
                             overflowMessageId: info.id,
@@ -184,10 +182,6 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                 state.autoCompressionStarting = true;
                 state.lastAutoTriggeredMessageId = info.id;
                 attemptedStart = true;
-                const flags = {
-                    compress: true,
-                    compress_map: true,
-                };
                 const staged = await stageManagementTurnWithinLock({
                     client,
                     stateManager,
@@ -196,7 +190,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                     logger,
                     sessionId: info.sessionID,
                     messages,
-                    systemPrompt: renderAutomaticSystemPrompt(flags, {
+                    systemPrompt: renderAutomaticSystemPrompt({
                         context_tokens: contextTokens.toLocaleString("en-US"),
                         threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
                         threshold_reason: formatThresholdReason(threshold, policy.contextWindowRatio),
@@ -205,7 +199,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                     triggeredByMessageId: info.id,
                     contextTokens,
                     thresholdTokens: threshold.thresholdTokens,
-                    protectedTurns: config.autoCompression.protectedTurns,
+                    protectedTurns: config.protectedTurns,
                     asyncPrompt: true,
                 });
                 return staged ? { staged, threshold, contextTokens } : undefined;

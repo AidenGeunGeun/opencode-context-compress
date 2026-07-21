@@ -144,21 +144,12 @@ async function sendManageFailureFeedback(
 }
 
 export async function handleManageCommand(ctx: ManageCommandContext): Promise<void> {
-    const flags = {
-        compress: ctx.config.tools.compress.permission !== "deny",
-        compress_map: ctx.config.tools.compress_map.permission !== "deny",
-    }
-
-    if (!flags.compress || !flags.compress_map) {
-        const unavailable = [
-            !flags.compress_map ? "compress_map" : undefined,
-            !flags.compress ? "compress" : undefined,
-        ].filter(Boolean)
+    if (ctx.config.tools.compress.permission === "deny") {
         await sendManageFailureFeedback(
             ctx.client,
             ctx.logger,
             ctx.sessionId,
-            `Compression management did not start because ${unavailable.join(" and ")} ${unavailable.length === 1 ? "is" : "are"} denied. Enable both compression tools, then run \`/compress manage\` again.`,
+            "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.",
             getCurrentParams(ctx.state, ctx.messages, ctx.logger),
         )
         return
@@ -172,7 +163,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
-        systemPrompt: renderSystemPrompt(flags),
+        systemPrompt: renderSystemPrompt(),
         retainedText: extractManageCommandResidual(ctx.arguments),
     })
 }
@@ -238,9 +229,6 @@ export async function stageManagementTurnWithinLock(
         ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
         ...(ctx.source === "automatic" ? { source: "automatic" as const } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
-        ...(ctx.source === "automatic"
-            ? { protectedMessageIds: automaticTail?.protectedMessageIds ?? [] }
-            : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
         ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
     }

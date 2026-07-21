@@ -32,6 +32,12 @@
             "default": "chat",
             "description": "Where to display compression notifications (chat message or toast notification)"
         },
+        "protectedTurns": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 3,
+            "description": "Newest OpenCode execution steps kept verbatim outside every compression"
+        },
         "autoCompression": {
             "type": "object",
             "description": "Automatically initiate model-directed compression before the context window fills",
@@ -58,15 +64,13 @@
                 "protectedTurns": {
                     "type": "integer",
                     "minimum": 0,
-                    "default": 3,
-                    "description": "Recent OpenCode execution turns kept outside automatic compression ranges"
+                    "description": "Deprecated alias for top-level protectedTurns"
                 }
             },
             "default": {
                 "enabled": true,
                 "contextWindowRatio": 0.9,
-                "tokenThreshold": 350000,
-                "protectedTurns": 3
+                "tokenThreshold": 350000
             }
         },
         "commands": {
@@ -153,19 +157,6 @@
                             "type": "boolean",
                             "default": false,
                             "description": "Show summary output in the UI"
-                        }
-                    }
-                },
-                "compress_map": {
-                    "type": "object",
-                    "description": "Configuration for the compress_map tool",
-                    "additionalProperties": false,
-                    "properties": {
-                        "permission": {
-                            "type": "string",
-                            "enum": ["ask", "allow", "deny"],
-                            "default": "allow",
-                            "description": "Permission mode (deny disables the tool)"
                         }
                     }
                 }

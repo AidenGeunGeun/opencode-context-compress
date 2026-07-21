@@ -12,18 +12,14 @@ Run with:
 npm run compress -- [flags]
 ```
 
-Supported flags:
+Supported flag:
 
-- `--system`: render system prompt.
-- `--compress-context`: print a mock `<compress-context-map>` block.
-- `-c`, `--compress`: enable compress section for `--system` rendering (default on).
-- `-m`, `--compress-map`: enable compress_map section for `--system` rendering (default on).
+- `--system`: render the compression management prompt.
 
 Examples:
 
 ```bash
 npm run compress -- --system
-npm run compress -- --compress-context
 ```
 
 ## Prompt Codegen
@@ -34,4 +30,4 @@ Current generated prompt set:
 
 - `system.generated.ts`
 - `compress.generated.ts`
-- `compress-map.generated.ts`
+- `automatic-system.generated.ts`

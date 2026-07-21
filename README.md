@@ -16,33 +16,36 @@ or let the plugin initiate the same workflow before a primary session fills its 
 
 ## Core Behavior
 
-- No separate summarizer or hidden compaction model: the active agent chooses and summarizes the range.
+- No separate summarizer or hidden compaction model: the active agent writes one truthful summary
+  and a short block title; the plugin always selects the eligible history itself.
 - Manual compression runs when you trigger `/compress manage`.
 - Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
   the model-reported context window or 350,000 tokens by default.
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
-- Both manual and automatic management use a map-first protocol: the reminder does not include a
-  map; the agent must call `compress_map`, then `compress` against that same-turn snapshot.
-- The same map-first tools are available agentically during normal work. A normal-turn map excludes
-  the current visible user request and in-progress agent/tool activity, so only prior history is
-  selectable.
-- Both `compress_map` and `compress` must be permitted. If either tool is denied, management does
-  not open an unusable model turn.
+- One public tool: `compress({ summary, topic })`. Availability alone does not authorize autonomous
+  use; call it only from a management reminder or an explicit user request to compress context.
+- Manual management, automatic management, and authorized normal-turn use all share the same
+  deterministic selection: every eligible uncompressed message after the newest existing `[bN]`
+  block, excluding the newest configured execution steps (`protectedTurns`, default `3`).
+- Existing compressed blocks are immutable. A new fold never selects, alters, reorders, or removes
+  them.
+- Only the `compress` tool must be permitted. If it is denied, management does not open an unusable
+  model turn.
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
   next model turn, with no need to wait for a further user message.
 - After a successful compression, automatic and model-initiated compression pause for the next
   three completed primary-session assistant responses. An explicit `/compress manage` may override
   this cooldown.
-- After that management turn completes, its trigger, tool calls, tool outputs, map text, and
-  assistant chatter are hidden from future model prompts.
-- Automatic turns protect the three most recent OpenCode execution turns by default, require a
-  high-detail current-task handoff, and tell the agent to resume the interrupted task immediately.
+- After that management turn completes, its trigger, tool calls, tool outputs, and assistant
+  chatter are hidden from future model prompts.
+- Automatic turns require a high-detail current-task handoff and tell the agent to resume the
+  interrupted task immediately when work was genuinely still active.
 
 ## Commands
 
 - `/compress` or `/compress help`: show command help.
-- `/compress manage [instruction]`: send a self-contained context-management reminder that requires `compress_map` then `compress`; optional trailing text is passed to the agent as the user's specific compression instruction.
+- `/compress manage [instruction]`: send a self-contained context-management reminder that requires one `compress` call with `summary` and `topic`; optional trailing text is passed to the agent as the user's specific compression instruction.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
 - `/compress auto` or `/compress auto status`: show this session's effective automatic-compression settings and cooldown.
@@ -59,70 +62,49 @@ overridden from a session.
 
 ## Agentic Workflow
 
-During normal work the agent may choose this map-first flow itself. `/compress manage` and an
-automatic threshold trigger additionally open a model-visible management turn with a self-contained
-reminder and no map text. In either case the agent:
+During normal work the agent may call `compress` only when the current user message explicitly
+authorizes compression. `/compress manage` and an automatic threshold trigger open a model-visible
+management turn with a self-contained reminder. In every authorized path the agent:
 
-1. Call `compress_map` and read the returned `<compress-context-map>`. That successful same-turn
-   snapshot becomes the sole execution source of truth.
-2. Call `compress` once with a range and summary drawn from that map. Reasoning or other tools may
-   run between the two calls; adjacency is not required.
-3. Get back a short durable-success receipt (e.g. `Stored [b4] "..." durably; the fold is already in effect`), not a refreshed map —
-   the fold is already in effect. Do not call either compression tool again that turn after success.
+1. Review the current conversation and reconcile chronology (later evidence supersedes stale plans).
+2. Call `compress` once with:
+   - `summary`: the durable replacement for all eligible uncompressed history after the newest existing block
+   - `topic`: a short title for the new compressed block
+3. Treat a success receipt as durable and already active. Do not call `compress` again that turn.
 
-By default, that one range covers the entire eligible uncompressed history after the newest `[bN]`,
-not merely one completed phase or branch. Automatic management stops immediately before the
-protected active tail; manual or normal use includes all numeric entries unless the user explicitly
-requests a narrower range.
+The plugin selects the span deterministically inside that one call:
 
-`compress` resolves the submitted range against the pinned physical IDs from the map the agent
-actually saw. It does not fetch or renumber a live transcript map. A later successful
-`compress_map` in the same turn replaces the pin; a failed map fetch or save leaves the last
-successful same-turn pin intact and returns no new authoritative map. Explicit consolidation of
-older `[bN]` blocks remains supported as a single `compress` call when the user asks for it.
+1. Resolve the compression boundary (active management trigger, or the visible user turn that owns
+   the executing tool call).
+2. Apply existing compression transforms so historical blocks occupy their canonical positions.
+3. Take every uncompressed message after the newest existing block (or all uncompressed messages
+   when no block exists).
+4. Exclude the newest `protectedTurns` execution steps so they remain verbatim after the fold.
+5. Never select a block or any message ID belonging to an existing block.
+6. Atomically persist the new block, IDs, stats, management completion marker when applicable, and
+   cooldown anchor before returning success.
+
+If nothing eligible remains, the tool returns a truthful empty result and leaves state unchanged.
+Normal-turn ownership is tied to the executing tool call; a later queued user cannot fold the wrong
+turn. Ambiguous ownership fails closed without changing state.
 
 Automatic triggering is event-driven, per session, and deduplicated. It observes completed
 provider usage; it does not open a management turn on every response. Subagent sessions remain
 excluded because their transform and effective tool-permission contract is different from primary
-sessions. Automatic turns stage protected active-tail IDs at start and reapply them when the agent
-opens the map.
+sessions.
 
-Normal-turn compression still respects the three-response post-compression cooldown. Reading
-`compress_map` remains available during cooldown, but `compress` asks the agent to wait and refresh
-the map later; an explicit user `/compress manage` remains the override.
+Normal-turn compression still respects the three-response post-compression cooldown. During
+cooldown, `compress` refuses model-initiated use and asks the agent to wait; an explicit user
+`/compress manage` remains the override.
 
-While the management turn is still open, the agent can see the reminder, map tool result, and
-other tool activity. The instant `compress` succeeds, the manage prompt, map output, and status
-notifications are hidden from the very next model turn — no further user message is needed. The
-completed `compress` tool call itself stays briefly because providers require the tool-call/result
-pair; its submitted input is left literal so the agent cannot mistake a synthetic marker for what
-it submitted. On later turns, the model-visible context contains only compressed `[bN]` blocks,
-normal conversation between compression runs, and the active tail. The cleanup leaves no marker or
-placeholder behind.
-
-## Context Map
-
-`compress_map` returns the structured map the agent must use during either normal or managed work.
-`compress` executes against that pinned same-turn snapshot, not a freshly rebuilt numbering:
-
-```text
-<compress-context-map>
-[1] user: "Let's implement JWT auth"
-[2-4] assistant: 5 tool calls - auth exploration (~1,240 tokens)
-[b0] [compressed] "Prior database migration debugging" (~420 tokens)
-[5] user: "Looks good, now add tests"
-[6-8] assistant: 4 tool calls - test implementation (~2,180 tokens)
----
-Total: 8 messages + 1 block | ~6,500 tokens
-</compress-context-map>
-```
-
-During manual management, the agent decides what counts as the active tail. During automatic
-management, recent protected entries are labeled `[protected active tail]`; the agent still chooses
-the range, but `compress` rejects a range that crosses that safety boundary. Block labels follow
-where their anchors appear in the conversation stream, so re-compressing one block does not
-renumber unrelated blocks. Maps exclude the entire active management span so the agent cannot
-select the reminder or its own compression-tool activity.
+While the management turn is still open, the agent can see the reminder and tool activity. The
+instant `compress` succeeds, the manage prompt and status notifications are hidden from the very
+next model turn — no further user message is needed. The completed `compress` tool call itself
+stays briefly because providers require the tool-call/result pair; its submitted input is left
+literal so the agent cannot mistake a synthetic marker for what it submitted. On later turns, the
+model-visible context contains only compressed `[bN]` blocks, normal conversation between
+compression runs, the preserved newest execution steps, and model-visible Goal continuation text.
+The cleanup leaves no marker or placeholder behind.
 
 ## Installation
 
@@ -185,15 +167,15 @@ Default runtime config:
     "debug": false,
     "notification": "detailed",
     "notificationType": "chat",
+    "protectedTurns": 3,
     "commands": {
         "enabled": true,
-        "protectedTools": ["task", "todowrite", "todoread", "compress", "compress_map", "batch", "plan_enter", "plan_exit"]
+        "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
     },
     "autoCompression": {
         "enabled": true,
         "contextWindowRatio": 0.9,
-        "tokenThreshold": 350000,
-        "protectedTurns": 3
+        "tokenThreshold": 350000
     },
     "turnProtection": {
         "enabled": false,
@@ -202,18 +184,19 @@ Default runtime config:
     "protectedFilePatterns": [],
     "tools": {
         "settings": {
-            "protectedTools": ["task", "todowrite", "todoread", "compress", "compress_map", "batch", "plan_enter", "plan_exit"]
+            "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
         },
         "compress": {
             "permission": "allow",
             "showCompression": false
-        },
-        "compress_map": {
-            "permission": "allow"
         }
     }
 }
 ```
+
+`protectedTurns` is general compression policy (manual, automatic, and authorized normal paths).
+Default is `3`. The legacy nested key `autoCompression.protectedTurns` is still accepted as a
+fallback when the top-level key is absent; an explicitly configured top-level value wins.
 
 ## Persistence
 
@@ -225,28 +208,30 @@ Stored fields include:
 
 - compressed tool IDs
 - compressed message IDs
-- compression summaries
-- manual and automatic management-turn cleanup markers, including automatic protected-tail IDs
-- at most one bounded current-turn compression-map execution skeleton (entry keys/kinds, physical
-  message IDs, optional block anchors, protected flags, tool IDs, and approximate metrics needed
-  to execute without rebuilding the transcript)
+- compression summaries (`[bN]` blocks: anchor, message IDs, summary, topic)
+- manual and automatic management-turn cleanup markers
 - per-session compression stats
 - session automatic-compression overrides and the post-compression cooldown anchor
 - optional one-shot Goal overflow recovery owner (`goalOverflowRecovery`: overflow message id +
   `{ goalID, timeUpdated }`) when the host blocked a Goal on `ContextOverflowError`
 
-The execution skeleton is replaced on each successful `compress_map`, and cleared on successful
-`compress`, a new management turn, or native compaction/reset. A normal-turn pin still clears
-immediately when a later real visible user is admitted. A management pin from successful
-`compress_map` survives that admission so the existing in-flight management `compress` can
-consume it; if it is not consumed, the next transcript transform/reconciliation clears the stale
-pin before the later user's provider request. There is no queue, worker, or extra scheduler
-state. Goal synthetic continuations remain non-invalidating exceptions (see below). It is not a
-map-text cache, transcript copy, or snapshot history.
+Durable mutations for one session run through `SessionStateManager.runExclusive(sessionId, ...)`.
+A candidate state is saved atomically before it is committed to memory.
 
 The raw conversation history still exists in OpenCode storage, but completed management machinery
 is suppressed from future model prompts. Restarting the session reloads the saved cleanup markers,
 so old management turns do not reappear in the model-visible stream.
+
+### Maintainer compatibility notes
+
+- Old completed session state continues to load and render. Existing `[bN]` anchors and ordering
+  are unchanged.
+- Historical management residue that still contains retired tool parts is cleaned up so old
+  completed management machinery stays hidden; that cleanup path is not part of the current
+  agent-facing workflow.
+- Stale persisted `compressionMapSnapshot` data is ignored and cleared through the normal state
+  lifecycle. It is never executed and is not replaced by another durable snapshot system.
+- The legacy `"dcp"` storage directory string remains for migration from older installs.
 
 ## Session Goal compatibility
 
@@ -268,10 +253,9 @@ recognition requires all of:
 2. Exact prefix: `Continue pursuing the active session goal.`
 3. A line `Goal reference: goa_* <timestamp>` (Goal id + owner `time.updated`)
 
-The plugin ignores that combination only as a management-boundary / map-pin invalidator exception
-so ordinary Goal steering does not close an open management turn or clear its pin. The marker is
-**not** stripped from model context. Recognition is fail-open: missing prefix or reference → treat
-as a normal user boundary.
+The plugin ignores that combination only as a management-boundary exception so ordinary Goal
+steering does not close an open management turn. The marker is **not** stripped from model context.
+Recognition is fail-open: missing prefix or reference → treat as a normal user boundary.
 
 Do not pause/resume the Goal around ordinary automatic management turns. Host prompt admission may
 self-heal when a newer durable user (including a management turn) was admitted while a joined run
@@ -283,7 +267,7 @@ When automatic compression is enabled and the host reports assistant `ContextOve
 session whose Goal is `blocked`:
 
 1. Store the exact owner `{ goalID, timeUpdated }` with the overflow message id in per-session state.
-2. Open **one** map-first recovery management turn.
+2. Open **one** recovery management turn that uses the same single `compress` workflow.
 3. After successful `compress`, feature-detect `session.goal` / `session.goalUpdate` and resume only
    if the same Goal is still blocked with the same owner token (optional CAS on the host resume API).
 4. Never resume after edit, replacement, manual pause, completion, or a different blocked Goal.
@@ -306,7 +290,6 @@ exceptions in transform/policy/hooks.
   scripted local-provider OpenCode for common Goal+compression, overflow success once, failed
   compression no loop, and stale edit/manual pause no resume.
 - `npm test` rebuilds committed `dist/` and must pass before handoff.
-- Evidence from polish completion: `npm test` 192 pass / 0 fail; `npm run typecheck` pass.
 - No install/restart/config edit is required for docs-only or already-referenced `file://` loads;
   restart OpenCode only after Aiden chooses to install/use a newly built plugin or host binary.
 

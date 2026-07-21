@@ -48,25 +48,6 @@ export interface ManagementTurn {
     completedMessageId?: string
 }
 
-export interface CompressionMapSnapshotEntry {
-    key: number | string
-    kind: "message" | "block"
-    rawMessageIds: string[]
-    anchorMessageId?: string
-    protected?: boolean
-    toolIds: string[]
-    tokenEstimate: number
-}
-
-/** The one executable map most recently returned for the current agent or management turn. */
-export interface CompressionMapSnapshot {
-    source: "management" | "normal"
-    triggerMessageId: string
-    /** Cooldown observed when a normal-turn map was created. */
-    cooldownRemaining?: number
-    entries: CompressionMapSnapshotEntry[]
-}
-
 export interface Compressed {
     toolIds: Set<string>
     messageIds: Set<string>
@@ -83,7 +64,8 @@ export interface SessionState {
     compressed: Compressed
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    compressionMapSnapshot?: CompressionMapSnapshot
+    /** Ignored legacy field retained only so old in-memory state can be cleared safely. */
+    compressionMapSnapshot?: unknown
     stats: SessionStats
     /** Session-local override. Missing inherits the process-level auto setting. */
     autoCompressionEnabledOverride?: boolean

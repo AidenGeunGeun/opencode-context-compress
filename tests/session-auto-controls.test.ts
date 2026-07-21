@@ -22,6 +22,7 @@ const config: PluginConfig = {
     debug: false,
     notification: "off",
     notificationType: "chat",
+    protectedTurns: 3,
     commands: { enabled: true, protectedTools: [] },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
     turnProtection: { enabled: false, turns: 0 },
@@ -29,7 +30,6 @@ const config: PluginConfig = {
     tools: {
         settings: { protectedTools: [] },
         compress: { permission: "allow", showCompression: false },
-        compress_map: { permission: "allow" },
     },
 }
 

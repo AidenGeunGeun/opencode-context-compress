@@ -2,25 +2,11 @@
 import { SYSTEM as SYSTEM_PROMPT } from "./_codegen/system.generated.js";
 import { AUTOMATIC_SYSTEM as AUTOMATIC_SYSTEM_PROMPT } from "./_codegen/automatic-system.generated.js";
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js";
-import { COMPRESS_MAP as COMPRESS_MAP_TOOL_SPEC } from "./_codegen/compress-map.generated.js";
-function processConditionals(template, flags) {
-    const tools = ["compress", "compress_map"];
-    let result = template;
-    // Strip comments: // ... //
-    result = result.replace(/\/\/.*?\/\//g, "");
-    // Process tool conditionals
-    for (const tool of tools) {
-        const regex = new RegExp(`<${tool}>([\\s\\S]*?)</${tool}>`, "g");
-        result = result.replace(regex, (_, content) => (flags[tool] ? content : ""));
-    }
-    // Collapse multiple blank/whitespace-only lines to single blank line
-    return result.replace(/\n([ \t]*\n)+/g, "\n\n").trim();
+export function renderSystemPrompt() {
+    return SYSTEM_PROMPT.trim();
 }
-export function renderSystemPrompt(flags) {
-    return processConditionals(SYSTEM_PROMPT, flags);
-}
-export function renderAutomaticSystemPrompt(flags, vars) {
-    let prompt = processConditionals(AUTOMATIC_SYSTEM_PROMPT, flags);
+export function renderAutomaticSystemPrompt(vars) {
+    let prompt = AUTOMATIC_SYSTEM_PROMPT.trim();
     for (const [key, value] of Object.entries(vars)) {
         prompt = prompt.replaceAll(`{{${key}}}`, value);
     }
@@ -28,7 +14,6 @@ export function renderAutomaticSystemPrompt(flags, vars) {
 }
 const PROMPTS = {
     "compress-tool-spec": COMPRESS_TOOL_SPEC,
-    "compress-map-tool-spec": COMPRESS_MAP_TOOL_SPEC,
 };
 export function loadPrompt(name, vars) {
     let content = PROMPTS[name];
