@@ -6,7 +6,7 @@ import { showToast } from "./sdk/client.js";
 export const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
-    tokenThreshold: 350_000,
+    tokenThreshold: 335_000,
 };
 export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
     if (layer.protectedTurns !== undefined)

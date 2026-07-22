@@ -20,7 +20,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
   and a short block title; the plugin always selects the eligible history itself.
 - Manual compression runs when you trigger `/compress manage`.
 - Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
-  the model-reported context window or 350,000 tokens by default.
+  the model-reported context window or 335,000 tokens by default.
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
 - One public tool: `compress({ summary, topic })`. Availability alone does not authorize autonomous
@@ -175,7 +175,7 @@ Default runtime config:
     "autoCompression": {
         "enabled": true,
         "contextWindowRatio": 0.9,
-        "tokenThreshold": 350000
+        "tokenThreshold": 335000
     },
     "turnProtection": {
         "enabled": false,
