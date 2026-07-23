@@ -1,7 +1,8 @@
 import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js";
-import { createSyntheticUserMessage, COMPRESS_SUMMARY_PREFIX, isIgnoredUserMessage } from "./utils.js";
+import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js";
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js";
 import { isGoalContinuationMessage } from "../goal.js";
+import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js";
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output removed to save context - information superseded or no longer needed]";
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
@@ -141,7 +142,10 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
     // incomplete - it is the only thing that can find orphaned artifacts in that case.
     const legacyPlan = buildLegacyResidueSuppressionPlan(rawMessages);
     const hasLegacyFindings = legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0;
-    if (!state.compressed.messageIds?.size && !state.managementTurns?.length && !hasLegacyFindings) {
+    if (!state.compressed.messageIds?.size &&
+        !state.compressSummaries.length &&
+        !state.managementTurns?.length &&
+        !hasLegacyFindings) {
         return {
             transformed: [...rawMessages],
             syntheticMap: new Map(),
@@ -149,7 +153,8 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
     }
     const transformed = [];
     const syntheticMap = new Map();
-    const summariesByAnchorId = new Map(state.compressSummaries.map((summary) => [summary.anchorMessageId, summary]));
+    const orderedBlocks = orderCompressBlocks(rawMessages, state.compressSummaries);
+    const blocksByAnchorId = new Map(orderedBlocks.map((block) => [block.summary.anchorMessageId, block]));
     const managementSuppression = buildManagementTurnSuppressionPlan(state, rawMessages);
     for (const [messageId, retainedText] of legacyPlan.retainedTextByMessageId) {
         if (!managementSuppression.retainedTextByMessageId.has(messageId)) {
@@ -171,12 +176,13 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
     for (let i = 0; i < rawMessages.length; i++) {
         const msg = rawMessages[i];
         const msgId = msg.info.id;
-        const summary = summariesByAnchorId.get(msgId);
-        if (summary) {
+        const block = blocksByAnchorId.get(msgId);
+        if (block) {
+            const summary = block.summary;
             const userMessage = getLastUserMessage(rawMessages, i);
             if (userMessage) {
                 const userInfo = userMessage.info;
-                const summaryContent = COMPRESS_SUMMARY_PREFIX + summary.summary;
+                const summaryContent = formatCompressBlockContent(block);
                 const syntheticMessage = createSyntheticUserMessage(userMessage, summaryContent, userInfo.variant, summary.anchorMessageId);
                 transformed.push(syntheticMessage);
                 syntheticMap.set(syntheticMessage.info.id, summary);

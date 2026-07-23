@@ -10,12 +10,15 @@ Core contract:
 - Automatic compression can initiate the same one-turn workflow after completed provider usage
   reaches the configured relative or absolute threshold.
 - The active agent writes one truthful `summary` and short `topic`; there is no separate
-  summarizer loop and no agent-chosen numeric range.
-- One public tool: `compress({ summary, topic })`. The plugin deterministically selects all
+  summarizer loop and ordinary compression has no agent-chosen numeric range.
+- The primary public tool is `compress({ summary, topic })`. The plugin deterministically selects all
   eligible uncompressed history after the newest existing block, excludes existing blocks, and
   preserves the newest `protectedTurns` execution steps (default `3`) on manual, automatic, and
   authorized normal paths.
-- Only `compress` must be available for management or automatic starts. Availability alone does
+- One separate public maintenance tool: `squash({ from, to, summary, topic })`, authorized only by
+  the current user's `/compress squash` command, replaces one contiguous positional `[bN]` range
+  of at least two existing blocks. It never changes ordinary deterministic selection.
+- Only `compress` must be available for ordinary management or automatic starts. Availability alone does
   not authorize autonomous normal-turn use.
 
 ## Build and Test
@@ -35,7 +38,7 @@ node --import tsx --test tests/prompts.test.ts
 ```text
 index.ts
   Plugin entrypoint. Loads config, initializes logger/state, wires hooks,
-  conditionally registers the compress tool surface, and updates OpenCode
+  conditionally registers the compress and squash tool surfaces, and updates OpenCode
   config metadata (including disabling native auto-compaction when plugin
   auto-compression is enabled).
 
@@ -84,11 +87,11 @@ lib/messages/context-map.ts
 lib/messages/compress-transform.ts
   Applies persisted compression decisions and completed management-turn cleanup
   to outgoing message context. `findActiveManagementTurn` identifies the
-  session's still-open management turn (not yet completed by `compress`, not
+  session's still-open management turn (not yet completed by its owning tool, not
   yet bounded by a later visible user message). Goal continuation messages do
   not count as visible-user boundaries. Once a turn is completed, its span is
   hidden immediately - no next user message is required - except the completing
-  `compress` tool call, which stays briefly with its literal input intact to
+  compression tool call, which stays briefly with its literal input intact to
   preserve a protocol-valid tool-call/result pair without synthetic placeholder
   text.
 
@@ -102,6 +105,19 @@ lib/commands/manage.ts
   clears any stale legacy snapshot field, persists the cleanup anchor, and sends a self-contained
   reminder that requires one `compress({ summary, topic })` call. Optional
   `goalOverflowRecovery` is staged with automatic overflow recovery turns.
+
+lib/commands/squash.ts
+  Implements explicit `/compress squash [instruction]`: checks shared tool permission, durable
+  block reconciliation/count, and active-turn collisions before staging source `"squash"`.
+
+lib/tools/squash.ts
+  Separate user-authorized block-range maintenance tool. Validates current positional labels,
+  replaces one canonical contiguous range atomically, preserves compressed IDs/cooldown, and
+  counts only positive visible-summary token reduction.
+
+lib/messages/blocks.ts
+  Shared canonical anchor-order derivation, positional `[bN]` labels, and model-visible block
+  formatting used by rendering, validation, and receipts. Labels are never persisted.
 
 lib/hooks.ts
   Transform, slash-command routing, and chat.message variant caching. Goal
@@ -137,28 +153,31 @@ lib/state/*
    the current message. `/compress manage` opens a management turn with a self-contained
    reminder requiring one `compress({ summary, topic })` call. The `compress` tool must be
    permitted or the command fails user-only before opening a model turn.
-4. `/compress auto` reads or changes the current session's persisted auto-compression
+4. `/compress squash` opens a separate user-authorized management turn only when at least two
+   reconcilable existing blocks are present. Its `squash` call replaces one selected contiguous
+   block range without touching uncompressed history, compressed ID sets, or cooldown state.
+5. `/compress auto` reads or changes the current session's persisted auto-compression
    overrides. `on`/`off` are no-ops when the effective state already matches. Global
    `autoCompression.enabled: false` remains authoritative.
-5. Automatic compression starts the same one-call workflow once usage reaches the earlier of
+6. Automatic compression starts the same one-call workflow once usage reaches the earlier of
    the configured context-window ratio and absolute token threshold, only when `compress` is
    available. The success receipt instructs task continuation when work was still active.
    Separately, a host `ContextOverflowError` on a blocked Goal stages one recovery management
    turn with `goalOverflowRecovery` owner state.
-6. Inside `compress`, selection is deterministic: boundary → newest block → all eligible
+7. Inside `compress`, selection is deterministic: boundary → newest block → all eligible
    uncompressed history after it → exclude newest `protectedTurns` execution steps → never
    touch existing blocks. No agent-chosen range, map, or pin.
-7. On a successful `compress` call, persistence is atomic via `runExclusive`: the block, IDs,
+8. On a successful `compress` call, persistence is atomic via `runExclusive`: the block, IDs,
    stats, completion marker, and cooldown anchor are stored together. The fold takes effect
    for the very next model continuation - no further visible user message is required - and a
    three-eligible-response cooldown is armed before another automatic or model-initiated
    compression may run. If the completed turn was Goal overflow recovery, the plugin re-reads
    the Goal and resumes only the exact blocked owner via the public Goal API when present.
-8. While the management turn is still open (before `compress` succeeds), its reminder and tool
-   results stay visible so the agent can work; the completing `compress` tool call itself
+9. While a management turn is still open, its reminder and tool
+   results stay visible so the agent can work; the completing tool call itself
    remains afterward too, with its literal input intact until the turn is historical. Synthetic
    Goal continuation messages do not bound that open management turn.
-9. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
+10. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
    inter-compress conversation, the preserved newest execution steps, and model-visible Goal
    continuation text remain. Successful compress, a new management turn, native compaction, or
    lifecycle reconcile also clear any leftover stale snapshot field. No queue/worker/extra state.
@@ -168,9 +187,9 @@ lib/state/*
 - Source prompt templates: `lib/prompts/*.md`
 - Generated files: `lib/prompts/_codegen/*.generated.ts`
 - Regenerate with `npm run generate:prompts`
-- Agent-facing prompts describe only the current single-tool happy path (`summary`, `topic`,
-  deterministic eligible history, protected newest execution steps). Do not reintroduce retired
-  workflow terms into prompt sources.
+- Ordinary agent-facing prompts describe only the deterministic `compress` happy path (`summary`,
+  `topic`, eligible uncompressed history, protected newest execution steps). Range language belongs
+  only in the dedicated squash prompts; do not reintroduce retired workflows elsewhere.
 
 ## Per-Session State Management
 
@@ -178,7 +197,7 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 
 **Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
 
-Each session state tracks compressed IDs, summaries, manual/automatic management-turn cleanup
+Each session state tracks compressed IDs, summaries, manual/automatic/squash management-turn cleanup
 markers, compression stats, persisted auto-compression overrides and cooldown anchor, optional
 `goalOverflowRecovery` owner payload, subagent status, initialization, and runtime-only threshold
 metadata. Durable fields are persisted at
@@ -229,13 +248,13 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 
 ## Notes
 
-- Only `compress` is public. Manual, automatic, and authorized normal paths use the same
-  deterministic selection and the same `protectedTurns` policy.
+- `compress` remains deterministic for manual, automatic, and authorized normal paths. The separate
+  `squash` tool is authorized only inside `/compress squash` and selects existing blocks only.
 - Management and automatic starts gate on `compress` alone.
 - Completed management turns leave no model-visible machinery marker; future prompts show blocks,
   inter-compress normal conversation, and the preserved newest execution steps (Goal continuation
   text stays model-visible).
-- `[bN]` labels are assigned by anchor position in the conversation stream, not by insertion order
+- `[bN]` labels are derived by anchor position in the conversation stream, not by insertion order
   in `state.compressSummaries`. Existing blocks are append-only and immutable under a new fold.
 - `protectedTurns` defaults to `3`. Prefer the top-level config key; `autoCompression.protectedTurns`
   remains a fallback alias when the top-level key is absent.

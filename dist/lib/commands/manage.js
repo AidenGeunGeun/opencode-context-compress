@@ -65,7 +65,7 @@ function extractPromptParentIdForLogging(promptResult) {
     }
     return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined;
 }
-async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
+export async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
     if (await showToast(client, {
         title: "Compression Management",
         message,
@@ -133,7 +133,7 @@ export async function stageManagementTurnWithinLock(ctx) {
     const managementTurn = {
         triggerMessageId,
         ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
-        ...(ctx.source === "automatic" ? { source: "automatic" } : {}),
+        ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
         ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),

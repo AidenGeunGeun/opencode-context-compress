@@ -11,6 +11,7 @@ import { handleContextCommand } from "./commands/context.js"
 import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
 import { handleAutoCommand } from "./commands/auto.js"
+import { handleSquashCommand } from "./commands/squash.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { reconcileSessionLifecycle } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
@@ -155,6 +156,21 @@ export function createCommandExecuteHandler(
 
             if (subcommand === "manage") {
                 await handleManageCommand({
+                    client,
+                    stateManager,
+                    state,
+                    config,
+                    logger,
+                    sessionId: input.sessionID,
+                    messages,
+                    arguments: input.arguments,
+                })
+                suppressDefaultCommandExecution(output)
+                return
+            }
+
+            if (subcommand === "squash") {
+                await handleSquashCommand({
                     client,
                     stateManager,
                     state,

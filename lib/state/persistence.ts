@@ -203,7 +203,9 @@ function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefi
             ...(typeof turn.completedMessageId === "string" && turn.completedMessageId.length > 0
                 ? { completedMessageId: turn.completedMessageId }
                 : {}),
-            ...(turn.source === "automatic" ? { source: "automatic" as const } : {}),
+            ...(turn.source === "automatic" || turn.source === "squash"
+                ? { source: turn.source }
+                : {}),
             ...(typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0
                 ? { triggeredByMessageId: turn.triggeredByMessageId }
                 : {}),

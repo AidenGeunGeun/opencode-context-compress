@@ -356,6 +356,11 @@ describe("saveSessionState", () => {
                     contextTokens: 310_000,
                     thresholdTokens: 300_000,
                 },
+                {
+                    triggerMessageId: "m5",
+                    retainedText: "condense the verbose middle",
+                    source: "squash",
+                },
             ]
             state.stats = {
                 compressTokenCounter: 8,
@@ -412,6 +417,11 @@ describe("saveSessionState", () => {
                     protectedMessageIds: ["m2", "m3"],
                     contextTokens: 310_000,
                     thresholdTokens: 300_000,
+                },
+                {
+                    triggerMessageId: "m5",
+                    retainedText: "condense the verbose middle",
+                    source: "squash",
                 },
             ])
             assert.deepEqual(loadResult.state.stats, {

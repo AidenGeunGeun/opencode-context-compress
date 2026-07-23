@@ -32,19 +32,19 @@ export interface CompressSummary {
 export interface ManagementTurn {
     triggerMessageId: string
     retainedText?: string
-    /** Present only for plugin-initiated automatic compression turns. */
-    source?: "automatic"
+    /** Present for plugin-initiated automatic turns or explicit squash management. */
+    source?: "automatic" | "squash"
     /** Assistant message whose completed usage crossed the automatic threshold. */
     triggeredByMessageId?: string
     /** Raw message IDs that automatic compression must leave visible as the active tail. */
     protectedMessageIds?: string[]
     contextTokens?: number
     thresholdTokens?: number
-    /** ISO timestamp set once a `compress` call completes this turn. Presence marks completion. */
+    /** ISO timestamp set once the owning compression tool completes this turn. */
     completedAt?: string
-    /** The completing `compress` tool call's ID, if the runtime provided one. */
+    /** The completing compression tool call's ID, if the runtime provided one. */
     completedCallId?: string
-    /** The assistant message ID that carried the completing `compress` tool call. */
+    /** The assistant message ID that carried the completing compression tool call. */
     completedMessageId?: string
 }
 

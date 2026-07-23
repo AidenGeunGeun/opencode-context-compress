@@ -15,8 +15,8 @@ import { isIgnoredUserMessage } from "./utils.js";
  * suppressed once it is bounded by a following real (non-artifact) message; an unbounded
  * span reaching the end of history is the active in-flight turn and is left untouched.
  */
-const MANAGE_PROMPT_SIGNATURE = /compress manage/i;
-const CONTEXT_MANAGEMENT_MARKER = /CONTEXT MANAGEMENT REQUESTED/;
+const MANAGE_PROMPT_SIGNATURE = /compress (?:manage|squash)/i;
+const CONTEXT_MANAGEMENT_MARKER = /CONTEXT (?:MANAGEMENT|SQUASH) REQUESTED/;
 const STATUS_NOTIFICATION_HEADER = /▣ Context Compress \|/;
 const STATUS_NOTIFICATION_PROGRESS = /▣ Compressing/;
 const COMPRESSION_ONLY_REQUEST = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just|again)[\s,.;:!?-]*)+$/i;
@@ -35,7 +35,7 @@ function hasToolPart(message, predicate) {
     const parts = Array.isArray(message.parts) ? message.parts : [];
     return parts.some((part) => part.type === "tool" && typeof part.tool === "string" && predicate(part.tool));
 }
-const isCompressToolName = (tool) => tool === "compress_map" || tool === "compress";
+const isCompressToolName = (tool) => tool === "compress_map" || tool === "compress" || tool === "squash";
 function isManagePromptMessage(message) {
     if (message.info.role !== "user" || isIgnoredUserMessage(message)) {
         return false;

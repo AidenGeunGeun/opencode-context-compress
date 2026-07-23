@@ -100,6 +100,7 @@ describe("compress command smoke flow", () => {
             assert.deepEqual(output.parts, [])
             assert.equal(promptCalls, 1)
             assert.match(ignoredMessages[0] ?? "", /Compress commands/)
+            assert.match(ignoredMessages[0] ?? "", /compress squash/)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -153,6 +154,48 @@ describe("compress command smoke flow", () => {
             assert.ok(capturedMessageId, "expected a generated messageID to be sent")
             assert.equal(state.managementTurns[0].triggerMessageId, capturedMessageId)
             assert.notEqual(state.managementTurns[0].triggerMessageId, "user-later-notification-1")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("routes squash once and suppresses the default command prompt", async () => {
+        const sessionId = `session-squash-smoke-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        const messages = [createUserMessage(sessionId, "block-0"), createUserMessage(sessionId, "block-1")]
+        state.compressed.messageIds = new Set(["block-0", "block-1"])
+        state.compressSummaries = [
+            { anchorMessageId: "block-0", messageIds: ["block-0"], summary: "First" },
+            { anchorMessageId: "block-1", messageIds: ["block-1"], summary: "Second" },
+        ]
+        let promptCalls = 0
+        const client = {
+            session: {
+                messages: async () => messages,
+                prompt: async (input: any) => {
+                    promptCalls++
+                    assert.match(input.body.parts[0].text, /CONTEXT SQUASH REQUESTED/)
+                    return { data: { info: { id: "assistant-squash", parentID: input.body.messageID } } }
+                },
+            },
+            tui: { showToast: async () => undefined },
+        }
+
+        try {
+            const handler = createCommandExecuteHandler(client, stateManager, logger, config)
+            const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
+            await handler(
+                { command: "compress", sessionID: sessionId, arguments: "squash keep b0" },
+                output,
+            )
+            assert.equal(output.cancelled, true)
+            assert.deepEqual(output.parts, [])
+            assert.equal(promptCalls, 1)
+            assert.equal(state.managementTurns[0].source, "squash")
+            assert.equal(state.managementTurns[0].retainedText, "keep b0")
         } finally {
             await cleanupSessionFile(sessionId)
         }

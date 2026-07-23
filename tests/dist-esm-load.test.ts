@@ -75,9 +75,9 @@ function assertHookContract(hooks: Hooks) {
     assert.equal(typeof hooks.config, "function")
 
     assert.equal(typeof hooks.tool, "object")
-    assert.deepEqual(Object.keys(hooks.tool ?? {}), ["compress"])
+    assert.deepEqual(Object.keys(hooks.tool ?? {}), ["compress", "squash"])
 
-    for (const toolName of ["compress"] as const) {
+    for (const toolName of ["compress", "squash"] as const) {
         const definition = hooks.tool?.[toolName]
         assert.equal(typeof definition?.description, "string")
         assert.equal(typeof definition?.args, "object")
@@ -150,9 +150,10 @@ describe("built Node ESM package", () => {
             await hooks.config?.(opencodeConfig as any)
             assert.equal(opencodeConfig.compaction.auto, false)
             assert.equal(opencodeConfig.command.compress.description, "Show available context compression commands")
-            assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress"])
+            assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress", "squash"])
             assert.equal("compress_map" in opencodeConfig.permission, false)
             assert.equal(opencodeConfig.permission.compress, "allow")
+            assert.equal(opencodeConfig.permission.squash, "allow")
 
             await hooks["chat.message"]?.(
                 { sessionID: "contract-session", variant: "contract" },

@@ -17,21 +17,22 @@ or let the plugin initiate the same workflow before a primary session fills its 
 ## Core Behavior
 
 - No separate summarizer or hidden compaction model: the active agent writes one truthful summary
-  and a short block title; the plugin always selects the eligible history itself.
+  and a short block title; ordinary compression span selection is deterministic inside the plugin.
 - Manual compression runs when you trigger `/compress manage`.
 - Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
   the model-reported context window or 335,000 tokens by default.
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
-- One public tool: `compress({ summary, topic })`. Availability alone does not authorize autonomous
-  use; call it only from a management reminder or an explicit user request to compress context.
+- Public tools are `compress({ summary, topic })` for deterministic uncompressed-history folding and
+  `squash({ from, to, summary, topic })` for explicit existing-block maintenance. Tool availability
+  alone never authorizes either operation.
 - Manual management, automatic management, and authorized normal-turn use all share the same
   deterministic selection: every eligible uncompressed message after the newest existing `[bN]`
   block, excluding the newest configured execution steps (`protectedTurns`, default `3`).
-- Existing compressed blocks are immutable. A new fold never selects, alters, reorders, or removes
-  them.
-- Only the `compress` tool must be permitted. If it is denied, management does not open an unusable
-  model turn.
+- Existing compressed blocks are immutable under ordinary compression. Only an explicit
+  `/compress squash` turn may replace one contiguous range of at least two blocks.
+- The `compress` permission controls both tools. If it is denied, neither management workflow opens
+  an unusable model turn.
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
   next model turn, with no need to wait for a further user message.
 - After a successful compression, automatic and model-initiated compression pause for the next
@@ -46,6 +47,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 
 - `/compress` or `/compress help`: show command help.
 - `/compress manage [instruction]`: send a self-contained context-management reminder that requires one `compress` call with `summary` and `topic`; optional trailing text is passed to the agent as the user's specific compression instruction.
+- `/compress squash [instruction]`: explicitly ask the agent to replace one contiguous range of at least two existing `[bN]` blocks with a smaller truthful summary; optional trailing text is passed separately as the user's squash guidance.
 - `/compress context`: show token usage breakdown for the current session.
 - `/compress stats`: show session and all-time compression totals.
 - `/compress auto` or `/compress auto status`: show this session's effective automatic-compression settings and cooldown.
@@ -54,7 +56,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - `/compress auto ratio N`: override this session's context-window threshold with an integer percentage from 1 to 99.
 - `/compress auto reset`: clear this session's threshold and ratio overrides without changing its on/off setting or cooldown.
 
-`/compress manage` is the only command that intentionally creates a model-visible turn.
+`/compress manage` and `/compress squash` intentionally create model-visible turns.
 All `/compress auto` feedback is user-only. Session `off` disables every automatic trigger for
 that session—both the absolute threshold and the context-window ratio—until it is turned on again.
 The process-level `autoCompression.enabled: false` setting remains authoritative and cannot be
@@ -97,11 +99,26 @@ Normal-turn compression still respects the three-response post-compression coold
 cooldown, `compress` refuses model-initiated use and asks the agent to wait; an explicit user
 `/compress manage` remains the override.
 
-While the management turn is still open, the agent can see the reminder and tool activity. The
-instant `compress` succeeds, the manage prompt and status notifications are hidden from the very
-next model turn — no further user message is needed. The completed `compress` tool call itself
-stays briefly because providers require the tool-call/result pair; its submitted input is left
-literal so the agent cannot mistake a synthetic marker for what it submitted. On later turns, the
+### Explicit block squash
+
+`/compress squash` is a separate, user-only maintenance workflow. The agent sees current positional
+`[b0]`, `[b1]`, ... labels, chooses one contiguous inclusive range containing at least two existing
+blocks, and calls `squash` once. The replacement occupies the selected range's first position;
+out-of-range blocks and all uncompressed conversation remain unchanged, and later blocks are
+relabeled by position without being reordered. Labels are derived from transcript anchor order and
+are never persisted identities.
+
+Squash is deliberately more lossy than ordinary compression because it summarizes saved summaries;
+the hidden original messages are not restored or reread. It never starts automatically, does not
+participate in Goal overflow recovery, and does not arm or replace the post-compression cooldown.
+Its savings statistic counts only a positive reduction in model-visible summary tokens.
+
+While a management turn is still open, the agent can see the reminder and tool activity. The
+instant its owning `compress` or `squash` call succeeds, the management prompt and status
+notifications are hidden from the very next model turn — no further user message is needed. The
+completed tool call itself stays briefly because providers require the tool-call/result pair; its
+submitted input is left literal so the agent cannot mistake a synthetic marker for what it
+submitted. On later turns, the
 model-visible context contains only compressed `[bN]` blocks, normal conversation between
 compression runs, the preserved newest execution steps, and model-visible Goal continuation text.
 The cleanup leaves no marker or placeholder behind.
@@ -170,7 +187,7 @@ Default runtime config:
     "protectedTurns": 3,
     "commands": {
         "enabled": true,
-        "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
+        "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
     },
     "autoCompression": {
         "enabled": true,
@@ -184,7 +201,7 @@ Default runtime config:
     "protectedFilePatterns": [],
     "tools": {
         "settings": {
-            "protectedTools": ["task", "todowrite", "todoread", "compress", "batch", "plan_enter", "plan_exit"]
+            "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
         },
         "compress": {
             "permission": "allow",
@@ -209,7 +226,7 @@ Stored fields include:
 - compressed tool IDs
 - compressed message IDs
 - compression summaries (`[bN]` blocks: anchor, message IDs, summary, topic)
-- manual and automatic management-turn cleanup markers
+- manual, automatic, and explicit squash management-turn cleanup markers
 - per-session compression stats
 - session automatic-compression overrides and the post-compression cooldown anchor
 - optional one-shot Goal overflow recovery owner (`goalOverflowRecovery`: overflow message id +

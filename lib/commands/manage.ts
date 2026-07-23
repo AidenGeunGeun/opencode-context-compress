@@ -33,7 +33,7 @@ export interface ManagementTurnStartContext {
     messages: WithParts[]
     systemPrompt: string
     retainedText?: string
-    source?: "automatic"
+    source?: "automatic" | "squash"
     triggeredByMessageId?: string
     contextTokens?: number
     thresholdTokens?: number
@@ -119,7 +119,7 @@ function extractPromptParentIdForLogging(promptResult: any): string | undefined 
     return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined
 }
 
-async function sendManageFailureFeedback(
+export async function sendManageFailureFeedback(
     client: any,
     logger: Logger,
     sessionId: string,
@@ -227,7 +227,7 @@ export async function stageManagementTurnWithinLock(
     const managementTurn: ManagementTurn = {
         triggerMessageId,
         ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
-        ...(ctx.source === "automatic" ? { source: "automatic" as const } : {}),
+        ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
         ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),

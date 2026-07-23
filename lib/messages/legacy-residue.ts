@@ -18,8 +18,8 @@ import { isIgnoredUserMessage } from "./utils.js"
  * span reaching the end of history is the active in-flight turn and is left untouched.
  */
 
-const MANAGE_PROMPT_SIGNATURE = /compress manage/i
-const CONTEXT_MANAGEMENT_MARKER = /CONTEXT MANAGEMENT REQUESTED/
+const MANAGE_PROMPT_SIGNATURE = /compress (?:manage|squash)/i
+const CONTEXT_MANAGEMENT_MARKER = /CONTEXT (?:MANAGEMENT|SQUASH) REQUESTED/
 const STATUS_NOTIFICATION_HEADER = /▣ Context Compress \|/
 const STATUS_NOTIFICATION_PROGRESS = /▣ Compressing/
 const COMPRESSION_ONLY_REQUEST =
@@ -42,7 +42,8 @@ function hasToolPart(message: WithParts, predicate: (tool: string) => boolean): 
     return parts.some((part: any) => part.type === "tool" && typeof part.tool === "string" && predicate(part.tool))
 }
 
-const isCompressToolName = (tool: string): boolean => tool === "compress_map" || tool === "compress"
+const isCompressToolName = (tool: string): boolean =>
+    tool === "compress_map" || tool === "compress" || tool === "squash"
 
 function isManagePromptMessage(message: WithParts): boolean {
     if (message.info.role !== "user" || isIgnoredUserMessage(message)) {

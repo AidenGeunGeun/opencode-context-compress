@@ -69,6 +69,7 @@ const DEFAULT_PROTECTED_TOOLS = [
     "todowrite",
     "todoread",
     "compress",
+    "squash",
     "batch",
     "plan_enter",
     "plan_exit",

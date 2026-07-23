@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config.js"
 import { Logger } from "./lib/logger.js"
 import { SessionStateManager } from "./lib/state/index.js"
-import { createCompressTool } from "./lib/tools/index.js"
+import { createCompressTool, createSquashTool } from "./lib/tools/index.js"
 import {
     createChatMessageHandler,
     createChatMessageTransformHandler,
@@ -63,6 +63,13 @@ const plugin: Plugin = (async (ctx) => {
                     config,
                     workingDirectory: ctx.directory,
                 }),
+                squash: createSquashTool({
+                    client: ctx.client,
+                    stateManager,
+                    logger,
+                    config,
+                    workingDirectory: ctx.directory,
+                }),
             }),
         },
         config: async (opencodeConfig: any) => {
@@ -82,7 +89,7 @@ const plugin: Plugin = (async (ctx) => {
             }
 
             const toolsToAdd: string[] = []
-            if (config.tools.compress.permission !== "deny") toolsToAdd.push("compress")
+            if (config.tools.compress.permission !== "deny") toolsToAdd.push("compress", "squash")
 
             if (toolsToAdd.length > 0) {
                 const existingPrimaryTools = opencodeConfig.experimental?.primary_tools ?? []
@@ -100,6 +107,7 @@ const plugin: Plugin = (async (ctx) => {
             opencodeConfig.permission = {
                 ...permission,
                 compress: config.tools.compress.permission,
+                squash: config.tools.compress.permission,
             } as typeof permission
         },
     } as any

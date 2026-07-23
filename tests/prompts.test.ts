@@ -6,11 +6,14 @@ import { join } from "node:path"
 import {
     loadPrompt,
     renderAutomaticSystemPrompt,
+    renderSquashSystemPrompt,
     renderSystemPrompt,
 } from "../lib/prompts/index.ts"
 import { SYSTEM } from "../lib/prompts/_codegen/system.generated.ts"
 import { AUTOMATIC_SYSTEM } from "../lib/prompts/_codegen/automatic-system.generated.ts"
 import { COMPRESS } from "../lib/prompts/_codegen/compress.generated.ts"
+import { SQUASH_SYSTEM } from "../lib/prompts/_codegen/squash-system.generated.ts"
+import { SQUASH } from "../lib/prompts/_codegen/squash.generated.ts"
 import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
 
 const RETIRED_WORKFLOW = /compress_map|compress-context-map|pinned snapshot|numeric (?:entry|label)|from\/to|narrower range|consolidat(?:e|ion)/i
@@ -49,6 +52,23 @@ describe("single-tool agent prompts", () => {
         assert.doesNotMatch(output, RETIRED_WORKFLOW)
     })
 
+    it("keeps range selection isolated to the explicit squash prompts", () => {
+        const system = renderSquashSystemPrompt()
+        const tool = loadPrompt("squash-tool-spec")
+        for (const output of [system, tool]) {
+            assert.match(output, /explicitly ran|current user's `\/compress squash`/i)
+            assert.match(output, /contiguous inclusive range/i)
+            assert.match(output, /at least two existing compressed blocks/i)
+            assert.match(output, /lossy compression of summaries/i)
+            assert.match(output, /hidden original messages are unavailable/i)
+            assert.match(output, /out-of-range blocks remain unchanged/i)
+            assert.match(output, /Do not (?:make a second squash|call squash or compress again)/i)
+        }
+        assert.match(system, /`\[bN\]` values are current positional labels/i)
+        assert.match(system, /newer out-of-range evidence/i)
+        assert.match(system, /Call `squash` once with `from`, `to`, `summary`, and `topic`/)
+    })
+
     it("keeps generated prompt sources synchronized and free of retired workflow text", () => {
         const root = process.cwd()
         const systemSource = readFileSync(join(root, "lib/prompts/system.md"), "utf8")
@@ -57,11 +77,17 @@ describe("single-tool agent prompts", () => {
             "utf8",
         )
         const compressSource = readFileSync(join(root, "lib/prompts/compress.md"), "utf8")
+        const squashSystemSource = readFileSync(join(root, "lib/prompts/squash-system.md"), "utf8")
+        const squashSource = readFileSync(join(root, "lib/prompts/squash.md"), "utf8")
         assert.equal(SYSTEM, systemSource)
         assert.equal(AUTOMATIC_SYSTEM, automaticSource)
         assert.equal(COMPRESS, compressSource)
+        assert.equal(SQUASH_SYSTEM, squashSystemSource)
+        assert.equal(SQUASH, squashSource)
         assert.equal(SYSTEM.trim(), renderSystemPrompt())
         assert.equal(COMPRESS.trim(), loadPrompt("compress-tool-spec").trim())
+        assert.equal(SQUASH_SYSTEM.trim(), renderSquashSystemPrompt())
+        assert.equal(SQUASH.trim(), loadPrompt("squash-tool-spec").trim())
         for (const generated of [SYSTEM, AUTOMATIC_SYSTEM, COMPRESS]) {
             assert.doesNotMatch(generated, RETIRED_WORKFLOW)
         }

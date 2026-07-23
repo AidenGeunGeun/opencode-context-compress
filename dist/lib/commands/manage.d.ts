@@ -23,7 +23,7 @@ export interface ManagementTurnStartContext {
     messages: WithParts[];
     systemPrompt: string;
     retainedText?: string;
-    source?: "automatic";
+    source?: "automatic" | "squash";
     triggeredByMessageId?: string;
     contextTokens?: number;
     thresholdTokens?: number;
@@ -34,6 +34,7 @@ export interface ManagementTurnStartContext {
 export type StagedManagementTurn = () => Promise<boolean>;
 export declare function extractManageCommandResidual(args: string | undefined): string | undefined;
 export declare function generateManagePromptMessageId(): string;
+export declare function sendManageFailureFeedback(client: any, logger: Logger, sessionId: string, message: string, params: any): Promise<void>;
 export declare function handleManageCommand(ctx: ManageCommandContext): Promise<void>;
 /** Persists the turn marker; the caller must hold this session's mutation lock. */
 export declare function stageManagementTurnWithinLock(ctx: ManagementTurnStartContext): Promise<StagedManagementTurn | undefined>;

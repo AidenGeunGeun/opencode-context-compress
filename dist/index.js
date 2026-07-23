@@ -1,7 +1,7 @@
 import { getConfig } from "./lib/config.js";
 import { Logger } from "./lib/logger.js";
 import { SessionStateManager } from "./lib/state/index.js";
-import { createCompressTool } from "./lib/tools/index.js";
+import { createCompressTool, createSquashTool } from "./lib/tools/index.js";
 import { createChatMessageHandler, createChatMessageTransformHandler, createCommandExecuteHandler, } from "./lib/hooks.js";
 import { configureClientAuth, isSecureMode } from "./lib/auth.js";
 import { createAutomaticCompressionEventHandler, createChatParamsHandler, } from "./lib/auto-compression.js";
@@ -32,6 +32,13 @@ const plugin = (async (ctx) => {
                     config,
                     workingDirectory: ctx.directory,
                 }),
+                squash: createSquashTool({
+                    client: ctx.client,
+                    stateManager,
+                    logger,
+                    config,
+                    workingDirectory: ctx.directory,
+                }),
             }),
         },
         config: async (opencodeConfig) => {
@@ -50,7 +57,7 @@ const plugin = (async (ctx) => {
             }
             const toolsToAdd = [];
             if (config.tools.compress.permission !== "deny")
-                toolsToAdd.push("compress");
+                toolsToAdd.push("compress", "squash");
             if (toolsToAdd.length > 0) {
                 const existingPrimaryTools = opencodeConfig.experimental?.primary_tools ?? [];
                 opencodeConfig.experimental = {
@@ -64,6 +71,7 @@ const plugin = (async (ctx) => {
             opencodeConfig.permission = {
                 ...permission,
                 compress: config.tools.compress.permission,
+                squash: config.tools.compress.permission,
             };
         },
     };

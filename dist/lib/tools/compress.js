@@ -11,6 +11,7 @@ import { isIgnoredUserMessage } from "../messages/utils.js";
 import { isGoalContinuationMessage, recoverGoalAfterCompression } from "../goal.js";
 import { listSessionMessages } from "../sdk/client.js";
 import { getPostCompressionCooldownRemaining } from "../auto-policy.js";
+import { orderCompressBlocks } from "../messages/blocks.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 function isVisibleUserMessage(message) {
     return (message.info.role === "user" &&
@@ -31,6 +32,9 @@ function findExecutingToolMessage(rawMessages, messageId, callId) {
 export function resolveCompressionBoundary(rawMessages, state, toolMessageId, callId) {
     const activeTurn = findActiveManagementTurn(state, rawMessages);
     if (activeTurn) {
+        if (activeTurn.turn.source === "squash") {
+            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.");
+        }
         return {
             history: rawMessages.slice(0, activeTurn.triggerIndex),
             managementTurn: activeTurn.turn,
@@ -55,6 +59,9 @@ export function resolveCompressionBoundary(rawMessages, state, toolMessageId, ca
         .reverse()
         .find((turn) => !turn.completedAt && turn.triggerMessageId === parentId);
     if (matchingManagementTurn) {
+        if (matchingManagementTurn.source === "squash") {
+            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.");
+        }
         return {
             history: rawMessages.slice(0, owner.index),
             managementTurn: matchingManagementTurn,
@@ -149,6 +156,10 @@ export function createCompressTool(ctx) {
                         topic,
                     },
                 ];
+                const storedBlock = orderCompressBlocks(boundary.history, candidateSummaries).find((block) => block.summary === candidateSummaries[candidateSummaries.length - 1]);
+                if (!storedBlock) {
+                    throw new Error("compress could not reconcile the new compressed block with the current transcript. Nothing was compressed.");
+                }
                 const completedAt = new Date().toISOString();
                 const candidateManagementTurns = boundary.managementTurn
                     ? state.managementTurns.map((turn) => turn === boundary.managementTurn
@@ -188,7 +199,7 @@ export function createCompressTool(ctx) {
                     topic,
                     summary,
                     estimatedCompressedTokens,
-                    storedBlockId: `b${candidateSummaries.length - 1}`,
+                    storedBlockId: storedBlock.label,
                     continueTask: boundary.managementTurn?.source === "automatic",
                     goalOverflowRecovery: boundary.managementTurn?.triggeredByMessageId ===
                         state.goalOverflowRecovery?.overflowMessageId

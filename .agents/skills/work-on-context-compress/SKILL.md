@@ -32,8 +32,8 @@ Treat this as a stateful OpenCode protocol plugin, not a text-rewriting utility.
 ## Preserve the contracts
 
 - Keep compression state scoped by session ID and persisted atomically before hiding any original context.
-- Keep one public tool: `compress({ summary, topic })`. Do not reintroduce a second public compression tool, model-visible maps, agent-chosen numeric ranges, or pin/snapshot execution.
-- Keep selection deterministic and identical across manual, automatic, and authorized normal paths: all eligible uncompressed history after the newest existing block, excluding the newest `protectedTurns` execution steps. Existing blocks are immutable.
+- Keep ordinary `compress({ summary, topic })` deterministic and range-free. The separate public `squash({ from, to, summary, topic })` tool is authorized only by the current user's active `/compress squash` turn; do not introduce any other range, map, pin, or snapshot workflow.
+- Keep ordinary selection identical across manual, automatic, and authorized normal paths: all eligible uncompressed history after the newest existing block, excluding the newest `protectedTurns` execution steps. Existing blocks are immutable outside explicit squash.
 - Keep management/automatic start gated on `compress` alone. Availability does not authorize autonomous normal-turn compression without an explicit user request or management reminder.
 - Keep session auto overrides and the cooldown anchor durable. Global `autoCompression.enabled: false` remains the master kill switch, and cooldown progress is derived idempotently from the transcript. `/compress auto on|off` must no-op when the effective state already matches. Explicit `/compress manage` may override cooldown.
 - Serialize every durable mutation for a session with `SessionStateManager.runExclusive(sessionId, ...)`; save a candidate before committing it to live state so concurrent paths cannot overwrite each other.
