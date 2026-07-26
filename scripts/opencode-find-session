@@ -3,7 +3,7 @@
 Find OpenCode session IDs by title search.
 Returns matching session IDs ordered by last usage time.
 
-Usage: opencode-find-session <search-term> [--exact] [--json]
+Usage: opencode-find-session <search-term> [--exact] [--json] [--all]
 """
 
 import json

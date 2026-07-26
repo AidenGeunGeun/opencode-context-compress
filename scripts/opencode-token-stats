@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Analyze token usage across recent OpenCode sessions.
-Usage: opencode-token-stats [--sessions N] [--json]
+Usage: opencode-token-stats [--sessions N] [--session ID] [--json]
 """
 
 import json

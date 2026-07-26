@@ -3,7 +3,7 @@
 Analyze Context Compress tool impact on cache efficiency.
 Tracks cache hit rates and context size changes before/after compress tool invocations.
 
-Usage: opencode-compress-stats [--sessions N] [--min-messages M] [--json] [--verbose]
+Usage: opencode-compress-stats [--sessions N] [--session ID] [--min-messages M] [--json] [--verbose]
 """
 
 import json

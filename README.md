@@ -24,8 +24,10 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
 - Public tools are `compress({ summary, topic })` for deterministic uncompressed-history folding and
-  `squash({ from, to, summary, topic })` for explicit existing-block maintenance. Tool availability
-  alone never authorizes either operation.
+  `squash({ from, to, summary, topic })` for explicit existing-block maintenance. `squash` is
+  fail-closed at runtime to an active `/compress squash` turn. `compress` is not: runtime only
+  requires a visible user owner of the executing call; the ban on autonomous normal-turn use is a
+  prompt-level contract agents must honor, not plugin enforcement.
 - Manual management, automatic management, and authorized normal-turn use all share the same
   deterministic selection: every eligible uncompressed message after the newest existing `[bN]`
   block, excluding the newest configured execution steps (`protectedTurns`, default `3`).
@@ -64,9 +66,10 @@ overridden from a session.
 
 ## Agentic Workflow
 
-During normal work the agent may call `compress` only when the current user message explicitly
-authorizes compression. `/compress manage` and an automatic threshold trigger open a model-visible
-management turn with a self-contained reminder. In every authorized path the agent:
+During normal work agents must call `compress` only when the current user message explicitly
+authorizes compression — a prompt contract (`lib/prompts/compress.md`), not a runtime text check.
+`/compress manage` and an automatic threshold trigger open a model-visible management turn with a
+self-contained reminder. In every authorized path the agent:
 
 1. Review the current conversation and reconcile chronology (later evidence supersedes stale plans).
 2. Call `compress` once with:
@@ -182,11 +185,13 @@ Default runtime config:
 {
     "enabled": true,
     "debug": false,
+    // "dailyLog": follows "debug" when unset
     "notification": "detailed",
     "notificationType": "chat",
     "protectedTurns": 3,
     "commands": {
         "enabled": true,
+        // unused at runtime; tool cache reads tools.settings.protectedTools only
         "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
     },
     "autoCompression": {
@@ -198,9 +203,11 @@ Default runtime config:
         "enabled": false,
         "turns": 4
     },
+    // accepted/merged but not consulted by runtime paths today
     "protectedFilePatterns": [],
     "tools": {
         "settings": {
+            // live: tool-parameter cache skips token counting for these tools
             "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
         },
         "compress": {
@@ -215,11 +222,21 @@ Default runtime config:
 Default is `3`. The legacy nested key `autoCompression.protectedTurns` is still accepted as a
 fallback when the top-level key is absent; an explicitly configured top-level value wins.
 
+Logging keys (under `~/.config/opencode/logs/compress/`, or `$XDG_CONFIG_HOME/opencode/logs/compress/`):
+
+- `debug` (default `false`): on every successful prompt transform, write a full minimized context
+  snapshot to `context/<sessionId>/<timestamp>.json`. Not limited to compression turns. Each file
+  holds the whole conversation so far, so disk use grows quickly with turn count — leave off unless
+  debugging.
+- `dailyLog` (optional): one-line activity log at `daily/<YYYY-MM-DD>.log`. When unset, follows
+  `debug`, so existing configs that only set `debug` keep both outputs. Set `dailyLog: true` with
+  `debug: false` to keep the activity log without snapshots.
+
 ## Persistence
 
 Session state is stored at:
 
-- `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`
+- `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json` (or under `$XDG_DATA_HOME`)
 
 Stored fields include:
 

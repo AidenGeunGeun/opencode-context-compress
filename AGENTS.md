@@ -18,8 +18,10 @@ Core contract:
 - One separate public maintenance tool: `squash({ from, to, summary, topic })`, authorized only by
   the current user's `/compress squash` command, replaces one contiguous positional `[bN]` range
   of at least two existing blocks. It never changes ordinary deterministic selection.
-- Only `compress` must be available for ordinary management or automatic starts. Availability alone does
-  not authorize autonomous normal-turn use.
+- Only `compress` must be available for ordinary management or automatic starts. Autonomous
+  normal-turn use is a prompt-level prohibition (`lib/prompts/compress.md`); unlike `squash`,
+  runtime does not require an explicit compression request in the user message—only a visible
+  user owner of the executing call.
 
 ## Build and Test
 
@@ -149,10 +151,11 @@ lib/state/*
 1. Startup loads config and initializes state.
 2. Hooks cache model limits, observe completed assistant usage, sync tool cache, apply
    compression transforms, and route `/compress` commands.
-3. During normal work the agent may call `compress` only with explicit user authorization in
-   the current message. `/compress manage` opens a management turn with a self-contained
-   reminder requiring one `compress({ summary, topic })` call. The `compress` tool must be
-   permitted or the command fails user-only before opening a model turn.
+3. During normal work agents must call `compress` only with explicit user authorization in
+   the current message (prompt contract; runtime does not inspect that text). `/compress manage`
+   opens a management turn with a self-contained reminder requiring one
+   `compress({ summary, topic })` call. The `compress` tool must be permitted or the command
+   fails user-only before opening a model turn.
 4. `/compress squash` opens a separate user-authorized management turn only when at least two
    reconcilable existing blocks are present. Its `squash` call replaces one selected contiguous
    block range without touching uncompressed history, compressed ID sets, or cooldown state.
@@ -201,7 +204,7 @@ Each session state tracks compressed IDs, summaries, manual/automatic/squash man
 markers, compression stats, persisted auto-compression overrides and cooldown anchor, optional
 `goalOverflowRecovery` owner payload, subagent status, initialization, and runtime-only threshold
 metadata. Durable fields are persisted at
-`~/.local/share/opencode/storage/plugin/compress/<sessionId>.json`.
+`~/.local/share/opencode/storage/plugin/compress/<sessionId>.json` (or under `$XDG_DATA_HOME`).
 The `initialized` flag prevents repeated subagent/compaction bootstrap work; persisted state is
 still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
 
@@ -265,8 +268,18 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
   disabled cleanly when Goal APIs are absent. Do not depend on Goal metrics fields.
 - Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
-- Debug logs and context snapshots are written under `~/.config/opencode/logs/compress/` when debug is enabled.
-- Diagnostic logs prefixed with `[DIAG:]` bypass the `enabled` check in the logger — they always write regardless of debug config. Use for temporary debugging, remove before release.
+- Logger flags are split: `debug` gates context snapshots; `dailyLog` gates the one-line activity log
+  (`new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug })` in `index.ts`).
+  When `dailyLog` is unset it follows `debug`. There is no `[DIAG:]` bypass — all activity lines go
+  through the daily gate.
+- Context snapshots land at
+  `~/.config/opencode/logs/compress/context/<sessionId>/<timestamp>.json` (or under `$XDG_CONFIG_HOME`).
+  `saveContext` runs after every successful prompt transform (`lib/hooks.ts`), not only on
+  compression. Each file is the full minimized conversation so far (pretty-printed), so total size
+  grows roughly with the square of the turn count. Leave `debug` off unless actively debugging.
+- Daily activity lines append to
+  `~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log`. Snapshot and daily write failures
+  report via `console.error`.
 - Focused Goal tests: `tests/goal-compatibility.test.ts` and Goal overflow cases in
   `tests/auto-compression.test.ts`. Joint host tests live in the OpenCode fork `prompt.test.ts`
   harness.
