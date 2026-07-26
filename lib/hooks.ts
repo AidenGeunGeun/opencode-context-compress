@@ -2,9 +2,7 @@ import type { WithParts } from "./state/index.js"
 import { SessionStateManager } from "./state/index.js"
 import type { Logger } from "./logger.js"
 import type { PluginConfig } from "./config.js"
-import { syncToolCache } from "./state/tool-cache.js"
 import { applyCompressTransforms } from "./messages/index.js"
-import { buildToolIdList } from "./messages/utils.js"
 import { checkSession } from "./state/index.js"
 import { handleStatsCommand } from "./commands/stats.js"
 import { handleContextCommand } from "./commands/context.js"
@@ -30,7 +28,6 @@ export function createChatMessageTransformHandler(
     client: any,
     stateManager: SessionStateManager,
     logger: Logger,
-    config: PluginConfig,
     workingDirectory?: string,
 ) {
     return async (_input: {}, output: { messages: WithParts[] }) => {
@@ -60,8 +57,6 @@ export function createChatMessageTransformHandler(
                 summaryCount: appliedSummaryCount,
             })
 
-            syncToolCache(state, config, logger, output.messages)
-            buildToolIdList(state, output.messages)
             applyCompressTransforms(state, logger, output.messages)
             return true
         })

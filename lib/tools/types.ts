@@ -7,5 +7,4 @@ export interface CompressToolContext {
     stateManager: SessionStateManager
     logger: Logger
     config: PluginConfig
-    workingDirectory: string
 }

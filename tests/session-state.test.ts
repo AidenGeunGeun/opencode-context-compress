@@ -85,10 +85,10 @@ describe("SessionStateManager", () => {
         const manager = new SessionStateManager()
         const state = manager.get("main-session")
 
-        state.currentTurn = 7
+        state.variant = "cached-variant"
 
         assert.strictEqual(manager.get("main-session"), state)
-        assert.equal(manager.get("main-session").currentTurn, 7)
+        assert.equal(manager.get("main-session").variant, "cached-variant")
     })
 
     it("serializes mutations per session without blocking a different session", async () => {
@@ -190,7 +190,6 @@ describe("ensureSessionInitialized", () => {
         assert.equal(state.initialized, true)
         assert.equal(state.sessionId, sessionId)
         assert.equal(state.variant, "cached-variant")
-        assert.equal(state.currentTurn, 1)
     })
 
     it("does not mark an observed compaction as reconciled during initialization", async () => {

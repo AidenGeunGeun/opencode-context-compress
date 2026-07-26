@@ -5,7 +5,6 @@ import { commitDurableSessionState } from "../state/state.js"
 import type { PluginConfig } from "../config.js"
 import { renderSystemPrompt } from "../prompts/index.js"
 import { getCurrentParams } from "../token-utils.js"
-import { syncToolCache } from "../state/tool-cache.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
@@ -27,7 +26,6 @@ export interface ManagementTurnStartContext {
     client: any
     stateManager: SessionStateManager
     state: SessionState
-    config: PluginConfig
     logger: Logger
     sessionId: string
     messages: WithParts[]
@@ -159,7 +157,6 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         client: ctx.client,
         stateManager: ctx.stateManager,
         state: ctx.state,
-        config: ctx.config,
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
@@ -172,7 +169,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
 export async function stageManagementTurnWithinLock(
     ctx: ManagementTurnStartContext,
 ): Promise<StagedManagementTurn | undefined> {
-    const { client, stateManager, state, config, logger, sessionId, messages } = ctx
+    const { client, stateManager, state, logger, sessionId, messages } = ctx
 
     const currentParams = getCurrentParams(state, messages, logger)
     if (!state.persistenceSynchronized) {
@@ -187,8 +184,6 @@ export async function stageManagementTurnWithinLock(
             return false
         }
     }
-
-    await syncToolCache(state, config, logger, messages)
 
     const automaticTail =
         ctx.source === "automatic"

@@ -24,10 +24,6 @@
             "type": "boolean",
             "description": "Write one-line activity log lines to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only"
         },
-        "showUpdateToasts": {
-            "type": "boolean",
-            "description": "Deprecated no-op retained so older configs do not fail key validation"
-        },
         "notification": {
             "type": "string",
             "enum": ["off", "minimal", "detailed"],
@@ -90,66 +86,17 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Enable context compression slash commands (/compress)"
-                },
-                "protectedTools": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "default": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"],
-                    "description": "Merged into config.commands.protectedTools (same default list as tools.settings.protectedTools). Currently unused at runtime; the tool cache reads tools.settings.protectedTools only"
                 }
             },
             "default": {
-                "enabled": true,
-                "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
+                "enabled": true
             }
-        },
-        "turnProtection": {
-            "type": "object",
-            "description": "Skip adding tool calls from the newest N execution steps to the internal tool-parameter cache. Does not affect compress span selection (use protectedTurns for that)",
-            "additionalProperties": false,
-            "properties": {
-                "enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable turn-based skipping in the tool-parameter cache"
-                },
-                "turns": {
-                    "type": "number",
-                    "default": 4,
-                    "description": "Newest execution steps whose tool calls are omitted from the tool-parameter cache"
-                }
-            }
-        },
-        "protectedFilePatterns": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "default": [],
-            "description": "Glob patterns accepted and merged into config. Not consulted by compression selection or other runtime paths today"
         },
         "tools": {
             "type": "object",
             "description": "Configuration for compression tools",
             "additionalProperties": false,
             "properties": {
-                "settings": {
-                    "type": "object",
-                    "description": "General tool settings",
-                    "additionalProperties": false,
-                    "properties": {
-                        "protectedTools": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
-                            },
-                            "default": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"],
-                            "description": "Tool names for which the tool-parameter cache omits per-call token estimates (entries are still stored). Layer merges union with defaults"
-                        }
-                    }
-                },
                 "compress": {
                     "type": "object",
                     "description": "Configuration for the compress tool",

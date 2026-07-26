@@ -1,6 +1,5 @@
 import type { SessionState, WithParts } from "./types.js"
 import { getSession } from "../sdk/client.js"
-import { isMessageCompacted } from "../shared-utils.js"
 
 export async function isSubAgentSession(client: any, sessionID: string): Promise<boolean> {
     try {
@@ -26,24 +25,7 @@ export function findLastCompactionTimestamp(messages: WithParts[]): number {
     return 0
 }
 
-export function countTurns(state: SessionState, messages: WithParts[]): number {
-    let turnCount = 0
-    for (const msg of messages) {
-        if (isMessageCompacted(state, msg)) {
-            continue
-        }
-        const parts = Array.isArray(msg.parts) ? msg.parts : []
-        for (const part of parts) {
-            if (part.type === "step-start") {
-                turnCount++
-            }
-        }
-    }
-    return turnCount
-}
-
 export function resetOnCompaction(state: SessionState): void {
-    state.toolParameters.clear()
     state.compressed.toolIds = new Set<string>()
     state.compressed.messageIds = new Set<string>()
     state.compressSummaries = []

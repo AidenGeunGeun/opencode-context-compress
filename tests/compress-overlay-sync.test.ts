@@ -10,40 +10,8 @@ import { Logger } from "../lib/logger.ts"
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { saveSessionState } from "../lib/state/persistence.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
-import type { PluginConfig } from "../lib/config.ts"
 
 const logger = new Logger({ daily: false, context: false })
-
-const config: PluginConfig = {
-    enabled: true,
-    debug: false,
-    notification: "off",
-    notificationType: "chat",
-    protectedTurns: 3,
-    commands: {
-        enabled: true,
-        protectedTools: [],
-    },
-    autoCompression: {
-        enabled: true,
-        contextWindowRatio: 0.9,
-        tokenThreshold: 300_000,
-    },
-    turnProtection: {
-        enabled: false,
-        turns: 0,
-    },
-    protectedFilePatterns: [],
-    tools: {
-        settings: {
-            protectedTools: [],
-        },
-        compress: {
-            permission: "allow",
-            showCompression: true,
-        },
-    },
-}
 
 const client = {
     session: {
@@ -100,7 +68,6 @@ describe("session-scoped compress overlay", () => {
                 client,
                 managerB,
                 logger,
-                config,
                 "/tmp/instance-b",
             )
 
@@ -174,7 +141,6 @@ describe("session-scoped compress overlay", () => {
                 client,
                 recreatedManager,
                 logger,
-                config,
                 "/tmp/recreated-instance",
             )
             const output = { messages: cloneMessages(rawMessages) as any }
@@ -207,7 +173,6 @@ describe("session-scoped compress overlay", () => {
                 client,
                 manager,
                 logger,
-                config,
                 "/tmp/clean-instance",
             )
             const output = { messages: cloneMessages(rawMessages) as any }

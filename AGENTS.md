@@ -140,7 +140,7 @@ lib/sdk/client.ts
   on resume; missing Goal methods return `undefined` without breaking compression.
 
 lib/state/*
-  Session state, persistence, compaction resets, and tool metadata cache.
+  Session state, persistence, and compaction resets.
   Durable optional `goalOverflowRecovery` owner payload for one-shot overflow
   recovery; cleared with other session resets. Stale `compressionMapSnapshot`
   is ignored/cleared on load/reconcile and never executed.
@@ -149,8 +149,8 @@ lib/state/*
 ## Runtime Flow
 
 1. Startup loads config and initializes state.
-2. Hooks cache model limits, observe completed assistant usage, sync tool cache, apply
-   compression transforms, and route `/compress` commands.
+2. Hooks cache model limits, observe completed assistant usage, apply compression
+   transforms, and route `/compress` commands.
 3. During normal work agents must call `compress` only with explicit user authorization in
    the current message (prompt contract; runtime does not inspect that text). `/compress manage`
    opens a management turn with a self-contained reminder requiring one

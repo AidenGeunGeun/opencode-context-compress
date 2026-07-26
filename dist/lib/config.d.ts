@@ -3,20 +3,11 @@ export interface CompressTool {
     permission: "ask" | "allow" | "deny";
     showCompression: boolean;
 }
-export interface ToolSettings {
-    protectedTools: string[];
-}
 export interface Tools {
-    settings: ToolSettings;
     compress: CompressTool;
 }
 export interface Commands {
     enabled: boolean;
-    protectedTools: string[];
-}
-export interface TurnProtection {
-    enabled: boolean;
-    turns: number;
 }
 export interface AutoCompression {
     enabled: boolean;
@@ -35,8 +26,6 @@ export interface PluginConfig {
     protectedTurns: number;
     commands: Commands;
     autoCompression: AutoCompression;
-    turnProtection: TurnProtection;
-    protectedFilePatterns: string[];
     tools: Tools;
 }
 export declare const VALID_CONFIG_KEYS: Set<string>;

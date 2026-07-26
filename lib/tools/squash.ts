@@ -190,7 +190,6 @@ export function createSquashTool(ctx: CompressToolContext): ReturnType<typeof to
                         ? {
                               ...turn,
                               completedAt,
-                              ...(callId ? { completedCallId: callId } : {}),
                               completedMessageId: toolCtx.messageID,
                           }
                         : turn,

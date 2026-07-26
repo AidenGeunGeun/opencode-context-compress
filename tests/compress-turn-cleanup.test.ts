@@ -5,7 +5,6 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import type { PluginConfig } from "../lib/config.ts"
 import { createChatMessageTransformHandler } from "../lib/hooks.ts"
 import { Logger } from "../lib/logger.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
@@ -15,37 +14,6 @@ import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
 import type { SessionState, WithParts } from "../lib/state/types.ts"
 
 const logger = new Logger({ daily: false, context: false })
-
-const config: PluginConfig = {
-    enabled: true,
-    debug: false,
-    notification: "off",
-    notificationType: "chat",
-    protectedTurns: 3,
-    commands: {
-        enabled: true,
-        protectedTools: [],
-    },
-    autoCompression: {
-        enabled: true,
-        contextWindowRatio: 0.9,
-        tokenThreshold: 300_000,
-    },
-    turnProtection: {
-        enabled: false,
-        turns: 0,
-    },
-    protectedFilePatterns: [],
-    tools: {
-        settings: {
-            protectedTools: [],
-        },
-        compress: {
-            permission: "allow",
-            showCompression: false,
-        },
-    },
-}
 
 let timeCounter = 1_700_000_000_000
 
@@ -374,7 +342,6 @@ describe("compress-turn machinery cleanup", () => {
                 { session: { get: async () => ({ data: {} }) } },
                 manager,
                 logger,
-                config,
                 "/tmp/reload",
             )
             const output = { messages: cloneMessages(messages) as any }
@@ -412,7 +379,6 @@ describe("compress-turn machinery cleanup", () => {
             { session: { get: async () => ({ data: { parentID: "parent-session" } }) } },
             manager,
             logger,
-            config,
             "/tmp/subagent",
         )
 
@@ -421,7 +387,6 @@ describe("compress-turn machinery cleanup", () => {
         assert.deepEqual(output.messages, messages)
         assert.deepEqual(state.managementTurns, [{ triggerMessageId: "manage-subagent" }])
         assert.deepEqual([...state.compressed.messageIds], ["sub-old"])
-        assert.equal(state.toolParameters.size, 0)
     })
 })
 
@@ -726,7 +691,6 @@ describe("atomic compress completion cleanup", () => {
             {
                 triggerMessageId: "manage-1",
                 completedAt: new Date().toISOString(),
-                completedCallId: "call-compress-1",
                 completedMessageId: "compress-msg-1",
             },
         ]
@@ -773,7 +737,6 @@ describe("atomic compress completion cleanup", () => {
             {
                 triggerMessageId: "manage-2",
                 completedAt: new Date().toISOString(),
-                completedCallId: "call-compress-2",
                 completedMessageId: "compress-msg-2",
             },
         ]
@@ -815,7 +778,6 @@ describe("atomic compress completion cleanup", () => {
             {
                 triggerMessageId: "new-manage",
                 completedAt: new Date().toISOString(),
-                completedCallId: "call-new-compress",
                 completedMessageId: "new-compress-msg",
             },
         ]
@@ -866,7 +828,6 @@ describe("atomic compress completion cleanup", () => {
             {
                 triggerMessageId: "manage-keep-input",
                 completedAt: new Date().toISOString(),
-                completedCallId: "call-keep-input",
                 completedMessageId: "compress-keep-input",
             },
         ]

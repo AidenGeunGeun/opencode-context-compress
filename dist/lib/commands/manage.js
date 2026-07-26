@@ -1,7 +1,6 @@
 import { commitDurableSessionState } from "../state/state.js";
 import { renderSystemPrompt } from "../prompts/index.js";
 import { getCurrentParams } from "../token-utils.js";
-import { syncToolCache } from "../state/tool-cache.js";
 import { saveSessionState } from "../state/persistence.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js";
@@ -89,7 +88,6 @@ export async function handleManageCommand(ctx) {
         client: ctx.client,
         stateManager: ctx.stateManager,
         state: ctx.state,
-        config: ctx.config,
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
@@ -99,7 +97,7 @@ export async function handleManageCommand(ctx) {
 }
 /** Persists the turn marker; the caller must hold this session's mutation lock. */
 export async function stageManagementTurnWithinLock(ctx) {
-    const { client, stateManager, state, config, logger, sessionId, messages } = ctx;
+    const { client, stateManager, state, logger, sessionId, messages } = ctx;
     const currentParams = getCurrentParams(state, messages, logger);
     if (!state.persistenceSynchronized) {
         return async () => {
@@ -107,7 +105,6 @@ export async function stageManagementTurnWithinLock(ctx) {
             return false;
         };
     }
-    await syncToolCache(state, config, logger, messages);
     const automaticTail = ctx.source === "automatic"
         ? deriveAutomaticProtectedTail(messages, state, logger, ctx.protectedTurns ?? 0)
         : undefined;

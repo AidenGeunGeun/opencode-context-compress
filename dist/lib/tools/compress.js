@@ -166,10 +166,6 @@ export function createCompressTool(ctx) {
                         ? {
                             ...turn,
                             completedAt,
-                            ...(typeof toolCtx.callID === "string" &&
-                                toolCtx.callID
-                                ? { completedCallId: toolCtx.callID }
-                                : {}),
                             completedMessageId: toolCtx.messageID,
                         }
                         : turn)

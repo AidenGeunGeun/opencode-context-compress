@@ -1,4 +1,4 @@
-import type { SessionState, WithParts } from "../state/index.js";
+import type { WithParts } from "../state/index.js";
 export declare const COMPRESS_SUMMARY_PREFIX = "[Compressed conversation block]\n\n";
 export declare const createSyntheticUserMessage: (baseMessage: WithParts, content: string, variant?: string, stableSeed?: string) => WithParts;
 export declare const createSyntheticTextPart: (baseMessage: WithParts, content: string) => {
@@ -33,11 +33,6 @@ export declare const createSyntheticToolPart: (baseMessage: WithParts, content: 
         };
     };
 };
-/**
- * Extracts a human-readable key from tool metadata for display purposes.
- */
-export declare const extractParameterKey: (tool: string, parameters: any) => string;
-export declare function buildToolIdList(state: SessionState, messages: WithParts[]): string[];
 export declare const isIgnoredUserMessage: (message: WithParts) => boolean;
 export declare const findMessageIndex: (messages: WithParts[], messageId: string) => number;
 //# sourceMappingURL=utils.d.ts.map

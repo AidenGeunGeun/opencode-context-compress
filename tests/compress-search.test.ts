@@ -42,10 +42,7 @@ const createState = (
         compressTokenCounter: 0,
         totalCompressTokens: 0,
     },
-    toolParameters: new Map(),
-    toolIdList: [],
     lastCompaction: 0,
-    currentTurn: 0,
     variant: undefined,
 })
 

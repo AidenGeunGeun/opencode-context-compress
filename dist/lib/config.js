@@ -15,16 +15,6 @@ export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTop
         return fallback;
     return layer.autoCompression?.protectedTurns ?? fallback;
 }
-const DEFAULT_PROTECTED_TOOLS = [
-    "task",
-    "todowrite",
-    "todoread",
-    "compress",
-    "squash",
-    "batch",
-    "plan_enter",
-    "plan_exit",
-];
 // Valid config keys for validation against user config
 export const VALID_CONFIG_KEYS = new Set([
     // Top-level keys
@@ -32,7 +22,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "enabled",
     "debug",
     "dailyLog",
-    "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
     "protectedTurns",
@@ -41,16 +30,9 @@ export const VALID_CONFIG_KEYS = new Set([
     "autoCompression.contextWindowRatio",
     "autoCompression.tokenThreshold",
     "autoCompression.protectedTurns",
-    "turnProtection",
-    "turnProtection.enabled",
-    "turnProtection.turns",
-    "protectedFilePatterns",
     "commands",
     "commands.enabled",
-    "commands.protectedTools",
     "tools",
-    "tools.settings",
-    "tools.settings.protectedTools",
     "tools.compress",
     "tools.compress.permission",
     "tools.compress.showCompression",
@@ -164,41 +146,6 @@ function validateConfigTypes(config) {
             }
         }
     }
-    if (config.protectedFilePatterns !== undefined) {
-        if (!Array.isArray(config.protectedFilePatterns)) {
-            errors.push({
-                key: "protectedFilePatterns",
-                expected: "string[]",
-                actual: typeof config.protectedFilePatterns,
-            });
-        }
-        else if (!config.protectedFilePatterns.every((v) => typeof v === "string")) {
-            errors.push({
-                key: "protectedFilePatterns",
-                expected: "string[]",
-                actual: "non-string entries",
-            });
-        }
-    }
-    // Top-level turnProtection validator
-    if (config.turnProtection) {
-        if (config.turnProtection.enabled !== undefined &&
-            typeof config.turnProtection.enabled !== "boolean") {
-            errors.push({
-                key: "turnProtection.enabled",
-                expected: "boolean",
-                actual: typeof config.turnProtection.enabled,
-            });
-        }
-        if (config.turnProtection.turns !== undefined &&
-            typeof config.turnProtection.turns !== "number") {
-            errors.push({
-                key: "turnProtection.turns",
-                expected: "number",
-                actual: typeof config.turnProtection.turns,
-            });
-        }
-    }
     // Commands validator
     const commands = config.commands;
     if (commands !== undefined) {
@@ -210,18 +157,11 @@ function validateConfigTypes(config) {
                     actual: typeof commands.enabled,
                 });
             }
-            if (commands.protectedTools !== undefined && !Array.isArray(commands.protectedTools)) {
-                errors.push({
-                    key: "commands.protectedTools",
-                    expected: "string[]",
-                    actual: typeof commands.protectedTools,
-                });
-            }
         }
         else {
             errors.push({
                 key: "commands",
-                expected: "{ enabled: boolean, protectedTools: string[] }",
+                expected: "{ enabled: boolean }",
                 actual: typeof commands,
             });
         }
@@ -229,16 +169,6 @@ function validateConfigTypes(config) {
     // Tools validators
     const tools = config.tools;
     if (tools) {
-        if (tools.settings) {
-            if (tools.settings.protectedTools !== undefined &&
-                !Array.isArray(tools.settings.protectedTools)) {
-                errors.push({
-                    key: "tools.settings.protectedTools",
-                    expected: "string[]",
-                    actual: typeof tools.settings.protectedTools,
-                });
-            }
-        }
         if (tools.compress) {
             if (tools.compress.permission !== undefined) {
                 const validValues = ["ask", "allow", "deny"];
@@ -301,18 +231,9 @@ const defaultConfig = {
     protectedTurns: 3,
     commands: {
         enabled: true,
-        protectedTools: [...DEFAULT_PROTECTED_TOOLS],
     },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
-    turnProtection: {
-        enabled: false,
-        turns: 4,
-    },
-    protectedFilePatterns: [],
     tools: {
-        settings: {
-            protectedTools: [...DEFAULT_PROTECTED_TOOLS],
-        },
         compress: {
             permission: "allow",
             showCompression: false,
@@ -411,14 +332,6 @@ function mergeTools(base, override) {
     if (!override)
         return base;
     return {
-        settings: {
-            protectedTools: [
-                ...new Set([
-                    ...base.settings.protectedTools,
-                    ...(override.settings?.protectedTools ?? []),
-                ]),
-            ],
-        },
         compress: {
             permission: override.compress?.permission ?? base.compress.permission,
             showCompression: override.compress?.showCompression ?? base.compress.showCompression,
@@ -430,7 +343,6 @@ function mergeCommands(base, override) {
         return base;
     return {
         enabled: override.enabled ?? base.enabled,
-        protectedTools: [...new Set([...base.protectedTools, ...(override.protectedTools ?? [])])],
     };
 }
 function mergeAutoCompression(base, override) {
@@ -445,18 +357,9 @@ function mergeAutoCompression(base, override) {
 function deepCloneConfig(config) {
     return {
         ...config,
-        commands: {
-            enabled: config.commands.enabled,
-            protectedTools: [...config.commands.protectedTools],
-        },
+        commands: { ...config.commands },
         autoCompression: { ...config.autoCompression },
-        turnProtection: { ...config.turnProtection },
-        protectedFilePatterns: [...config.protectedFilePatterns],
         tools: {
-            settings: {
-                ...config.tools.settings,
-                protectedTools: [...config.tools.settings.protectedTools],
-            },
             compress: { ...config.tools.compress },
         },
     };
@@ -490,16 +393,6 @@ export function getConfig(ctx) {
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                turnProtection: {
-                    enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
-                    turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
-                },
-                protectedFilePatterns: [
-                    ...new Set([
-                        ...config.protectedFilePatterns,
-                        ...(result.data.protectedFilePatterns ?? []),
-                    ]),
-                ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
             hasExplicitProtectedTurns = result.data.protectedTurns !== undefined;
@@ -534,16 +427,6 @@ export function getConfig(ctx) {
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                turnProtection: {
-                    enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
-                    turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
-                },
-                protectedFilePatterns: [
-                    ...new Set([
-                        ...config.protectedFilePatterns,
-                        ...(result.data.protectedFilePatterns ?? []),
-                    ]),
-                ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
             hasExplicitProtectedTurns =
@@ -575,16 +458,6 @@ export function getConfig(ctx) {
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
                 commands: mergeCommands(config.commands, result.data.commands),
                 autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                turnProtection: {
-                    enabled: result.data.turnProtection?.enabled ?? config.turnProtection.enabled,
-                    turns: result.data.turnProtection?.turns ?? config.turnProtection.turns,
-                },
-                protectedFilePatterns: [
-                    ...new Set([
-                        ...config.protectedFilePatterns,
-                        ...(result.data.protectedFilePatterns ?? []),
-                    ]),
-                ],
                 tools: mergeTools(config.tools, result.data.tools),
             };
             hasExplicitProtectedTurns =

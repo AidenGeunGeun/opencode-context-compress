@@ -27,7 +27,6 @@ const plugin: Plugin = (async (ctx) => {
 
     if (isSecureMode()) {
         configureClientAuth(ctx.client)
-        // logger.info("Secure mode detected, configured client authentication")
     }
 
     logger.info("Context Compress initialized")
@@ -43,7 +42,6 @@ const plugin: Plugin = (async (ctx) => {
             ctx.client,
             stateManager,
             logger,
-            config,
             ctx.directory,
         ) as any,
         "chat.params": createChatParamsHandler(stateManager),
@@ -61,14 +59,12 @@ const plugin: Plugin = (async (ctx) => {
                     stateManager,
                     logger,
                     config,
-                    workingDirectory: ctx.directory,
                 }),
                 squash: createSquashTool({
                     client: ctx.client,
                     stateManager,
                     logger,
                     config,
-                    workingDirectory: ctx.directory,
                 }),
             }),
         },

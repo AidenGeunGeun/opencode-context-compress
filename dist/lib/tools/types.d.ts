@@ -6,6 +6,5 @@ export interface CompressToolContext {
     stateManager: SessionStateManager;
     logger: Logger;
     config: PluginConfig;
-    workingDirectory: string;
 }
 //# sourceMappingURL=types.d.ts.map

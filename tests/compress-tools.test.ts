@@ -24,16 +24,13 @@ const baseConfig: PluginConfig = {
     notification: "off",
     notificationType: "chat",
     protectedTurns: 0,
-    commands: { enabled: true, protectedTools: [] },
+    commands: { enabled: true },
     autoCompression: {
         enabled: true,
         contextWindowRatio: 0.9,
         tokenThreshold: 300_000,
     },
-    turnProtection: { enabled: false, turns: 0 },
-    protectedFilePatterns: [],
     tools: {
-        settings: { protectedTools: [] },
         compress: { permission: "allow", showCompression: false },
     },
 }
@@ -160,7 +157,6 @@ async function executePath(
         stateManager,
         logger,
         config: { ...baseConfig, protectedTurns },
-        workingDirectory: "/tmp",
     })
     const receipt = await tool.execute(
         { summary: `${source} summary`, topic: `${source} topic` },
@@ -176,7 +172,6 @@ describe("single-tool compression", () => {
             stateManager: new SessionStateManager(),
             logger,
             config: baseConfig,
-            workingDirectory: "/tmp",
         }) as any
 
         assert.deepEqual(Object.keys(tool.args), ["summary", "topic"])
@@ -190,7 +185,6 @@ describe("single-tool compression", () => {
             stateManager,
             logger,
             config: baseConfig,
-            workingDirectory: "/tmp",
         })
 
         await assert.rejects(
@@ -272,7 +266,7 @@ describe("single-tool compression", () => {
         ]
         const original = structuredClone(state.compressSummaries[0])
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig, workingDirectory: "/tmp",
+            client: client(messages), stateManager, logger, config: baseConfig,
         })
 
         try {
@@ -299,7 +293,7 @@ describe("single-tool compression", () => {
         const stateManager = new SessionStateManager()
         stateManager.get(sessionId).initialized = true
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig, workingDirectory: "/tmp",
+            client: client(messages), stateManager, logger, config: baseConfig,
         })
 
         try {
@@ -345,7 +339,6 @@ describe("single-tool compression", () => {
             stateManager,
             logger,
             config: { ...baseConfig, protectedTurns: 3 },
-            workingDirectory: "/tmp",
         })
 
         const receipt = await tool.execute(
@@ -370,7 +363,7 @@ describe("single-tool compression", () => {
         const state = stateManager.get(sessionId)
         state.initialized = true
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig, workingDirectory: "/tmp",
+            client: client(messages), stateManager, logger, config: baseConfig,
         })
 
         await assert.rejects(
@@ -399,7 +392,6 @@ describe("single-tool compression", () => {
             stateManager,
             logger,
             config: baseConfig,
-            workingDirectory: "/tmp",
         })
 
         await assert.rejects(
@@ -425,7 +417,7 @@ describe("single-tool compression", () => {
         const state = stateManager.get(sessionId)
         state.initialized = true
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig, workingDirectory: "/tmp",
+            client: client(messages), stateManager, logger, config: baseConfig,
         })
 
         await assert.rejects(

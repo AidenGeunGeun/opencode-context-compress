@@ -134,7 +134,6 @@ export function createSquashTool(ctx) {
                     ? {
                         ...turn,
                         completedAt,
-                        ...(callId ? { completedCallId: callId } : {}),
                         completedMessageId: toolCtx.messageID,
                     }
                     : turn);

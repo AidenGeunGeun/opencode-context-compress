@@ -1,8 +1,7 @@
 import { SessionState, WithParts } from "./state/index.js"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { Logger } from "./logger.js"
-import { getLastUserMessage, isMessageCompacted } from "./shared-utils.js"
-import { getCompletedToolOutputText } from "./tools/utils.js"
+import { getLastUserMessage } from "./shared-utils.js"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
 import { encodingForModel, type Tiktoken } from "js-tiktoken"
 
@@ -65,76 +64,4 @@ export function countTokens(text: string, providerId?: string): number {
 export function estimateTokensBatch(texts: string[], providerId?: string): number {
     if (texts.length === 0) return 0
     return countTokens(texts.join(" "), providerId)
-}
-
-export function extractToolContent(part: any): string[] {
-    const contents: string[] = []
-
-    if (part.tool === "question") {
-        const questions = part.state?.input?.questions
-        if (questions !== undefined) {
-            const content = typeof questions === "string" ? questions : JSON.stringify(questions)
-            contents.push(content)
-        }
-        return contents
-    }
-
-    if (part.tool === "edit" || part.tool === "write") {
-        if (part.state?.input) {
-            const inputContent =
-                typeof part.state.input === "string"
-                    ? part.state.input
-                    : JSON.stringify(part.state.input)
-            contents.push(inputContent)
-        }
-    }
-
-    if (part.state?.status === "completed") {
-        const content = getCompletedToolOutputText(part, part.state.output, {
-            requireTruthy: true,
-            stringifyNonString: true,
-        })
-        if (typeof content === "string") {
-            contents.push(content)
-        }
-    } else if (part.state?.status === "error" && part.state?.error) {
-        const content =
-            typeof part.state.error === "string"
-                ? part.state.error
-                : JSON.stringify(part.state.error)
-        contents.push(content)
-    }
-
-    return contents
-}
-
-export function countToolTokens(part: any, providerId?: string): number {
-    const contents = extractToolContent(part)
-    return estimateTokensBatch(contents, providerId)
-}
-
-export const calculateTokensSaved = (
-    state: SessionState,
-    messages: WithParts[],
-    compressedToolIds: string[],
-    providerId?: string,
-): number => {
-    try {
-        const contents: string[] = []
-        for (const msg of messages) {
-            if (isMessageCompacted(state, msg)) {
-                continue
-            }
-            const parts = Array.isArray(msg.parts) ? msg.parts : []
-            for (const part of parts) {
-                if (part.type !== "tool" || !compressedToolIds.includes(part.callID)) {
-                    continue
-                }
-                contents.push(...extractToolContent(part))
-            }
-        }
-        return estimateTokensBatch(contents, providerId)
-    } catch (error: any) {
-        return 0
-    }
 }

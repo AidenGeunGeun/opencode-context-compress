@@ -22,16 +22,13 @@ const config: PluginConfig = {
     notification: "off",
     notificationType: "chat",
     protectedTurns: 3,
-    commands: { enabled: true, protectedTools: [] },
+    commands: { enabled: true },
     autoCompression: {
         enabled: true,
         contextWindowRatio: 0.9,
         tokenThreshold: 300_000,
     },
-    turnProtection: { enabled: false, turns: 0 },
-    protectedFilePatterns: [],
     tools: {
-        settings: { protectedTools: [] },
         compress: { permission: "allow", showCompression: false },
     },
 }

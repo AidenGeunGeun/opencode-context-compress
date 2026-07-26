@@ -190,26 +190,14 @@ Default runtime config:
     "notificationType": "chat",
     "protectedTurns": 3,
     "commands": {
-        "enabled": true,
-        // unused at runtime; tool cache reads tools.settings.protectedTools only
-        "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
+        "enabled": true
     },
     "autoCompression": {
         "enabled": true,
         "contextWindowRatio": 0.9,
         "tokenThreshold": 335000
     },
-    "turnProtection": {
-        "enabled": false,
-        "turns": 4
-    },
-    // accepted/merged but not consulted by runtime paths today
-    "protectedFilePatterns": [],
     "tools": {
-        "settings": {
-            // live: tool-parameter cache skips token counting for these tools
-            "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
-        },
         "compress": {
             "permission": "allow",
             "showCompression": false

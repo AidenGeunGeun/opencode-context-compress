@@ -4,6 +4,7 @@ bun.lock
 
 # Build output
 *.tgz
+__pycache__/
 
 # Logs
 *.log

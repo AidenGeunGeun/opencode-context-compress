@@ -29,16 +29,13 @@ const config: PluginConfig = {
     notification: "off",
     notificationType: "chat",
     protectedTurns: 3,
-    commands: { enabled: true, protectedTools: [] },
+    commands: { enabled: true },
     autoCompression: {
         enabled: true,
         contextWindowRatio: 0.9,
         tokenThreshold: 300_000,
     },
-    turnProtection: { enabled: false, turns: 0 },
-    protectedFilePatterns: [],
     tools: {
-        settings: { protectedTools: [] },
         compress: { permission: "allow", showCompression: false },
     },
 }
@@ -221,7 +218,6 @@ async function executeSquashRange(from: number, to: number, count = 5) {
         stateManager: manager,
         logger,
         config,
-        workingDirectory: "/tmp",
     })
     const replacementSummary = `Replacement ${from}-${to}`
     const receipt = await tool.execute(
@@ -395,7 +391,6 @@ describe("squash tool", () => {
             stateManager: new SessionStateManager(),
             logger,
             config,
-            workingDirectory: "/tmp",
         }
         assert.deepEqual(Object.keys((createCompressTool(context) as any).args), ["summary", "topic"])
         assert.deepEqual(Object.keys((createSquashTool(context) as any).args), [
@@ -534,7 +529,7 @@ describe("squash tool", () => {
         state.managementTurns = [{ triggerMessageId: "trigger", source: "squash" }]
         const call = squashCallMessage("call-message", sessionId, "trigger", "call")
         const messages = [...seeded.messages, trigger, call]
-        const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config, workingDirectory: "/tmp" })
+        const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config })
 
         try {
             await tool.execute(
@@ -582,7 +577,7 @@ describe("squash tool", () => {
             messages.push(call)
             const before = durableSnapshot(state)
             let asked = false
-            const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config, workingDirectory: "/tmp" })
+            const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config })
 
             await assert.rejects(
                 tool.execute(
@@ -608,7 +603,6 @@ describe("squash tool", () => {
             stateManager: manager,
             logger,
             config,
-            workingDirectory: "/tmp",
         })
         for (const input of [
             { from: undefined, to: "b1", summary: "Summary", topic: "Topic" },
@@ -635,7 +629,7 @@ describe("squash tool", () => {
         const call = squashCallMessage("call-message", sessionId, "trigger", "call")
         const messages = [...seeded.messages, trigger, call]
         const before = durableSnapshot(state)
-        const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config, workingDirectory: "/tmp" })
+        const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config })
 
         await assert.rejects(
             tool.execute(
@@ -662,7 +656,6 @@ describe("squash tool", () => {
             stateManager: permissionManager,
             logger,
             config,
-            workingDirectory: "/tmp",
         })
         await assert.rejects(
             permissionTool.execute(
@@ -691,7 +684,6 @@ describe("squash tool", () => {
             stateManager: fetchManager,
             logger,
             config,
-            workingDirectory: "/tmp",
         })
         await assert.rejects(
             fetchTool.execute(
@@ -714,7 +706,7 @@ describe("squash tool", () => {
         const call = compressCallMessage("compress-call", sessionId, "trigger", "call")
         const messages = [...seeded.messages, trigger, call]
         const before = durableSnapshot(state)
-        const tool = createCompressTool({ client: client(messages), stateManager: manager, logger, config, workingDirectory: "/tmp" })
+        const tool = createCompressTool({ client: client(messages), stateManager: manager, logger, config })
 
         await assert.rejects(
             tool.execute(

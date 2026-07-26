@@ -17,7 +17,6 @@ export interface ManagementTurnStartContext {
     client: any;
     stateManager: SessionStateManager;
     state: SessionState;
-    config: PluginConfig;
     logger: Logger;
     sessionId: string;
     messages: WithParts[];

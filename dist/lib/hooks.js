@@ -1,6 +1,4 @@
-import { syncToolCache } from "./state/tool-cache.js";
 import { applyCompressTransforms } from "./messages/index.js";
-import { buildToolIdList } from "./messages/utils.js";
 import { checkSession } from "./state/index.js";
 import { handleStatsCommand } from "./commands/stats.js";
 import { handleContextCommand } from "./commands/context.js";
@@ -20,7 +18,7 @@ export function getLastUserSessionId(messages) {
     }
     return undefined;
 }
-export function createChatMessageTransformHandler(client, stateManager, logger, config, workingDirectory) {
+export function createChatMessageTransformHandler(client, stateManager, logger, workingDirectory) {
     return async (_input, output) => {
         const sessionId = getLastUserSessionId(output.messages);
         if (!sessionId)
@@ -43,8 +41,6 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
                 compressedMessageCount: appliedCompressedMessageCount,
                 summaryCount: appliedSummaryCount,
             });
-            syncToolCache(state, config, logger, output.messages);
-            buildToolIdList(state, output.messages);
             applyCompressTransforms(state, logger, output.messages);
             return true;
         });

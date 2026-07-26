@@ -1,5 +1,4 @@
-import { getLastUserMessage, isMessageCompacted } from "./shared-utils.js";
-import { getCompletedToolOutputText } from "./tools/utils.js";
+import { getLastUserMessage } from "./shared-utils.js";
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
 import { encodingForModel } from "js-tiktoken";
 // Lazy-initialized tiktoken encoder (created on first non-Anthropic call)
@@ -52,64 +51,4 @@ export function estimateTokensBatch(texts, providerId) {
         return 0;
     return countTokens(texts.join(" "), providerId);
 }
-export function extractToolContent(part) {
-    const contents = [];
-    if (part.tool === "question") {
-        const questions = part.state?.input?.questions;
-        if (questions !== undefined) {
-            const content = typeof questions === "string" ? questions : JSON.stringify(questions);
-            contents.push(content);
-        }
-        return contents;
-    }
-    if (part.tool === "edit" || part.tool === "write") {
-        if (part.state?.input) {
-            const inputContent = typeof part.state.input === "string"
-                ? part.state.input
-                : JSON.stringify(part.state.input);
-            contents.push(inputContent);
-        }
-    }
-    if (part.state?.status === "completed") {
-        const content = getCompletedToolOutputText(part, part.state.output, {
-            requireTruthy: true,
-            stringifyNonString: true,
-        });
-        if (typeof content === "string") {
-            contents.push(content);
-        }
-    }
-    else if (part.state?.status === "error" && part.state?.error) {
-        const content = typeof part.state.error === "string"
-            ? part.state.error
-            : JSON.stringify(part.state.error);
-        contents.push(content);
-    }
-    return contents;
-}
-export function countToolTokens(part, providerId) {
-    const contents = extractToolContent(part);
-    return estimateTokensBatch(contents, providerId);
-}
-export const calculateTokensSaved = (state, messages, compressedToolIds, providerId) => {
-    try {
-        const contents = [];
-        for (const msg of messages) {
-            if (isMessageCompacted(state, msg)) {
-                continue;
-            }
-            const parts = Array.isArray(msg.parts) ? msg.parts : [];
-            for (const part of parts) {
-                if (part.type !== "tool" || !compressedToolIds.includes(part.callID)) {
-                    continue;
-                }
-                contents.push(...extractToolContent(part));
-            }
-        }
-        return estimateTokensBatch(contents, providerId);
-    }
-    catch (error) {
-        return 0;
-    }
-};
 //# sourceMappingURL=token-utils.js.map

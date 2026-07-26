@@ -14,12 +14,11 @@ const plugin = (async (ctx) => {
     const logger = new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug });
     if (isSecureMode()) {
         configureClientAuth(ctx.client);
-        // logger.info("Secure mode detected, configured client authentication")
     }
     logger.info("Context Compress initialized");
     const hooks = {
         event: createAutomaticCompressionEventHandler(ctx.client, stateManager, logger, config),
-        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, config, ctx.directory),
+        "experimental.chat.messages.transform": createChatMessageTransformHandler(ctx.client, stateManager, logger, ctx.directory),
         "chat.params": createChatParamsHandler(stateManager),
         "chat.message": createChatMessageHandler(stateManager, logger),
         "command.execute.before": createCommandExecuteHandler(ctx.client, stateManager, logger, config),
@@ -30,14 +29,12 @@ const plugin = (async (ctx) => {
                     stateManager,
                     logger,
                     config,
-                    workingDirectory: ctx.directory,
                 }),
                 squash: createSquashTool({
                     client: ctx.client,
                     stateManager,
                     logger,
                     config,
-                    workingDirectory: ctx.directory,
                 }),
             }),
         },

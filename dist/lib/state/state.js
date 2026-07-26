@@ -1,5 +1,5 @@
 import { loadSessionState, saveSessionState } from "./persistence.js";
-import { isSubAgentSession, isCompletedNativeCompaction, findLastCompactionTimestamp, countTurns, resetOnCompaction, } from "./utils.js";
+import { isSubAgentSession, isCompletedNativeCompaction, findLastCompactionTimestamp, resetOnCompaction, } from "./utils.js";
 export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
     state.compressSummaries = candidate.compressSummaries;
@@ -250,19 +250,17 @@ export const checkSession = async (client, state, logger, messages) => {
             lastUpdated: null,
         };
     }
-    let syncResult = {
+    const unreconciled = {
         source: "memory",
         lastUpdated: state.persistedLastUpdated,
     };
     try {
-        syncResult = await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages);
+        return await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages);
     }
     catch (err) {
         logger.error("Failed to initialize session state", { error: err.message });
-        return syncResult;
+        return unreconciled;
     }
-    state.currentTurn = countTurns(state, messages);
-    return syncResult;
 };
 export function createSessionState() {
     return {
@@ -288,10 +286,7 @@ export function createSessionState() {
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
         goalOverflowRecovery: undefined,
-        toolParameters: new Map(),
-        toolIdList: [],
         lastCompaction: 0,
-        currentTurn: 0,
         variant: undefined,
         autoCompressionStarting: false,
         lastAutoTriggeredMessageId: undefined,
@@ -307,8 +302,6 @@ export async function ensureSessionInitialized(client, state, sessionId, logger,
         state.isSubAgent = isSubAgent;
         state.initialized = true;
     }
-    const syncResult = await refreshPersistedSessionState(state, sessionId, logger, messages);
-    state.currentTurn = countTurns(state, messages);
-    return syncResult;
+    return await refreshPersistedSessionState(state, sessionId, logger, messages);
 }
 //# sourceMappingURL=state.js.map

@@ -1,11 +1,10 @@
-import type { SessionState, ToolParameterEntry, WithParts } from "./types.js"
+import type { SessionState, WithParts } from "./types.js"
 import type { Logger } from "../logger.js"
 import { loadSessionState, saveSessionState } from "./persistence.js"
 import {
     isSubAgentSession,
     isCompletedNativeCompaction,
     findLastCompactionTimestamp,
-    countTurns,
     resetOnCompaction,
 } from "./utils.js"
 
@@ -314,20 +313,17 @@ export const checkSession = async (
         }
     }
 
-    let syncResult: SessionStateSyncResult = {
+    const unreconciled: SessionStateSyncResult = {
         source: "memory",
         lastUpdated: state.persistedLastUpdated,
     }
 
     try {
-        syncResult = await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages)
+        return await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages)
     } catch (err: any) {
         logger.error("Failed to initialize session state", { error: err.message })
-        return syncResult
+        return unreconciled
     }
-
-    state.currentTurn = countTurns(state, messages)
-    return syncResult
 }
 
 export function createSessionState(): SessionState {
@@ -354,10 +350,7 @@ export function createSessionState(): SessionState {
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
         goalOverflowRecovery: undefined,
-        toolParameters: new Map<string, ToolParameterEntry>(),
-        toolIdList: [],
         lastCompaction: 0,
-        currentTurn: 0,
         variant: undefined,
         autoCompressionStarting: false,
         lastAutoTriggeredMessageId: undefined,
@@ -386,7 +379,5 @@ export async function ensureSessionInitialized(
         state.initialized = true
     }
 
-    const syncResult = await refreshPersistedSessionState(state, sessionId, logger, messages)
-    state.currentTurn = countTurns(state, messages)
-    return syncResult
+    return await refreshPersistedSessionState(state, sessionId, logger, messages)
 }

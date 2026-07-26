@@ -1,40 +1,8 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { extractParameterKey, isIgnoredUserMessage } from "../lib/messages/utils.ts"
-import { extractToolContent } from "../lib/token-utils.ts"
-
-describe("extractParameterKey", () => {
-    it("returns read file path", () => {
-        assert.equal(extractParameterKey("read", { filePath: "/foo/bar.ts" }), "/foo/bar.ts")
-    })
-
-    it("returns read path with line range when offset and limit are provided", () => {
-        assert.equal(
-            extractParameterKey("read", { filePath: "/foo.ts", offset: 10, limit: 20 }),
-            "/foo.ts (lines 10-30)",
-        )
-    })
-
-    it("prefers bash description over command", () => {
-        assert.equal(
-            extractParameterKey("bash", { command: "npm test", description: "Run tests" }),
-            "Run tests",
-        )
-    })
-
-    it("formats glob pattern and path", () => {
-        assert.equal(extractParameterKey("glob", { pattern: "**/*.ts", path: "/src" }), '"**/*.ts" in /src')
-    })
-
-    it("returns empty string for unknown tool with null params", () => {
-        assert.equal(extractParameterKey("unknown_tool", null), "")
-    })
-
-    it("returns empty string for unknown tool with empty params", () => {
-        assert.equal(extractParameterKey("unknown_tool", {}), "")
-    })
-})
+import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
+import { getCompletedToolOutputText } from "../lib/tools/utils.ts"
 
 describe("isIgnoredUserMessage", () => {
     it("returns true for empty parts", () => {
@@ -70,117 +38,59 @@ describe("isIgnoredUserMessage", () => {
     })
 })
 
-describe("extractToolContent", () => {
-    it("extracts serialized question input", () => {
-        const part = {
-            tool: "question",
-            state: { input: { questions: [{ header: "test" }] } },
-        }
+describe("getCompletedToolOutputText", () => {
+    it("returns a completed string output unchanged", () => {
+        const part = { tool: "read" }
 
-        assert.deepEqual(extractToolContent(part), [JSON.stringify([{ header: "test" }])])
+        assert.equal(getCompletedToolOutputText(part, "file contents"), "file contents")
     })
 
-    it("extracts completed output", () => {
-        const part = {
-            tool: "read",
-            state: { status: "completed", output: "file contents" },
-        }
+    it("drops falsy non-image output when requireTruthy is set", () => {
+        const part = { tool: "read" }
 
-        assert.deepEqual(extractToolContent(part), ["file contents"])
+        assert.equal(getCompletedToolOutputText(part, 0, { requireTruthy: true }), undefined)
     })
 
-    it("preserves falsy completed outputs for non-image tools as non-content", () => {
-        const part = {
-            tool: "read",
-            state: { status: "completed", output: 0 },
-        }
+    it("serializes non-string output only when stringifyNonString is set", () => {
+        const part = { tool: "read" }
 
-        assert.deepEqual(extractToolContent(part), [])
+        assert.equal(getCompletedToolOutputText(part, { a: 1 }), undefined)
+        assert.equal(
+            getCompletedToolOutputText(part, { a: 1 }, { stringifyNonString: true }),
+            JSON.stringify({ a: 1 }),
+        )
     })
 
     it("replaces generated-image output with a placeholder that includes the callID", () => {
-        const part = {
-            tool: "image_generation",
-            callID: "call-image",
-            state: {
-                status: "completed",
-                output: JSON.stringify({ result: "A".repeat(4096) }),
-            },
-        }
+        const part = { tool: "image_generation", callID: "call-image" }
 
-        assert.deepEqual(extractToolContent(part), ["[generated image: call-image]"])
+        assert.equal(
+            getCompletedToolOutputText(part, JSON.stringify({ result: "A".repeat(4096) })),
+            "[generated image: call-image]",
+        )
     })
 
     it("still emits a generated-image placeholder when the completed output is falsy", () => {
-        const part = {
-            tool: "image_generation",
-            callID: "call-image",
-            state: {
-                status: "completed",
-                output: "",
-            },
-        }
+        const part = { tool: "image_generation", callID: "call-image" }
 
-        assert.deepEqual(extractToolContent(part), ["[generated image: call-image]"])
+        assert.equal(
+            getCompletedToolOutputText(part, "", { requireTruthy: true }),
+            "[generated image: call-image]",
+        )
     })
 
     it("keeps generated-image placeholders short when callIDs are very long", () => {
-        const part = {
-            tool: "image_generation",
-            callID: "call-" + "x".repeat(200),
-            state: {
-                status: "completed",
-                output: JSON.stringify({ result: "A".repeat(4096) }),
-            },
-        }
+        const part = { tool: "image_generation", callID: "call-" + "x".repeat(200) }
 
-        const [placeholder] = extractToolContent(part)
+        const placeholder = getCompletedToolOutputText(part, "")!
         assert.ok(placeholder.startsWith("[generated image: call-"))
         assert.ok(placeholder.endsWith("...]"))
         assert.ok(placeholder.length <= 80)
     })
 
     it("falls back to a generic generated-image placeholder without a callID", () => {
-        const part = {
-            tool: "image_generation",
-            state: {
-                status: "completed",
-                output: JSON.stringify({ result: "A".repeat(4096) }),
-            },
-        }
+        const part = { tool: "image_generation" }
 
-        assert.deepEqual(extractToolContent(part), ["[generated image]"])
-    })
-
-    it("extracts error output when tool failed", () => {
-        const part = {
-            tool: "read",
-            state: { status: "error", error: "not found" },
-        }
-
-        assert.deepEqual(extractToolContent(part), ["not found"])
-    })
-
-    it("keeps image-generation errors on the error branch", () => {
-        const part = {
-            tool: "image_generation",
-            callID: "call-image",
-            state: { status: "error", error: "generation failed" },
-        }
-
-        assert.deepEqual(extractToolContent(part), ["generation failed"])
-    })
-
-    it("includes write input and output", () => {
-        const part = {
-            tool: "write",
-            state: {
-                input: { filePath: "/f", content: "x" },
-                status: "completed",
-                output: "ok",
-            },
-        }
-
-        assert.deepEqual(extractToolContent(part), [JSON.stringify({ filePath: "/f", content: "x" }), "ok"])
+        assert.equal(getCompletedToolOutputText(part, "payload"), "[generated image]")
     })
 })

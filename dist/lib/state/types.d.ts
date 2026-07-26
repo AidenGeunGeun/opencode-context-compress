@@ -4,15 +4,6 @@ export interface WithParts {
     info: Message;
     parts: Part[];
 }
-export type ToolStatus = "pending" | "running" | "completed" | "error";
-export interface ToolParameterEntry {
-    tool: string;
-    parameters: any;
-    status?: ToolStatus;
-    error?: string;
-    turn: number;
-    tokenCount?: number;
-}
 export interface SessionStats {
     compressTokenCounter: number;
     totalCompressTokens: number;
@@ -36,8 +27,6 @@ export interface ManagementTurn {
     thresholdTokens?: number;
     /** ISO timestamp set once the owning compression tool completes this turn. */
     completedAt?: string;
-    /** The completing compression tool call's ID, if the runtime provided one. */
-    completedCallId?: string;
     /** The assistant message ID that carried the completing compression tool call. */
     completedMessageId?: string;
 }
@@ -69,11 +58,8 @@ export interface SessionState {
     compressionCooldownAfterMessageId?: string;
     /** Exact blocked Goal version associated with the one overflow recovery attempt. */
     goalOverflowRecovery?: GoalOverflowRecovery;
-    toolParameters: Map<string, ToolParameterEntry>;
-    toolIdList: string[];
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number;
-    currentTurn: number;
     variant: string | undefined;
     /** Runtime-only model metadata captured from the latest chat.params hook. */
     modelContext?: {

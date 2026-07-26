@@ -251,10 +251,6 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                               ? {
                                     ...turn,
                                     completedAt,
-                                    ...(typeof (toolCtx as any).callID === "string" &&
-                                    (toolCtx as any).callID
-                                        ? { completedCallId: (toolCtx as any).callID }
-                                        : {}),
                                     completedMessageId: toolCtx.messageID,
                                 }
                               : turn,
