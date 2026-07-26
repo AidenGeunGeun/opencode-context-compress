@@ -5,10 +5,12 @@ import { homedir } from "os"
 
 export class Logger {
     private logDir: string
-    public enabled: boolean
+    private dailyEnabled: boolean
+    private contextEnabled: boolean
 
-    constructor(enabled: boolean) {
-        this.enabled = enabled
+    constructor(options: { daily: boolean; context: boolean }) {
+        this.dailyEnabled = options.daily
+        this.contextEnabled = options.context
         const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
         this.logDir = join(configHome, "opencode", "logs", "compress")
     }
@@ -68,7 +70,7 @@ export class Logger {
     }
 
     private async write(level: string, component: string, message: string, data?: any) {
-        if (!this.enabled) return
+        if (!this.dailyEnabled) return
 
         try {
             await this.ensureLogDir()
@@ -85,7 +87,10 @@ export class Logger {
 
             const logFile = join(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`)
             await writeFile(logFile, logLine, { flag: "a" })
-        } catch (error) {}
+        } catch (error) {
+            // The daily log is the failing channel here, so stderr is the only honest place left.
+            console.error("context-compress: failed to write daily log", error)
+        }
     }
 
     info(message: string, data?: any) {
@@ -194,7 +199,7 @@ export class Logger {
     }
 
     async saveContext(sessionId: string, messages: any[]) {
-        if (!this.enabled) return
+        if (!this.contextEnabled) return
 
         try {
             const contextDir = join(this.logDir, "context", sessionId)
@@ -206,6 +211,8 @@ export class Logger {
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
             const contextFile = join(contextDir, `${timestamp}.json`)
             await writeFile(contextFile, JSON.stringify(minimized, null, 2))
-        } catch (error) {}
+        } catch (error) {
+            console.error("context-compress: failed to write context snapshot", error)
+        }
     }
 }

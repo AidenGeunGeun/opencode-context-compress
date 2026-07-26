@@ -54,6 +54,8 @@ export function resolveProtectedTurnsSetting(
 export interface PluginConfig {
     enabled: boolean
     debug: boolean
+    /** Daily activity log. Follows `debug` when left unset. */
+    dailyLog?: boolean
     notification: "off" | "minimal" | "detailed"
     notificationType: "chat" | "toast"
     protectedTurns: number
@@ -81,6 +83,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "$schema",
     "enabled",
     "debug",
+    "dailyLog",
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
@@ -140,6 +143,9 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
         errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug })
+    }
+    if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
+        errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog })
     }
     if (
         config.protectedTurns !== undefined &&
@@ -602,6 +608,7 @@ export function getConfig(ctx: PluginInput): PluginConfig {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(
@@ -651,6 +658,7 @@ export function getConfig(ctx: PluginInput): PluginConfig {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(
@@ -698,6 +706,7 @@ export function getConfig(ctx: PluginInput): PluginConfig {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(

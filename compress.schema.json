@@ -18,7 +18,15 @@
         "debug": {
             "type": "boolean",
             "default": false,
-            "description": "Enable debug logging"
+            "description": "Write a full minimized context snapshot after every successful prompt transform to ~/.config/opencode/logs/compress/context/<sessionId>/ (or $XDG_CONFIG_HOME/...). Not limited to compression turns; total size grows quickly with turn count — enable only while debugging"
+        },
+        "dailyLog": {
+            "type": "boolean",
+            "description": "Write one-line activity log lines to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only"
+        },
+        "showUpdateToasts": {
+            "type": "boolean",
+            "description": "Deprecated no-op retained so older configs do not fail key validation"
         },
         "notification": {
             "type": "string",
@@ -88,29 +96,29 @@
                     "items": {
                         "type": "string"
                     },
-                    "default": [],
-                    "description": "Additional tool names to exclude from the internal tool cache used by context analysis"
+                    "default": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"],
+                    "description": "Merged into config.commands.protectedTools (same default list as tools.settings.protectedTools). Currently unused at runtime; the tool cache reads tools.settings.protectedTools only"
                 }
             },
             "default": {
                 "enabled": true,
-                "protectedTools": []
+                "protectedTools": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"]
             }
         },
         "turnProtection": {
             "type": "object",
-            "description": "Protect recent tool outputs from being compressed",
+            "description": "Skip adding tool calls from the newest N execution steps to the internal tool-parameter cache. Does not affect compress span selection (use protectedTurns for that)",
             "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enable turn-based protection"
+                    "description": "Enable turn-based skipping in the tool-parameter cache"
                 },
                 "turns": {
                     "type": "number",
                     "default": 4,
-                    "description": "Number of recent turns to protect from compression"
+                    "description": "Newest execution steps whose tool calls are omitted from the tool-parameter cache"
                 }
             }
         },
@@ -120,7 +128,7 @@
                 "type": "string"
             },
             "default": [],
-            "description": "Glob patterns for files that should be protected from compression (e.g., '**/*.config.ts')"
+            "description": "Glob patterns accepted and merged into config. Not consulted by compression selection or other runtime paths today"
         },
         "tools": {
             "type": "object",
@@ -137,8 +145,8 @@
                             "items": {
                                 "type": "string"
                             },
-                            "default": [],
-                            "description": "Tool names that should be excluded from context analysis candidates"
+                            "default": ["task", "todowrite", "todoread", "compress", "squash", "batch", "plan_enter", "plan_exit"],
+                            "description": "Tool names for which the tool-parameter cache omits per-call token estimates (entries are still stored). Layer merges union with defaults"
                         }
                     }
                 },

@@ -28,6 +28,8 @@ export declare function resolveProtectedTurnsSetting(layer: Record<string, any>,
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
+    /** Daily activity log. Follows `debug` when left unset. */
+    dailyLog?: boolean;
     notification: "off" | "minimal" | "detailed";
     notificationType: "chat" | "toast";
     protectedTurns: number;

@@ -11,7 +11,7 @@ const plugin = (async (ctx) => {
     if (!config.enabled) {
         return {};
     }
-    const logger = new Logger(config.debug);
+    const logger = new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug });
     if (isSecureMode()) {
         configureClientAuth(ctx.client);
         // logger.info("Secure mode detected, configured client authentication")

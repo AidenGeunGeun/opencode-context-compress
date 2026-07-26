@@ -31,6 +31,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "$schema",
     "enabled",
     "debug",
+    "dailyLog",
     "showUpdateToasts", // Deprecated but kept for backwards compatibility
     "notification",
     "notificationType",
@@ -79,6 +80,9 @@ function validateConfigTypes(config) {
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
         errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug });
+    }
+    if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
+        errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog });
     }
     if (config.protectedTurns !== undefined &&
         (typeof config.protectedTurns !== "number" ||
@@ -480,6 +484,7 @@ export function getConfig(ctx) {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
@@ -523,6 +528,7 @@ export function getConfig(ctx) {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
@@ -563,6 +569,7 @@ export function getConfig(ctx) {
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
+                dailyLog: result.data.dailyLog ?? config.dailyLog,
                 notification: result.data.notification ?? config.notification,
                 notificationType: result.data.notificationType ?? config.notificationType,
                 protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),

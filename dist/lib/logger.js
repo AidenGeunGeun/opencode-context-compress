@@ -4,9 +4,11 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 export class Logger {
     logDir;
-    enabled;
-    constructor(enabled) {
-        this.enabled = enabled;
+    dailyEnabled;
+    contextEnabled;
+    constructor(options) {
+        this.dailyEnabled = options.daily;
+        this.contextEnabled = options.context;
         const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
         this.logDir = join(configHome, "opencode", "logs", "compress");
     }
@@ -63,7 +65,7 @@ export class Logger {
         }
     }
     async write(level, component, message, data) {
-        if (!this.enabled)
+        if (!this.dailyEnabled)
             return;
         try {
             await this.ensureLogDir();
@@ -77,7 +79,10 @@ export class Logger {
             const logFile = join(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`);
             await writeFile(logFile, logLine, { flag: "a" });
         }
-        catch (error) { }
+        catch (error) {
+            // The daily log is the failing channel here, so stderr is the only honest place left.
+            console.error("context-compress: failed to write daily log", error);
+        }
     }
     info(message, data) {
         const component = this.getCallerFile(2);
@@ -171,7 +176,7 @@ export class Logger {
         });
     }
     async saveContext(sessionId, messages) {
-        if (!this.enabled)
+        if (!this.contextEnabled)
             return;
         try {
             const contextDir = join(this.logDir, "context", sessionId);
@@ -183,7 +188,9 @@ export class Logger {
             const contextFile = join(contextDir, `${timestamp}.json`);
             await writeFile(contextFile, JSON.stringify(minimized, null, 2));
         }
-        catch (error) { }
+        catch (error) {
+            console.error("context-compress: failed to write context snapshot", error);
+        }
     }
 }
 //# sourceMappingURL=logger.js.map

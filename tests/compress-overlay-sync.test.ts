@@ -12,7 +12,7 @@ import { saveSessionState } from "../lib/state/persistence.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import type { PluginConfig } from "../lib/config.ts"
 
-const logger = new Logger(false)
+const logger = new Logger({ daily: false, context: false })
 
 const config: PluginConfig = {
     enabled: true,

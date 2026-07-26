@@ -1,7 +1,11 @@
 export declare class Logger {
     private logDir;
-    enabled: boolean;
-    constructor(enabled: boolean);
+    private dailyEnabled;
+    private contextEnabled;
+    constructor(options: {
+        daily: boolean;
+        context: boolean;
+    });
     private ensureLogDir;
     private formatData;
     private getCallerFile;
