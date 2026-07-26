@@ -38,7 +38,13 @@ export function createChatMessageTransformHandler(
         const transformed = await stateManager.runExclusive(sessionId, async () => {
             const syncResult = await checkSession(client, state, logger, output.messages)
             if (state.isSubAgent) return false
-            if (!state.persistenceSynchronized) return false
+            if (!state.persistenceSynchronized) {
+                logger.error("Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript", {
+                    sessionID: sessionId,
+                    source: syncResult.source,
+                })
+                return false
+            }
 
             const messageIds = new Set(output.messages.map((message) => message.info.id))
             const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter(

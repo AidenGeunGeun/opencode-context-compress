@@ -28,8 +28,13 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
             const syncResult = await checkSession(client, state, logger, output.messages);
             if (state.isSubAgent)
                 return false;
-            if (!state.persistenceSynchronized)
+            if (!state.persistenceSynchronized) {
+                logger.error("Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript", {
+                    sessionID: sessionId,
+                    source: syncResult.source,
+                });
                 return false;
+            }
             const messageIds = new Set(output.messages.map((message) => message.info.id));
             const appliedCompressedMessageCount = Array.from(state.compressed.messageIds).filter((id) => messageIds.has(id)).length;
             const appliedSummaryCount = state.compressSummaries.filter((summary) => messageIds.has(summary.anchorMessageId)).length;

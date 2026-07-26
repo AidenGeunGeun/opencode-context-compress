@@ -373,7 +373,7 @@ export async function ensureSessionInitialized(
     state.sessionId = sessionId
 
     if (!state.initialized) {
-        const isSubAgent = await isSubAgentSession(client, sessionId)
+        const isSubAgent = await isSubAgentSession(client, sessionId, logger)
         state.isSubAgent = isSubAgent
 
         state.initialized = true
