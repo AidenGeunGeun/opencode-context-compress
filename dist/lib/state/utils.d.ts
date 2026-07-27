@@ -1,4 +1,4 @@
-import type { Logger } from "../logger.js";
+import { type Logger } from "../logger.js";
 import type { SessionState, WithParts } from "./types.js";
 /**
  * Decided once per session and never re-checked, so a lookup failure here silently commits

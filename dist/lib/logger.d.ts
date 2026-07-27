@@ -1,3 +1,10 @@
+/**
+ * Errors have to reach `formatData` already flattened into one line: it drops any object
+ * whose JSON exceeds 50 characters, `JSON.stringify` on an Error yields `{}`, and a log
+ * entry is a single line. `inspect` keeps the stack, `cause`, and any error code, and
+ * survives circular references, so nothing here can throw from inside a catch block.
+ */
+export declare function describeError(error: unknown): string;
 export declare class Logger {
     private logDir;
     private dailyEnabled;

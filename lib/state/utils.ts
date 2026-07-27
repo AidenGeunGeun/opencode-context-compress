@@ -1,4 +1,4 @@
-import type { Logger } from "../logger.js"
+import { describeError, type Logger } from "../logger.js"
 import type { SessionState, WithParts } from "./types.js"
 import { getSession } from "../sdk/client.js"
 
@@ -18,7 +18,7 @@ export async function isSubAgentSession(
     } catch (error: any) {
         logger.error("Could not determine whether this is a subagent session; treating it as a main session", {
             sessionID,
-            error: error instanceof Error ? error.message : String(error),
+            error: describeError(error),
         })
         return false
     }

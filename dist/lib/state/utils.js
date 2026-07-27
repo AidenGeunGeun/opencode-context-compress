@@ -1,3 +1,4 @@
+import { describeError } from "../logger.js";
 import { getSession } from "../sdk/client.js";
 /**
  * Decided once per session and never re-checked, so a lookup failure here silently commits
@@ -12,7 +13,7 @@ export async function isSubAgentSession(client, sessionID, logger) {
     catch (error) {
         logger.error("Could not determine whether this is a subagent session; treating it as a main session", {
             sessionID,
-            error: error instanceof Error ? error.message : String(error),
+            error: describeError(error),
         });
         return false;
     }

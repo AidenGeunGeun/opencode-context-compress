@@ -2,6 +2,16 @@ import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 import { homedir } from "os";
+import { inspect } from "node:util";
+/**
+ * Errors have to reach `formatData` already flattened into one line: it drops any object
+ * whose JSON exceeds 50 characters, `JSON.stringify` on an Error yields `{}`, and a log
+ * entry is a single line. `inspect` keeps the stack, `cause`, and any error code, and
+ * survives circular references, so nothing here can throw from inside a catch block.
+ */
+export function describeError(error) {
+    return inspect(error, { depth: 3, breakLength: Infinity }).replace(/\s*\n\s*/g, " ");
+}
 export class Logger {
     logDir;
     dailyEnabled;
