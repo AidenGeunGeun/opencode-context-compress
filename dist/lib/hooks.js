@@ -11,7 +11,6 @@ import { suppressDefaultCommandExecution } from "./commands/suppress.js";
 import { reconcileSessionLifecycle } from "./state/state.js";
 import { listSessionMessages } from "./sdk/client.js";
 import { isIgnoredUserMessage } from "./messages/utils.js";
-import { injectReportNudge } from "./report-nudge.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -47,7 +46,6 @@ export function createChatMessageTransformHandler(_client, stateManager, logger,
                 summaryCount: appliedSummaryCount,
             });
             applyCompressTransforms(state, logger, output.messages);
-            injectReportNudge(state, logger, output.messages);
             return true;
         });
         if (transformed) {

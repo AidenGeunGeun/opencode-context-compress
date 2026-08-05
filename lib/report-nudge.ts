@@ -5,9 +5,9 @@ import {
     type AssistantMessageInfo,
 } from "./auto-compression.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
-import { createSyntheticTextPart, isIgnoredUserMessage } from "./messages/utils.js"
-import { renderReportNudgePrompt } from "./prompts/index.js"
-import type { SessionState, WithParts } from "./state/index.js"
+import { handleReportCommand } from "./commands/report.js"
+import { listSessionMessages } from "./sdk/client.js"
+import type { WithParts } from "./state/index.js"
 import { SessionStateManager } from "./state/index.js"
 
 export interface ReportNudgeDecision {
@@ -39,6 +39,7 @@ export function resolveReportNudge(
 }
 
 export function createReportNudgeEventHandler(
+    client: any,
     stateManager: SessionStateManager,
     logger: Logger,
     config: PluginConfig,
@@ -59,66 +60,64 @@ export function createReportNudgeEventHandler(
         }
 
         const state = stateManager.get(info.sessionID)
-        const decision = resolveReportNudge(
-            getAssistantContextTokens(info.tokens),
-            state.reportNudgeBucket,
-            config.reportNudge.tokenInterval,
-        )
-        state.reportNudgeBucket = decision.bucket
-        if (!decision.due) return
+        let reserved: { state: typeof state; messages: WithParts[] } | undefined
+        try {
+            reserved = await stateManager.runExclusive(info.sessionID, async () => {
+                const contextTokens = getAssistantContextTokens(info.tokens)
+                const decision = resolveReportNudge(
+                    contextTokens,
+                    state.reportNudgeBucket,
+                    config.reportNudge.tokenInterval,
+                )
+                state.reportNudgeBucket = decision.bucket
+                if (!decision.due && !state.reportNudgePending) return undefined
+                if (state.reportNudgeStarting) return undefined
 
-        state.reportNudgePending = true
-        logger.info("Handoff report nudge queued", {
-            sessionId: info.sessionID,
-            messageId: info.id,
-            contextTokens: getAssistantContextTokens(info.tokens),
-            bucket: decision.bucket,
-            tokenInterval: config.reportNudge.tokenInterval,
-        })
-    }
-}
+                state.reportNudgePending = true
+                state.reportNudgeStarting = true
+                logger.info("Handoff report nudge queued", {
+                    sessionId: info.sessionID,
+                    messageId: info.id,
+                    contextTokens,
+                    bucket: decision.bucket,
+                    tokenInterval: config.reportNudge.tokenInterval,
+                })
 
-function findLastVisibleUserMessage(messages: WithParts[]): WithParts | undefined {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i]
-        if (message.info.role === "user" && !isIgnoredUserMessage(message)) {
-            return message
+                const messages = (await listSessionMessages(client, info.sessionID)) as WithParts[]
+                if (messages.length === 0) {
+                    throw new Error("session messages were unavailable")
+                }
+                if (findActiveManagementTurn(state, messages)) {
+                    state.reportNudgePending = false
+                    state.reportNudgeStarting = false
+                    logger.info("Handoff report nudge dropped: compression already requests the update", {
+                        sessionId: info.sessionID,
+                    })
+                    return undefined
+                }
+                return { state, messages }
+            })
+        } catch (error: any) {
+            state.reportNudgePending = true
+            state.reportNudgeStarting = false
+            logger.error("Could not prepare the handoff report nudge", {
+                sessionId: info.sessionID,
+                error: error?.message || String(error),
+            })
+            return
+        }
+
+        if (!reserved) return
+        try {
+            await handleReportCommand({
+                client,
+                state: reserved.state,
+                logger,
+                sessionId: info.sessionID,
+                messages: reserved.messages,
+            })
+        } finally {
+            reserved.state.reportNudgeStarting = false
         }
     }
-    return undefined
-}
-
-/**
- * Rides along with a request the session was making anyway rather than opening its own turn.
- * Delivered once per crossing: a missed nudge is picked up by the next interval or by the
- * pre-compression check, and re-delivering every step would nag through a whole tool loop.
- */
-export function injectReportNudge(
-    state: SessionState,
-    logger: Logger,
-    messages: WithParts[],
-): boolean {
-    if (!state.reportNudgePending) return false
-
-    // Every management prompt - manual, automatic, squash, and Goal overflow recovery - carries
-    // the same instruction, so the queued nudge is spent rather than deferred; deferring would
-    // land it again as a duplicate once the management turn finished.
-    if (findActiveManagementTurn(state, messages)) {
-        state.reportNudgePending = false
-        logger.info("Handoff report nudge dropped: compression already requests the update", {
-            sessionID: messages[0]?.info.sessionID,
-        })
-        return false
-    }
-
-    const target = findLastVisibleUserMessage(messages)
-    if (!target) return false
-
-    target.parts = [...target.parts, createSyntheticTextPart(target, renderReportNudgePrompt())]
-    state.reportNudgePending = false
-    logger.info("Handoff report nudge delivered", {
-        sessionID: target.info.sessionID,
-        messageID: target.info.id,
-    })
-    return true
 }

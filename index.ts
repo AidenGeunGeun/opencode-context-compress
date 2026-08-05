@@ -38,7 +38,7 @@ const plugin: Plugin = (async (ctx) => {
         logger,
         config,
     )
-    const reportNudgeEvent = createReportNudgeEventHandler(stateManager, logger, config)
+    const reportNudgeEvent = createReportNudgeEventHandler(ctx.client, stateManager, logger, config)
 
     const hooks = {
         // Compression runs first so a fault in the advisory nudge can never keep the session

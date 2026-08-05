@@ -3,14 +3,10 @@ import assert from "node:assert/strict"
 
 import {
     createReportNudgeEventHandler,
-    injectReportNudge,
     resolveReportNudge,
 } from "../lib/report-nudge.ts"
 import { DEFAULT_AUTO_COMPRESSION, DEFAULT_REPORT_NUDGE, type PluginConfig } from "../lib/config.ts"
 import { SessionStateManager, createSessionState } from "../lib/state/state.ts"
-import { applyCompressTransforms } from "../lib/messages/index.ts"
-import { createChatMessageTransformHandler } from "../lib/hooks.ts"
-import { Logger } from "../lib/logger.ts"
 import { renderSquashSystemPrompt } from "../lib/prompts/index.ts"
 import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
 import type { WithParts } from "../lib/state/index.ts"
@@ -76,6 +72,17 @@ const assistantEvent = (id: string, sessionID: string, total: number, overrides:
     },
 })
 
+const reportClient = (sessionID: string, prompts: string[]) => ({
+    session: {
+        messages: async () => [userMessage("u1", sessionID, "work")],
+        prompt: async (input: any) => {
+            prompts.push(input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? "")
+            return { data: { info: { id: `report-${prompts.length}` } } }
+        },
+    },
+    tui: { showToast: async () => undefined },
+})
+
 describe("resolveReportNudge", () => {
     it("defaults to a 100,000 token interval and stays off until a profile enables it", () => {
         assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 100_000)
@@ -137,38 +144,58 @@ describe("resolveReportNudge", () => {
 describe("report nudge event handler", () => {
     it("does nothing while the feature is disabled", async () => {
         const stateManager = new SessionStateManager()
-        const handler = createReportNudgeEventHandler(stateManager, logger, {
+        const prompts: string[] = []
+        const sessionId = "ses_disabled"
+        const handler = createReportNudgeEventHandler(reportClient(sessionId, prompts), stateManager, logger, {
             ...baseConfig,
             reportNudge: { enabled: false, tokenInterval: 100_000 },
         })
 
-        await handler(assistantEvent("m1", "ses_disabled", 500_000))
+        await handler(assistantEvent("m1", sessionId, 500_000))
 
-        const state = stateManager.get("ses_disabled")
-        assert.equal(state.reportNudgePending, undefined)
-        assert.equal(state.reportNudgeBucket, undefined)
+        assert.equal(prompts.length, 0)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, undefined)
     })
 
-    it("queues a nudge at the absolute 100,000-token boundary", async () => {
+    it("opens one visible report turn at each absolute context boundary", async () => {
         const stateManager = new SessionStateManager()
-        const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
-        const sessionId = "ses_growth"
+        const prompts: string[] = []
+        const sessionId = "ses_boundaries"
+        const handler = createReportNudgeEventHandler(
+            reportClient(sessionId, prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
 
         await handler(assistantEvent("m1", sessionId, 20_000))
-        assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
-
-        await handler(assistantEvent("m2", sessionId, 90_000))
-        assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
+        await handler(assistantEvent("m2", sessionId, 99_999))
+        assert.equal(prompts.length, 0)
 
         await handler(assistantEvent("m3", sessionId, 100_000))
-        assert.equal(stateManager.get(sessionId).reportNudgePending, true)
+        assert.equal(prompts.length, 1)
+        assert.match(prompts[0], /HANDOFF REPORT CHECKPOINT/)
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
+        assert.equal(stateManager.get(sessionId).reportNudgePending, false)
+
+        await handler(assistantEvent("m4", sessionId, 150_000))
+        assert.equal(prompts.length, 1)
+
+        await handler(assistantEvent("m5", sessionId, 200_000))
+        assert.equal(prompts.length, 2)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 2)
     })
 
     it("ignores messages that are not completed assistant work", async () => {
         const stateManager = new SessionStateManager()
-        const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
+        const prompts: string[] = []
         const sessionId = "ses_filtered"
+        const handler = createReportNudgeEventHandler(
+            reportClient(sessionId, prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
 
         await handler(assistantEvent("m1", sessionId, 10_000))
         await handler(assistantEvent("m2", sessionId, 500_000, { role: "user" }))
@@ -176,160 +203,97 @@ describe("report nudge event handler", () => {
         await handler(assistantEvent("m4", sessionId, 500_000, { error: { name: "boom" } }))
         await handler(assistantEvent("m5", sessionId, 500_000, { time: {} }))
 
-        assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
+        assert.equal(prompts.length, 0)
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, 0)
     })
 
-    it("queues from a first usable reading already beyond 100,000", async () => {
+    it("opens immediately from a first usable reading already beyond 100,000", async () => {
         const stateManager = new SessionStateManager()
-        const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
+        const prompts: string[] = []
         const sessionId = "ses_no_usage"
+        const handler = createReportNudgeEventHandler(
+            reportClient(sessionId, prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
 
         await handler(assistantEvent("m1", sessionId, 0, { tokens: undefined }))
         await handler(assistantEvent("m2", sessionId, 150_000))
 
-        assert.equal(stateManager.get(sessionId).reportNudgePending, true)
+        assert.equal(prompts.length, 1)
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
+    })
+
+    it("lets an active compression turn carry the report instruction instead", async () => {
+        const stateManager = new SessionStateManager()
+        const prompts: string[] = []
+        const sessionId = "ses_management"
+        const state = stateManager.get(sessionId)
+        state.managementTurns = [{ triggerMessageId: "mgmt1" }]
+        const client = {
+            ...reportClient(sessionId, prompts),
+            session: {
+                ...reportClient(sessionId, prompts).session,
+                messages: async () => [
+                    userMessage("u1", sessionId, "work"),
+                    userMessage("mgmt1", sessionId, "compress now"),
+                ],
+            },
+        }
+        const handler = createReportNudgeEventHandler(client, stateManager, logger, baseConfig)
+
+        await handler(assistantEvent("m1", sessionId, 100_000))
+
+        assert.equal(prompts.length, 0)
+        assert.equal(state.reportNudgePending, false)
+        assert.match(renderSquashSystemPrompt(), /handoff report file/i)
+        assert.match(renderGoalOverflowRecoveryPrompt(), /handoff report file/i)
+    })
+
+    it("keeps a failed automatic report request pending and retries on the next assistant event", async () => {
+        const stateManager = new SessionStateManager()
+        const sessionId = "ses_retry"
+        const prompts: string[] = []
+        let attempts = 0
+        const client = {
+            session: {
+                messages: async () => [userMessage("u1", sessionId, "work")],
+                prompt: async (input: any) => {
+                    attempts++
+                    prompts.push(input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? "")
+                    return attempts === 1
+                        ? { error: { message: "busy" } }
+                        : { data: { info: { id: "report-ok" } } }
+                },
+            },
+            tui: { showToast: async () => undefined },
+        }
+        const handler = createReportNudgeEventHandler(client, stateManager, logger, baseConfig)
+
+        await handler(assistantEvent("m1", sessionId, 100_000))
+        assert.equal(attempts, 1)
+        assert.equal(stateManager.get(sessionId).reportNudgePending, true)
+        assert.equal(stateManager.get(sessionId).reportNudgeStarting, false)
+
+        await handler(assistantEvent("m2", sessionId, 101_000))
+        assert.equal(attempts, 2)
+        assert.equal(stateManager.get(sessionId).reportNudgePending, false)
+        assert.equal(stateManager.get(sessionId).reportNudgeStarting, false)
     })
 
     it("ignores unrelated events", async () => {
         const stateManager = new SessionStateManager()
-        const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
+        const prompts: string[] = []
+        const handler = createReportNudgeEventHandler(
+            reportClient("ses_other", prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
 
         await handler({ event: { type: "session.idle", properties: {} } } as any)
+        assert.equal(prompts.length, 0)
         assert.equal(stateManager.get("ses_other").reportNudgeBucket, undefined)
-    })
-})
-
-describe("report nudge injection", () => {
-    it("appends the reminder to the last visible user message and clears the flag", () => {
-        const state = createSessionState()
-        state.reportNudgePending = true
-        const messages = [
-            userMessage("u1", "ses_inject", "first"),
-            assistantMessage("a1", "ses_inject"),
-            userMessage("u2", "ses_inject", "second"),
-            assistantMessage("a2", "ses_inject"),
-        ]
-
-        assert.equal(injectReportNudge(state, logger, messages), true)
-        assert.equal(state.reportNudgePending, false)
-
-        assert.equal(messages[0].parts.length, 1)
-        assert.equal(messages[2].parts.length, 2)
-        const injected = messages[2].parts[1] as any
-        assert.equal(injected.type, "text")
-        assert.match(injected.text, /HANDOFF REPORT CHECKPOINT/)
-        assert.equal(injected.messageID, "u2")
-    })
-
-    it("does nothing when no nudge is pending", () => {
-        const state = createSessionState()
-        const messages = [userMessage("u1", "ses_idle", "hello")]
-
-        assert.equal(injectReportNudge(state, logger, messages), false)
-        assert.equal(messages[0].parts.length, 1)
-    })
-
-    it("keeps the nudge pending when there is no visible user message to carry it", () => {
-        const state = createSessionState()
-        state.reportNudgePending = true
-        const messages = [assistantMessage("a1", "ses_empty")]
-
-        assert.equal(injectReportNudge(state, logger, messages), false)
-        assert.equal(state.reportNudgePending, true)
-    })
-
-    it("spends the nudge on an active compression turn, which already asks for the update", () => {
-        const state = createSessionState()
-        state.reportNudgePending = true
-        const trigger = userMessage("mgmt1", "ses_busy", "compress now")
-        state.managementTurns = [{ triggerMessageId: "mgmt1" }]
-        const messages = [userMessage("u1", "ses_busy", "work"), trigger]
-
-        assert.equal(injectReportNudge(state, logger, messages), false)
-        assert.equal(messages[1].parts.length, 1)
-        // Deferring instead would deliver a duplicate reminder once compression finished.
-        assert.equal(state.reportNudgePending, false)
-        assert.equal(injectReportNudge(state, logger, messages), false)
-    })
-
-    it("is safe to spend on a squash turn because that prompt carries the instruction too", () => {
-        const state = createSessionState()
-        state.reportNudgePending = true
-        state.managementTurns = [{ triggerMessageId: "mgmt1", source: "squash" }]
-        const messages = [
-            userMessage("u1", "ses_squash", "work"),
-            userMessage("mgmt1", "ses_squash", "squash now"),
-        ]
-
-        assert.match(renderSquashSystemPrompt(), /handoff report file/i)
-        assert.equal(injectReportNudge(state, logger, messages), false)
-        assert.equal(state.reportNudgePending, false)
-    })
-
-    it("is safe to spend on Goal overflow recovery for the same reason", () => {
-        assert.match(renderGoalOverflowRecoveryPrompt(), /handoff report file/i)
-    })
-
-    it("is delivered by the real transform hook, once, across consecutive steps", async () => {
-        const sessionId = `ses-nudge-hook-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        const stateManager = new SessionStateManager()
-        const handler = createChatMessageTransformHandler(
-            { session: { get: async () => ({ data: {} }) } },
-            stateManager,
-            new Logger({ daily: false, context: false }),
-            "/tmp/report-nudge",
-        )
-
-        const firstStep = { messages: [userMessage("u1", sessionId, "work")] as any[] }
-        await handler({}, firstStep)
-        assert.equal(firstStep.messages[0].parts.length, 1)
-
-        stateManager.get(sessionId).reportNudgePending = true
-
-        const secondStep = { messages: [userMessage("u1", sessionId, "work")] as any[] }
-        await handler({}, secondStep)
-        assert.equal(secondStep.messages[0].parts.length, 2)
-        assert.match((secondStep.messages[0].parts[1] as any).text, /HANDOFF REPORT CHECKPOINT/)
-
-        // Next step of the same tool loop: one crossing must not nag repeatedly.
-        const thirdStep = { messages: [userMessage("u1", sessionId, "work")] as any[] }
-        await handler({}, thirdStep)
-        assert.equal(thirdStep.messages[0].parts.length, 1)
-    })
-
-    it("survives the compress transform and lands on the message the model actually sees", () => {
-        const state = createSessionState()
-        state.reportNudgePending = true
-        const sessionID = "ses_transform"
-        const messages = [
-            userMessage("u1", sessionID, "old work"),
-            assistantMessage("a1", sessionID),
-            userMessage("u2", sessionID, "current work"),
-        ]
-        state.compressed.messageIds = new Set(["a1"])
-        state.compressSummaries = [
-            {
-                anchorMessageId: "a1",
-                messageIds: ["a1"],
-                summary: "earlier work",
-                topic: "earlier",
-            },
-        ]
-
-        applyCompressTransforms(state, logger, messages)
-        assert.equal(injectReportNudge(state, logger, messages), true)
-
-        const last = messages[messages.length - 1]
-        assert.equal(last.info.role, "user")
-        assert.equal(last.parts.length, 2)
-        assert.match((last.parts[1] as any).text, /HANDOFF REPORT CHECKPOINT/)
-        assert.equal(
-            messages.filter((message) =>
-                message.parts.some((part: any) => /HANDOFF REPORT CHECKPOINT/.test(part.text ?? "")),
-            ).length,
-            1,
-        )
     })
 })

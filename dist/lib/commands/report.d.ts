@@ -8,8 +8,7 @@ export interface ReportCommandContext {
     messages: WithParts[];
 }
 /**
- * Manual counterpart to the context-boundary nudge. This one opens its own turn because the
- * user asked for the update now, rather than waiting for a request to ride along with.
+ * Shared visible-turn path for both the manual command and automatic context checkpoints.
  */
 export declare function handleReportCommand(ctx: ReportCommandContext): Promise<void>;
 //# sourceMappingURL=report.d.ts.map

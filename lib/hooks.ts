@@ -15,7 +15,6 @@ import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./co
 import { reconcileSessionLifecycle } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
 import { isIgnoredUserMessage } from "./messages/utils.js"
-import { injectReportNudge } from "./report-nudge.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -65,7 +64,6 @@ export function createChatMessageTransformHandler(
             })
 
             applyCompressTransforms(state, logger, output.messages)
-            injectReportNudge(state, logger, output.messages)
             return true
         })
 

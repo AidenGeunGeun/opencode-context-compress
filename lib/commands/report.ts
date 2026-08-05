@@ -25,8 +25,7 @@ function promptError(result: any): string | undefined {
 }
 
 /**
- * Manual counterpart to the context-boundary nudge. This one opens its own turn because the
- * user asked for the update now, rather than waiting for a request to ride along with.
+ * Shared visible-turn path for both the manual command and automatic context checkpoints.
  */
 export async function handleReportCommand(ctx: ReportCommandContext): Promise<void> {
     const { client, state, logger, sessionId, messages } = ctx
@@ -74,7 +73,7 @@ export async function handleReportCommand(ctx: ReportCommandContext): Promise<vo
     }
 
     // The turn that just refreshed the report may itself have crossed the interval. That nudge
-    // is already satisfied, so consume it rather than reminding again on the next request.
+    // is already satisfied, so consume it rather than opening another report turn.
     // Not airtight: the host dispatches completion events fire-and-forget, so an event that
     // lands after this point can still queue one reminder. Excluding it would mean identifying
     // this turn's own assistant message, and the worst case is a single extra reminder the
