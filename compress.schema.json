@@ -77,6 +77,28 @@
                 "tokenThreshold": 335000
             }
         },
+        "reportNudge": {
+            "type": "object",
+            "description": "Periodically remind the agent to bring its handoff report file up to date",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable handoff report nudges for sessions that maintain a report file"
+                },
+                "tokenInterval": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "default": 100000,
+                    "description": "Nudge once per this much growth in provider-reported context usage"
+                }
+            },
+            "default": {
+                "enabled": false,
+                "tokenInterval": 100000
+            }
+        },
         "commands": {
             "type": "object",
             "description": "Configuration for /compress slash commands",

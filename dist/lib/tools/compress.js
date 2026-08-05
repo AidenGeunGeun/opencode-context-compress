@@ -116,7 +116,7 @@ export function createCompressTool(ctx) {
                 if (rawMessages.length === 0) {
                     throw new Error("compress could not fetch any session messages. Nothing was compressed.");
                 }
-                await reconcileSessionLifecycle(client, state, sessionId, logger, rawMessages);
+                await reconcileSessionLifecycle(state, sessionId, logger, rawMessages);
                 if (!state.persistenceSynchronized) {
                     throw new Error("compress could not synchronize saved session state. Nothing was compressed.");
                 }

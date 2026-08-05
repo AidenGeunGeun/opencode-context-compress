@@ -4,7 +4,7 @@ import type { Logger } from "./logger.js";
 import type { PluginConfig } from "./config.js";
 import { type CommandExecuteOutput } from "./commands/suppress.js";
 export declare function getLastUserSessionId(messages: WithParts[]): string | undefined;
-export declare function createChatMessageTransformHandler(client: any, stateManager: SessionStateManager, logger: Logger, workingDirectory?: string): (_input: {}, output: {
+export declare function createChatMessageTransformHandler(_client: any, stateManager: SessionStateManager, logger: Logger, workingDirectory?: string): (_input: {}, output: {
     messages: WithParts[];
 }) => Promise<void>;
 export declare function createChatMessageHandler(stateManager: SessionStateManager, logger: Logger): (input: {

@@ -4,12 +4,14 @@ import { handleStatsCommand } from "./commands/stats.js";
 import { handleContextCommand } from "./commands/context.js";
 import { handleHelpCommand } from "./commands/help.js";
 import { handleManageCommand } from "./commands/manage.js";
+import { handleReportCommand } from "./commands/report.js";
 import { handleAutoCommand } from "./commands/auto.js";
 import { handleSquashCommand } from "./commands/squash.js";
 import { suppressDefaultCommandExecution } from "./commands/suppress.js";
 import { reconcileSessionLifecycle } from "./state/state.js";
 import { listSessionMessages } from "./sdk/client.js";
 import { isIgnoredUserMessage } from "./messages/utils.js";
+import { injectReportNudge } from "./report-nudge.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -18,16 +20,14 @@ export function getLastUserSessionId(messages) {
     }
     return undefined;
 }
-export function createChatMessageTransformHandler(client, stateManager, logger, workingDirectory) {
+export function createChatMessageTransformHandler(_client, stateManager, logger, workingDirectory) {
     return async (_input, output) => {
         const sessionId = getLastUserSessionId(output.messages);
         if (!sessionId)
             return;
         const state = stateManager.get(sessionId);
         const transformed = await stateManager.runExclusive(sessionId, async () => {
-            const syncResult = await checkSession(client, state, logger, output.messages);
-            if (state.isSubAgent)
-                return false;
+            const syncResult = await checkSession(state, logger, output.messages);
             if (!state.persistenceSynchronized) {
                 logger.error("Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript", {
                     sessionID: sessionId,
@@ -47,6 +47,7 @@ export function createChatMessageTransformHandler(client, stateManager, logger, 
                 summaryCount: appliedSummaryCount,
             });
             applyCompressTransforms(state, logger, output.messages);
+            injectReportNudge(state, logger, output.messages);
             return true;
         });
         if (transformed) {
@@ -75,7 +76,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
             const state = stateManager.get(input.sessionID);
             const messages = await stateManager.runExclusive(input.sessionID, async () => {
                 const currentMessages = (await listSessionMessages(client, input.sessionID));
-                await reconcileSessionLifecycle(client, state, input.sessionID, logger, currentMessages);
+                await reconcileSessionLifecycle(state, input.sessionID, logger, currentMessages);
                 return currentMessages;
             });
             const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean);
@@ -130,6 +131,22 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 suppressDefaultCommandExecution(output);
                 return;
             }
+            if (subcommand === "report") {
+                if (config.reportNudge.enabled) {
+                    await handleReportCommand({
+                        client,
+                        state,
+                        logger,
+                        sessionId: input.sessionID,
+                        messages,
+                    });
+                    suppressDefaultCommandExecution(output);
+                    return;
+                }
+                logger.warn("Ignored /compress report because reportNudge is disabled", {
+                    sessionId: input.sessionID,
+                });
+            }
             if (subcommand === "auto") {
                 await handleAutoCommand({
                     client,
@@ -150,6 +167,7 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 logger,
                 sessionId: input.sessionID,
                 messages,
+                reportNudgeEnabled: config.reportNudge.enabled,
             });
             suppressDefaultCommandExecution(output);
         }

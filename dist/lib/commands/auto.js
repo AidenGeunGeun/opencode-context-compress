@@ -59,7 +59,7 @@ export async function handleAutoCommand(ctx) {
     else {
         response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
             const messages = (await listSessionMessages(ctx.client, ctx.sessionId));
-            await reconcileSessionLifecycle(ctx.client, ctx.state, ctx.sessionId, ctx.logger, messages);
+            await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
             if (!ctx.state.persistenceSynchronized) {
                 return "Automatic compression settings are unavailable because saved session state could not be loaded. No session setting was changed.";
             }

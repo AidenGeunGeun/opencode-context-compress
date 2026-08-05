@@ -12,7 +12,7 @@ Selection:
 - The replacement is inserted at the selected range's first position. Later blocks keep their relative order and receive new positional labels.
 
 Summary fidelity:
-- This is additional lossy compression of summaries. The hidden original messages are unavailable and cannot be restored or reread.
+- This is additional lossy compression of summaries. The hidden original messages are unavailable and cannot be restored or reread. If this session maintains a handoff report file, move anything the selected blocks still hold that belongs there into it before squashing.
 - Preserve the selected blocks' internal chronology, objectives, decisions, constraints, established outcomes, unresolved state at the end of that historical range, and load-bearing evidence that remains necessary.
 - Never reorder events, blend noncontiguous periods, or import later out-of-range events into the historical replacement as though they occurred inside the selected range.
 - You may consult newer out-of-range evidence only to avoid a plainly misleading condensation. Leave that newer evidence represented in its own later block or conversation rather than moving it backward.

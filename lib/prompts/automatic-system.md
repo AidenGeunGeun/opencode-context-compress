@@ -4,10 +4,13 @@ This session's working context reached ~{{context_tokens}} tokens; its effective
 
 Review the conversation and call `compress` once with a faithful `summary` and short `topic`. The plugin deterministically replaces all eligible uncompressed history after the newest existing block, excludes existing blocks, and preserves the newest configured execution steps verbatim.
 
+If this session maintains a handoff report file, bring it up to date before compressing, while the evidence is still visible.
+
 Summary fidelity:
 - Reconcile chronology and the preserved recent evidence. Later evidence supersedes stale plans, tentative conclusions, and outdated pending-work statements.
 - Preserve the objective and WHY, controlling spec or task contract, confirmed decisions and constraints, relevant chronology, changed files and artifacts, load-bearing commands and concrete results, failures and fixes, verification and review findings, explicit unknowns, any delivered final response or handoff, and the latest evidenced task disposition.
 - Do not invent missing facts or completion. Do not carry completed work forward as pending. Include an exact next action only when one genuinely exists.
+- When a handoff report file already holds the detail, cite its path and keep the summary to what a future agent needs in context every turn. Do not restate the file.
 - The preserved newest execution steps remain visible after compression and may correct or supersede the summary, so do not contradict their later evidence.
 
 Result handling:

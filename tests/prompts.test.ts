@@ -6,6 +6,7 @@ import { join } from "node:path"
 import {
     loadPrompt,
     renderAutomaticSystemPrompt,
+    renderReportNudgePrompt,
     renderSquashSystemPrompt,
     renderSystemPrompt,
 } from "../lib/prompts/index.ts"
@@ -14,6 +15,7 @@ import { AUTOMATIC_SYSTEM } from "../lib/prompts/_codegen/automatic-system.gener
 import { COMPRESS } from "../lib/prompts/_codegen/compress.generated.ts"
 import { SQUASH_SYSTEM } from "../lib/prompts/_codegen/squash-system.generated.ts"
 import { SQUASH } from "../lib/prompts/_codegen/squash.generated.ts"
+import { REPORT_NUDGE } from "../lib/prompts/_codegen/report-nudge.generated.ts"
 import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
 
 const RETIRED_WORKFLOW = /compress_map|compress-context-map|pinned snapshot|numeric (?:entry|label)|from\/to|narrower range|consolidat(?:e|ion)/i
@@ -79,6 +81,9 @@ describe("single-tool agent prompts", () => {
         const compressSource = readFileSync(join(root, "lib/prompts/compress.md"), "utf8")
         const squashSystemSource = readFileSync(join(root, "lib/prompts/squash-system.md"), "utf8")
         const squashSource = readFileSync(join(root, "lib/prompts/squash.md"), "utf8")
+        const reportNudgeSource = readFileSync(join(root, "lib/prompts/report-nudge.md"), "utf8")
+        assert.equal(REPORT_NUDGE, reportNudgeSource)
+        assert.equal(REPORT_NUDGE.trim(), renderReportNudgePrompt())
         assert.equal(SYSTEM, systemSource)
         assert.equal(AUTOMATIC_SYSTEM, automaticSource)
         assert.equal(COMPRESS, compressSource)
@@ -92,6 +97,29 @@ describe("single-tool agent prompts", () => {
             assert.doesNotMatch(generated, RETIRED_WORKFLOW)
         }
         assert.throws(() => loadPrompt("compress-map-tool-spec"), /Prompt not found/)
+    })
+
+    it("renders the report nudge without naming a path or dictating sections", () => {
+        const output = renderReportNudgePrompt()
+        assert.match(output, /HANDOFF REPORT CHECKPOINT/)
+        assert.match(output, /that is a normal outcome/i)
+        assert.match(output, /Do not invent significance/i)
+        assert.doesNotMatch(output, /pm-report\.md|specs\//)
+    })
+
+    it("tells both compression prompts to refresh the report first and point the summary at it", () => {
+        for (const output of [
+            renderSystemPrompt(),
+            renderAutomaticSystemPrompt({
+                context_tokens: "1",
+                threshold_tokens: "2",
+                threshold_reason: "test",
+            }),
+        ]) {
+            assert.match(output, /handoff report file/i)
+            assert.match(output, /cite its path/i)
+            assert.match(output, /Do not restate the file/i)
+        }
     })
 
     it("uses the same one-call workflow for Goal overflow recovery", () => {

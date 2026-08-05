@@ -30,6 +30,7 @@ const baseConfig: PluginConfig = {
         contextWindowRatio: 0.9,
         tokenThreshold: 300_000,
     },
+    reportNudge: { enabled: false, tokenInterval: 100_000 },
     tools: {
         compress: { permission: "allow", showCompression: false },
     },

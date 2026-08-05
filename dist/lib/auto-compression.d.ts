@@ -1,7 +1,7 @@
 import type { PluginConfig } from "./config.js";
 import type { Logger } from "./logger.js";
 import { SessionStateManager } from "./state/index.js";
-interface AssistantUsage {
+export interface AssistantUsage {
     total?: number;
     input?: number;
     output?: number;
@@ -11,7 +11,7 @@ interface AssistantUsage {
         write?: number;
     };
 }
-interface AssistantMessageInfo {
+export interface AssistantMessageInfo {
     id: string;
     sessionID: string;
     role: "assistant";
@@ -52,5 +52,4 @@ export declare function createAutomaticCompressionEventHandler(client: any, stat
         };
     };
 }) => Promise<void>;
-export {};
 //# sourceMappingURL=auto-compression.d.ts.map

@@ -12,7 +12,7 @@
 </div>
 
 OpenCode plugin for model-directed context compression. Run it explicitly with `/compress manage`,
-or let the plugin initiate the same workflow before a primary session fills its context window.
+or let the plugin initiate the same workflow before any session fills its context window.
 
 ## Core Behavior
 
@@ -38,7 +38,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - A successful `compress` call is the finish line: the fold takes effect immediately for the
   next model turn, with no need to wait for a further user message.
 - After a successful compression, automatic and model-initiated compression pause for the next
-  three completed primary-session assistant responses. An explicit `/compress manage` may override
+  three completed assistant responses in that exact session. An explicit `/compress manage` may override
   this cooldown.
 - After that management turn completes, its trigger, tool calls, tool outputs, and assistant
   chatter are hidden from future model prompts.
@@ -57,6 +57,7 @@ or let the plugin initiate the same workflow before a primary session fills its 
 - `/compress auto threshold N`: override this session's absolute token threshold.
 - `/compress auto ratio N`: override this session's context-window threshold with an integer percentage from 1 to 99.
 - `/compress auto reset`: clear this session's threshold and ratio overrides without changing its on/off setting or cooldown.
+- `/compress report`: ask the agent to bring its handoff report file up to date now. Listed and accepted only while `reportNudge.enabled` is on.
 
 `/compress manage` and `/compress squash` intentionally create model-visible turns.
 All `/compress auto` feedback is user-only. Session `off` disables every automatic trigger for
@@ -94,9 +95,14 @@ Normal-turn ownership is tied to the executing tool call; a later queued user ca
 turn. Ambiguous ownership fails closed without changing state.
 
 Automatic triggering is event-driven, per session, and deduplicated. It observes completed
-provider usage; it does not open a management turn on every response. Subagent sessions remain
-excluded because their transform and effective tool-permission contract is different from primary
-sessions.
+provider usage; it does not open a management turn on every response. Primary and subagent sessions
+use the same thresholds, transforms, protected tail, cooldown, commands, tools, continuation, and
+feature-detected Goal overflow recovery. Their summaries, overrides, cooldowns, and persisted files
+remain isolated by exact session ID.
+
+New task child sessions require a host that does not synthesize blanket child denies for `compress`
+and `squash`. Existing persisted child-session permission rules are not migrated; a child created by
+an older host may need to be recreated before compression tools are available.
 
 Normal-turn compression still respects the three-response post-compression cooldown. During
 cooldown, `compress` refuses model-initiated use and asks the agent to wait; an explicit user
@@ -197,6 +203,10 @@ Default runtime config:
         "contextWindowRatio": 0.9,
         "tokenThreshold": 335000
     },
+    "reportNudge": {
+        "enabled": false,
+        "tokenInterval": 100000
+    },
     "tools": {
         "compress": {
             "permission": "allow",
@@ -205,6 +215,16 @@ Default runtime config:
     }
 }
 ```
+
+`reportNudge` is for workflows where the agent maintains a handoff report file on disk as it works,
+so a lossy summary is not the only durable record. It is off by default because only such sessions
+have anything to update. When on, the plugin appends a short reminder to the next request once
+provider-reported usage grows by `tokenInterval` (default `100000`), delivered once per crossing so
+it rides along with work already in flight instead of opening its own turn. When compression shrinks
+the context, the baseline drops with it, so the next interval is measured from real growth rather
+than from a reading the session will not reach again. The reminder names no path and no sections —
+the agent's own prompt owns where the file lives and what belongs in it — and it explicitly allows
+"nothing new to record" as an answer.
 
 `protectedTurns` is general compression policy (manual, automatic, and authorized normal paths).
 Default is `3`. The legacy nested key `autoCompression.protectedTurns` is still accepted as a

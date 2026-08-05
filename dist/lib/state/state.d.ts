@@ -9,7 +9,7 @@ export declare function commitDurableSessionState(state: SessionState, candidate
  * Synchronize durable state and reconcile transcript-owned lifecycle authority.
  * The caller must hold the session's SessionStateManager exclusive boundary.
  */
-export declare function reconcileSessionLifecycle(client: any, state: SessionState, sessionId: string, logger: Logger, messages: WithParts[]): Promise<SessionStateSyncResult>;
+export declare function reconcileSessionLifecycle(state: SessionState, sessionId: string, logger: Logger, messages: WithParts[]): Promise<SessionStateSyncResult>;
 export declare class SessionStateManager {
     private sessions;
     private mutationTails;
@@ -19,7 +19,7 @@ export declare class SessionStateManager {
     size(): number;
     runExclusive<T>(sessionId: string, operation: () => Promise<T>): Promise<T>;
 }
-export declare const checkSession: (client: any, state: SessionState, logger: Logger, messages: WithParts[]) => Promise<SessionStateSyncResult>;
+export declare const checkSession: (state: SessionState, logger: Logger, messages: WithParts[]) => Promise<SessionStateSyncResult>;
 export declare function createSessionState(): SessionState;
-export declare function ensureSessionInitialized(client: any, state: SessionState, sessionId: string, logger: Logger, messages: WithParts[]): Promise<SessionStateSyncResult>;
+export declare function ensureSessionInitialized(state: SessionState, sessionId: string, logger: Logger, messages: WithParts[]): Promise<SessionStateSyncResult>;
 //# sourceMappingURL=state.d.ts.map

@@ -37,7 +37,6 @@ export interface Compressed {
 export interface SessionState {
     sessionId: string | null;
     initialized: boolean;
-    isSubAgent: boolean;
     /** Runtime-only: the persisted state was successfully loaded or confirmed absent. */
     persistenceSynchronized: boolean;
     hasPersistedState: boolean;
@@ -71,5 +70,9 @@ export interface SessionState {
     autoCompressionStarting?: boolean;
     /** Runtime-only deduplication marker for repeated message.updated events. */
     lastAutoTriggeredMessageId?: string;
+    /** Runtime-only usage reading the last handoff-report nudge was measured against. */
+    reportNudgeBaselineTokens?: number;
+    /** Runtime-only: a handoff-report nudge is waiting to ride along with the next request. */
+    reportNudgePending?: boolean;
 }
 //# sourceMappingURL=types.d.ts.map

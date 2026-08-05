@@ -25,6 +25,7 @@ const config: PluginConfig = {
     protectedTurns: 3,
     commands: { enabled: true },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
+    reportNudge: { enabled: false, tokenInterval: 100_000 },
     tools: {
         compress: { permission: "allow", showCompression: false },
     },

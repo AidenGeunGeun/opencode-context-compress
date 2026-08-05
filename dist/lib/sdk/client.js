@@ -33,16 +33,6 @@ export async function resumeSessionGoal(client, sessionId, owner) {
         ? await sessionClient.goalUpdate({ sessionID: sessionId, body: { action: "resume", owner } })
         : await sessionClient.goalUpdate({ path: { id: sessionId }, body: { action: "resume", owner } })) ?? undefined;
 }
-export async function getSession(client, sessionId) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.get !== "function") {
-        return undefined;
-    }
-    const response = usesFlatRequestShape(client)
-        ? await sessionClient.get({ sessionID: sessionId })
-        : await sessionClient.get({ path: { id: sessionId } });
-    return unwrapClientData(response);
-}
 export async function listSessionMessages(client, sessionId, options) {
     const sessionClient = client?.session;
     if (typeof sessionClient?.messages !== "function") {

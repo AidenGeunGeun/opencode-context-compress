@@ -4,8 +4,13 @@ import { AUTOMATIC_SYSTEM as AUTOMATIC_SYSTEM_PROMPT } from "./_codegen/automati
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js"
 import { SQUASH_SYSTEM as SQUASH_SYSTEM_PROMPT } from "./_codegen/squash-system.generated.js"
 import { SQUASH as SQUASH_TOOL_SPEC } from "./_codegen/squash.generated.js"
+import { REPORT_NUDGE as REPORT_NUDGE_PROMPT } from "./_codegen/report-nudge.generated.js"
 export function renderSystemPrompt(): string {
     return SYSTEM_PROMPT.trim()
+}
+
+export function renderReportNudgePrompt(): string {
+    return REPORT_NUDGE_PROMPT.trim()
 }
 
 export function renderAutomaticSystemPrompt(

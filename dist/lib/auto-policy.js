@@ -52,7 +52,7 @@ function collectManagementTurnMessageIds(state, messages) {
 }
 export function getPostCompressionCooldownRemaining(state, messages) {
     const anchorMessageId = state.compressionCooldownAfterMessageId;
-    if (!anchorMessageId || state.isSubAgent)
+    if (!anchorMessageId)
         return 0;
     const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId);
     if (anchorIndex === -1)
@@ -83,7 +83,7 @@ function collectEligibleCooldownMessageIds(state, messages, anchorIndex) {
 }
 export function isMessageWithinPostCompressionCooldown(state, messages, messageId) {
     const anchorMessageId = state.compressionCooldownAfterMessageId;
-    if (!anchorMessageId || state.isSubAgent)
+    if (!anchorMessageId)
         return false;
     const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId);
     if (anchorIndex === -1)

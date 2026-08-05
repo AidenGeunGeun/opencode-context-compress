@@ -1,5 +1,5 @@
 import { loadSessionState, saveSessionState } from "./persistence.js";
-import { isSubAgentSession, isCompletedNativeCompaction, findLastCompactionTimestamp, resetOnCompaction, } from "./utils.js";
+import { isCompletedNativeCompaction, findLastCompactionTimestamp, resetOnCompaction, } from "./utils.js";
 export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
     state.compressSummaries = candidate.compressSummaries;
@@ -154,8 +154,8 @@ function getCompressionStateCompactionOrder(state, messages, compactionIndex) {
  * Synchronize durable state and reconcile transcript-owned lifecycle authority.
  * The caller must hold the session's SessionStateManager exclusive boundary.
  */
-export async function reconcileSessionLifecycle(client, state, sessionId, logger, messages) {
-    const syncResult = await ensureSessionInitialized(client, state, sessionId, logger, messages);
+export async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
+    const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages);
     if (!state.persistenceSynchronized)
         return syncResult;
     const compactionTimestamp = findLastCompactionTimestamp(messages);
@@ -243,7 +243,7 @@ export class SessionStateManager {
         }
     }
 }
-export const checkSession = async (client, state, logger, messages) => {
+export const checkSession = async (state, logger, messages) => {
     if (!state.sessionId) {
         return {
             source: "memory",
@@ -255,7 +255,7 @@ export const checkSession = async (client, state, logger, messages) => {
         lastUpdated: state.persistedLastUpdated,
     };
     try {
-        return await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages);
+        return await reconcileSessionLifecycle(state, state.sessionId, logger, messages);
     }
     catch (err) {
         logger.error("Failed to initialize session state", { error: err.message });
@@ -266,7 +266,6 @@ export function createSessionState() {
     return {
         sessionId: null,
         initialized: false,
-        isSubAgent: false,
         persistenceSynchronized: false,
         hasPersistedState: false,
         persistedLastUpdated: null,
@@ -292,16 +291,12 @@ export function createSessionState() {
         lastAutoTriggeredMessageId: undefined,
     };
 }
-export async function ensureSessionInitialized(client, state, sessionId, logger, messages) {
+export async function ensureSessionInitialized(state, sessionId, logger, messages) {
     if (state.sessionId && state.sessionId !== sessionId) {
         throw new Error(`Session state mismatch: existing=${state.sessionId}, requested=${sessionId}`);
     }
     state.sessionId = sessionId;
-    if (!state.initialized) {
-        const isSubAgent = await isSubAgentSession(client, sessionId, logger);
-        state.isSubAgent = isSubAgent;
-        state.initialized = true;
-    }
+    state.initialized = true;
     return await refreshPersistedSessionState(state, sessionId, logger, messages);
 }
 //# sourceMappingURL=state.js.map

@@ -30,6 +30,20 @@ export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     tokenThreshold: 335_000,
 }
 
+export interface ReportNudge {
+    enabled: boolean
+    tokenInterval: number
+}
+
+/**
+ * Off unless a profile opts in: only sessions that actually maintain a handoff report file
+ * have anything to update.
+ */
+export const DEFAULT_REPORT_NUDGE: ReportNudge = {
+    enabled: false,
+    tokenInterval: 100_000,
+}
+
 export function resolveProtectedTurnsSetting(
     layer: Record<string, any>,
     fallback = 3,
@@ -50,6 +64,7 @@ export interface PluginConfig {
     protectedTurns: number
     commands: Commands
     autoCompression: AutoCompression
+    reportNudge: ReportNudge
     tools: Tools
 }
 
@@ -70,6 +85,9 @@ export const VALID_CONFIG_KEYS = new Set([
     "autoCompression.protectedTurns",
     "commands",
     "commands.enabled",
+    "reportNudge",
+    "reportNudge.enabled",
+    "reportNudge.tokenInterval",
     "tools",
     "tools.compress",
     "tools.compress.permission",
@@ -207,6 +225,41 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
         }
     }
 
+    const reportNudge = config.reportNudge
+    if (reportNudge !== undefined) {
+        if (!reportNudge || typeof reportNudge !== "object" || Array.isArray(reportNudge)) {
+            errors.push({
+                key: "reportNudge",
+                expected: "object",
+                actual: reportNudge === null
+                    ? "null"
+                    : Array.isArray(reportNudge)
+                      ? "array"
+                      : typeof reportNudge,
+            })
+        } else {
+            if (reportNudge.enabled !== undefined && typeof reportNudge.enabled !== "boolean") {
+                errors.push({
+                    key: "reportNudge.enabled",
+                    expected: "boolean",
+                    actual: typeof reportNudge.enabled,
+                })
+            }
+            if (
+                reportNudge.tokenInterval !== undefined &&
+                (typeof reportNudge.tokenInterval !== "number" ||
+                    !Number.isFinite(reportNudge.tokenInterval) ||
+                    reportNudge.tokenInterval <= 0)
+            ) {
+                errors.push({
+                    key: "reportNudge.tokenInterval",
+                    expected: "positive finite number",
+                    actual: JSON.stringify(reportNudge.tokenInterval),
+                })
+            }
+        }
+    }
+
     // Commands validator
     const commands = config.commands
     if (commands !== undefined) {
@@ -309,6 +362,7 @@ const defaultConfig: PluginConfig = {
         enabled: true,
     },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
+    reportNudge: { ...DEFAULT_REPORT_NUDGE },
     tools: {
         compress: {
             permission: "allow",
@@ -456,11 +510,32 @@ function mergeAutoCompression(
     }
 }
 
+export function mergeReportNudge(
+    base: PluginConfig["reportNudge"],
+    override?: Partial<PluginConfig["reportNudge"]>,
+): PluginConfig["reportNudge"] {
+    // validateConfigTypes warns about malformed values, but the warning alone would still let
+    // them through - and `"enabled": "false"` is truthy, so a typo would silently switch the
+    // feature on in a profile that has no report file to update.
+    if (!override || typeof override !== "object" || Array.isArray(override)) return base
+
+    return {
+        enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
+        tokenInterval:
+            typeof override.tokenInterval === "number" &&
+            Number.isFinite(override.tokenInterval) &&
+            override.tokenInterval > 0
+                ? override.tokenInterval
+                : base.tokenInterval,
+    }
+}
+
 function deepCloneConfig(config: PluginConfig): PluginConfig {
     return {
         ...config,
         commands: { ...config.commands },
         autoCompression: { ...config.autoCompression },
+        reportNudge: { ...config.reportNudge },
         tools: {
             compress: { ...config.tools.compress },
         },
@@ -503,6 +578,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                     config.autoCompression,
                     result.data.autoCompression as any,
                 ),
+                reportNudge: mergeReportNudge(
+                    config.reportNudge,
+                    result.data.reportNudge as any,
+                ),
                 tools: mergeTools(config.tools, result.data.tools as any),
             }
             hasExplicitProtectedTurns = result.data.protectedTurns !== undefined
@@ -543,6 +622,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                     config.autoCompression,
                     result.data.autoCompression as any,
                 ),
+                reportNudge: mergeReportNudge(
+                    config.reportNudge,
+                    result.data.reportNudge as any,
+                ),
                 tools: mergeTools(config.tools, result.data.tools as any),
             }
             hasExplicitProtectedTurns =
@@ -580,6 +663,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
                 autoCompression: mergeAutoCompression(
                     config.autoCompression,
                     result.data.autoCompression as any,
+                ),
+                reportNudge: mergeReportNudge(
+                    config.reportNudge,
+                    result.data.reportNudge as any,
                 ),
                 tools: mergeTools(config.tools, result.data.tools as any),
             }

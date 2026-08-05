@@ -8,12 +8,14 @@ import { handleStatsCommand } from "./commands/stats.js"
 import { handleContextCommand } from "./commands/context.js"
 import { handleHelpCommand } from "./commands/help.js"
 import { handleManageCommand } from "./commands/manage.js"
+import { handleReportCommand } from "./commands/report.js"
 import { handleAutoCommand } from "./commands/auto.js"
 import { handleSquashCommand } from "./commands/squash.js"
 import { suppressDefaultCommandExecution, type CommandExecuteOutput } from "./commands/suppress.js"
 import { reconcileSessionLifecycle } from "./state/state.js"
 import { listSessionMessages } from "./sdk/client.js"
 import { isIgnoredUserMessage } from "./messages/utils.js"
+import { injectReportNudge } from "./report-nudge.js"
 
 export function getLastUserSessionId(messages: WithParts[]): string | undefined {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -63,6 +65,7 @@ export function createChatMessageTransformHandler(
             })
 
             applyCompressTransforms(state, logger, output.messages)
+            injectReportNudge(state, logger, output.messages)
             return true
         })
 
@@ -183,6 +186,24 @@ export function createCommandExecuteHandler(
                 return
             }
 
+            if (subcommand === "report") {
+                if (config.reportNudge.enabled) {
+                    await handleReportCommand({
+                        client,
+                        state,
+                        logger,
+                        sessionId: input.sessionID,
+                        messages,
+                    })
+                    suppressDefaultCommandExecution(output)
+                    return
+                }
+
+                logger.warn("Ignored /compress report because reportNudge is disabled", {
+                    sessionId: input.sessionID,
+                })
+            }
+
             if (subcommand === "auto") {
                 await handleAutoCommand({
                     client,
@@ -204,6 +225,7 @@ export function createCommandExecuteHandler(
                 logger,
                 sessionId: input.sessionID,
                 messages,
+                reportNudgeEnabled: config.reportNudge.enabled,
             })
             suppressDefaultCommandExecution(output)
         }

@@ -16,7 +16,7 @@ import {
 } from "./auto-policy.js"
 import { isContextOverflowError, renderGoalOverflowRecoveryPrompt } from "./goal.js"
 
-interface AssistantUsage {
+export interface AssistantUsage {
     total?: number
     input?: number
     output?: number
@@ -27,7 +27,7 @@ interface AssistantUsage {
     }
 }
 
-interface AssistantMessageInfo {
+export interface AssistantMessageInfo {
     id: string
     sessionID: string
     role: "assistant"

@@ -76,4 +76,8 @@ export interface SessionState {
     autoCompressionStarting?: boolean
     /** Runtime-only deduplication marker for repeated message.updated events. */
     lastAutoTriggeredMessageId?: string
+    /** Runtime-only usage reading the last handoff-report nudge was measured against. */
+    reportNudgeBaselineTokens?: number
+    /** Runtime-only: a handoff-report nudge is waiting to ride along with the next request. */
+    reportNudgePending?: boolean
 }

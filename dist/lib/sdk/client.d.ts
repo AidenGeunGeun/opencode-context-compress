@@ -34,7 +34,6 @@ export interface SessionGoalOwner {
 }
 export declare function getSessionGoal(client: unknown, sessionId: string): Promise<SessionGoalInfo | null | undefined>;
 export declare function resumeSessionGoal(client: unknown, sessionId: string, owner: SessionGoalOwner): Promise<SessionGoalInfo | undefined>;
-export declare function getSession(client: unknown, sessionId: string): Promise<Record<string, unknown> | undefined>;
 export declare function listSessionMessages(client: unknown, sessionId: string, options?: {
     limit?: number;
 }): Promise<unknown[]>;

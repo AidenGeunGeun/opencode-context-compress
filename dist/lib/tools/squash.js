@@ -95,7 +95,7 @@ export function createSquashTool(ctx) {
                 if (rawMessages.length === 0) {
                     throw new Error("squash could not fetch any session messages. Nothing changed.");
                 }
-                await reconcileSessionLifecycle(client, state, sessionId, logger, rawMessages);
+                await reconcileSessionLifecycle(state, sessionId, logger, rawMessages);
                 if (!state.persistenceSynchronized) {
                     throw new Error("squash could not synchronize saved session state. Nothing changed.");
                 }
