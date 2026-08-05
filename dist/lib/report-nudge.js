@@ -3,26 +3,21 @@ import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { createSyntheticTextPart, isIgnoredUserMessage } from "./messages/utils.js";
 import { renderReportNudgePrompt } from "./prompts/index.js";
 /**
- * Growth-based trigger over provider-reported usage, the same signal automatic compression
- * uses. A reading below the baseline means compression (or a native compaction) just shrank the
- * context, so the window restarts from the new floor instead of silently swallowing a full
- * interval. An unusable reading leaves the baseline untouched, so a session that starts without
- * usage numbers still measures its first interval from real growth.
+ * Absolute raw-context trigger over provider-reported usage, the same signal automatic
+ * compression uses. Crossing 100k, 200k, and so on advances the bucket and fires once. When
+ * compression shrinks the context into a lower bucket, tracking drops with it so those absolute
+ * boundaries can fire again as the new context grows. An unusable reading leaves state untouched.
  */
-export function resolveReportNudge(contextTokens, baselineTokens, tokenInterval) {
+export function resolveReportNudge(contextTokens, previousBucket, tokenInterval) {
     if (!Number.isFinite(tokenInterval) || tokenInterval <= 0) {
-        return { due: false, baselineTokens };
+        return { due: false, bucket: previousBucket };
     }
     if (!Number.isFinite(contextTokens) || contextTokens <= 0) {
-        return { due: false, baselineTokens };
+        return { due: false, bucket: previousBucket };
     }
-    if (baselineTokens === undefined || contextTokens < baselineTokens) {
-        return { due: false, baselineTokens: contextTokens };
-    }
-    if (contextTokens - baselineTokens < tokenInterval) {
-        return { due: false, baselineTokens };
-    }
-    return { due: true, baselineTokens: contextTokens };
+    const bucket = Math.floor(contextTokens / tokenInterval);
+    const due = bucket > 0 && (previousBucket === undefined || bucket > previousBucket);
+    return { due, bucket };
 }
 export function createReportNudgeEventHandler(stateManager, logger, config) {
     return async (input) => {
@@ -39,15 +34,16 @@ export function createReportNudgeEventHandler(stateManager, logger, config) {
             return;
         }
         const state = stateManager.get(info.sessionID);
-        const decision = resolveReportNudge(getAssistantContextTokens(info.tokens), state.reportNudgeBaselineTokens, config.reportNudge.tokenInterval);
-        state.reportNudgeBaselineTokens = decision.baselineTokens;
+        const decision = resolveReportNudge(getAssistantContextTokens(info.tokens), state.reportNudgeBucket, config.reportNudge.tokenInterval);
+        state.reportNudgeBucket = decision.bucket;
         if (!decision.due)
             return;
         state.reportNudgePending = true;
         logger.info("Handoff report nudge queued", {
             sessionId: info.sessionID,
             messageId: info.id,
-            contextTokens: decision.baselineTokens,
+            contextTokens: getAssistantContextTokens(info.tokens),
+            bucket: decision.bucket,
             tokenInterval: config.reportNudge.tokenInterval,
         });
     };

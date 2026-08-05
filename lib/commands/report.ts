@@ -25,7 +25,7 @@ function promptError(result: any): string | undefined {
 }
 
 /**
- * Manual counterpart to the growth-triggered nudge. This one opens its own turn because the
+ * Manual counterpart to the context-boundary nudge. This one opens its own turn because the
  * user asked for the update now, rather than waiting for a request to ride along with.
  */
 export async function handleReportCommand(ctx: ReportCommandContext): Promise<void> {

@@ -82,55 +82,55 @@ describe("resolveReportNudge", () => {
         assert.equal(DEFAULT_REPORT_NUDGE.enabled, false)
     })
 
-    it("takes the first reading as the baseline without firing", () => {
+    it("records bucket zero without firing below the first absolute boundary", () => {
         const result = resolveReportNudge(40_000, undefined, 100_000)
         assert.equal(result.due, false)
-        assert.equal(result.baselineTokens, 40_000)
+        assert.equal(result.bucket, 0)
     })
 
-    it("holds the baseline while growth is below the interval", () => {
-        const result = resolveReportNudge(139_999, 40_000, 100_000)
-        assert.equal(result.due, false)
-        assert.equal(result.baselineTokens, 40_000)
+    it("fires exactly at the first absolute 100,000-token boundary", () => {
+        const before = resolveReportNudge(99_999, 0, 100_000)
+        const at = resolveReportNudge(100_000, before.bucket, 100_000)
+
+        assert.equal(before.due, false)
+        assert.equal(at.due, true)
+        assert.equal(at.bucket, 1)
     })
 
-    it("fires once growth reaches the interval and rebases at the new reading", () => {
-        const result = resolveReportNudge(140_000, 40_000, 100_000)
-        assert.equal(result.due, true)
-        assert.equal(result.baselineTokens, 140_000)
+    it("does not repeat within a bucket and fires again at 200,000", () => {
+        assert.deepEqual(resolveReportNudge(150_000, 1, 100_000), { due: false, bucket: 1 })
+        assert.deepEqual(resolveReportNudge(199_999, 1, 100_000), { due: false, bucket: 1 })
+        assert.deepEqual(resolveReportNudge(200_000, 1, 100_000), { due: true, bucket: 2 })
     })
 
-    it("rebases downward when compression shrinks the context instead of swallowing an interval", () => {
-        const afterCompression = resolveReportNudge(30_000, 300_000, 100_000)
+    it("drops to bucket zero after compression so 100,000 can fire again", () => {
+        const afterCompression = resolveReportNudge(30_000, 3, 100_000)
         assert.equal(afterCompression.due, false)
-        assert.equal(afterCompression.baselineTokens, 30_000)
+        assert.equal(afterCompression.bucket, 0)
 
-        const next = resolveReportNudge(130_000, afterCompression.baselineTokens, 100_000)
+        const next = resolveReportNudge(100_000, afterCompression.bucket, 100_000)
         assert.equal(next.due, true)
+        assert.equal(next.bucket, 1)
     })
 
-    it("ignores unusable usage readings without moving the baseline", () => {
-        assert.deepEqual(resolveReportNudge(0, 40_000, 100_000), { due: false, baselineTokens: 40_000 })
-        assert.deepEqual(resolveReportNudge(Number.NaN, 40_000, 100_000), {
-            due: false,
-            baselineTokens: 40_000,
-        })
+    it("ignores unusable usage readings without moving the bucket", () => {
+        assert.deepEqual(resolveReportNudge(0, 1, 100_000), { due: false, bucket: 1 })
+        assert.deepEqual(resolveReportNudge(Number.NaN, 1, 100_000), { due: false, bucket: 1 })
     })
 
-    it("does not let an unusable first reading become a zero baseline", () => {
+    it("fires on a first usable reading already beyond the boundary", () => {
         const first = resolveReportNudge(0, undefined, 100_000)
-        assert.equal(first.baselineTokens, undefined)
+        assert.equal(first.bucket, undefined)
 
-        // Measuring from a phantom zero would fire here on the session's very first real reading.
-        const second = resolveReportNudge(120_000, first.baselineTokens, 100_000)
-        assert.equal(second.due, false)
-        assert.equal(second.baselineTokens, 120_000)
+        const second = resolveReportNudge(120_000, first.bucket, 100_000)
+        assert.equal(second.due, true)
+        assert.equal(second.bucket, 1)
     })
 
     it("never fires on an interval that configuration validation already rejected", () => {
-        assert.equal(resolveReportNudge(500_000, 10_000, 0).due, false)
-        assert.equal(resolveReportNudge(500_000, 10_000, -1).due, false)
-        assert.equal(resolveReportNudge(500_000, 10_000, Number.NaN).due, false)
+        assert.equal(resolveReportNudge(500_000, 1, 0).due, false)
+        assert.equal(resolveReportNudge(500_000, 1, -1).due, false)
+        assert.equal(resolveReportNudge(500_000, 1, Number.NaN).due, false)
     })
 })
 
@@ -146,10 +146,10 @@ describe("report nudge event handler", () => {
 
         const state = stateManager.get("ses_disabled")
         assert.equal(state.reportNudgePending, undefined)
-        assert.equal(state.reportNudgeBaselineTokens, undefined)
+        assert.equal(state.reportNudgeBucket, undefined)
     })
 
-    it("queues a nudge only after usage grows past the interval", async () => {
+    it("queues a nudge at the absolute 100,000-token boundary", async () => {
         const stateManager = new SessionStateManager()
         const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
         const sessionId = "ses_growth"
@@ -160,9 +160,9 @@ describe("report nudge event handler", () => {
         await handler(assistantEvent("m2", sessionId, 90_000))
         assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
 
-        await handler(assistantEvent("m3", sessionId, 120_001))
+        await handler(assistantEvent("m3", sessionId, 100_000))
         assert.equal(stateManager.get(sessionId).reportNudgePending, true)
-        assert.equal(stateManager.get(sessionId).reportNudgeBaselineTokens, 120_001)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
     })
 
     it("ignores messages that are not completed assistant work", async () => {
@@ -177,10 +177,10 @@ describe("report nudge event handler", () => {
         await handler(assistantEvent("m5", sessionId, 500_000, { time: {} }))
 
         assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
-        assert.equal(stateManager.get(sessionId).reportNudgeBaselineTokens, 10_000)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 0)
     })
 
-    it("does not queue a nudge from growth measured against a missing first reading", async () => {
+    it("queues from a first usable reading already beyond 100,000", async () => {
         const stateManager = new SessionStateManager()
         const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
         const sessionId = "ses_no_usage"
@@ -188,8 +188,8 @@ describe("report nudge event handler", () => {
         await handler(assistantEvent("m1", sessionId, 0, { tokens: undefined }))
         await handler(assistantEvent("m2", sessionId, 150_000))
 
-        assert.equal(stateManager.get(sessionId).reportNudgePending, undefined)
-        assert.equal(stateManager.get(sessionId).reportNudgeBaselineTokens, 150_000)
+        assert.equal(stateManager.get(sessionId).reportNudgePending, true)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
     })
 
     it("ignores unrelated events", async () => {
@@ -197,7 +197,7 @@ describe("report nudge event handler", () => {
         const handler = createReportNudgeEventHandler(stateManager, logger, baseConfig)
 
         await handler({ event: { type: "session.idle", properties: {} } } as any)
-        assert.equal(stateManager.get("ses_other").reportNudgeBaselineTokens, undefined)
+        assert.equal(stateManager.get("ses_other").reportNudgeBucket, undefined)
     })
 })
 

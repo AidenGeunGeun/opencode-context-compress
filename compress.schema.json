@@ -91,7 +91,7 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "default": 100000,
-                    "description": "Nudge once per this much growth in provider-reported context usage"
+                    "description": "Nudge when provider-reported raw context usage crosses each multiple of this value"
                 }
             },
             "default": {

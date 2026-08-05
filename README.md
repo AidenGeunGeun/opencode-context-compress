@@ -218,11 +218,11 @@ Default runtime config:
 
 `reportNudge` is for workflows where the agent maintains a handoff report file on disk as it works,
 so a lossy summary is not the only durable record. It is off by default because only such sessions
-have anything to update. When on, the plugin appends a short reminder to the next request once
-provider-reported usage grows by `tokenInterval` (default `100000`), delivered once per crossing so
-it rides along with work already in flight instead of opening its own turn. When compression shrinks
-the context, the baseline drops with it, so the next interval is measured from real growth rather
-than from a reading the session will not reach again. The reminder names no path and no sections —
+have anything to update. When on, the plugin appends a short reminder to the next request whenever
+provider-reported raw context crosses an absolute multiple of `tokenInterval` (default `100000`):
+100k, 200k, 300k, and so on. It is delivered once per boundary so it rides along with work already
+in flight instead of opening its own turn. When compression drops context into a lower bucket,
+those absolute boundaries become eligible again as the new context grows. The reminder names no path and no sections —
 the agent's own prompt owns where the file lives and what belongs in it — and it explicitly allows
 "nothing new to record" as an answer.
 

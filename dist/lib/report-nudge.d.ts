@@ -5,16 +5,15 @@ import type { SessionState, WithParts } from "./state/index.js";
 import { SessionStateManager } from "./state/index.js";
 export interface ReportNudgeDecision {
     due: boolean;
-    baselineTokens: number | undefined;
+    bucket: number | undefined;
 }
 /**
- * Growth-based trigger over provider-reported usage, the same signal automatic compression
- * uses. A reading below the baseline means compression (or a native compaction) just shrank the
- * context, so the window restarts from the new floor instead of silently swallowing a full
- * interval. An unusable reading leaves the baseline untouched, so a session that starts without
- * usage numbers still measures its first interval from real growth.
+ * Absolute raw-context trigger over provider-reported usage, the same signal automatic
+ * compression uses. Crossing 100k, 200k, and so on advances the bucket and fires once. When
+ * compression shrinks the context into a lower bucket, tracking drops with it so those absolute
+ * boundaries can fire again as the new context grows. An unusable reading leaves state untouched.
  */
-export declare function resolveReportNudge(contextTokens: number, baselineTokens: number | undefined, tokenInterval: number): ReportNudgeDecision;
+export declare function resolveReportNudge(contextTokens: number, previousBucket: number | undefined, tokenInterval: number): ReportNudgeDecision;
 export declare function createReportNudgeEventHandler(stateManager: SessionStateManager, logger: Logger, config: PluginConfig): (input: {
     event?: {
         type?: string;
