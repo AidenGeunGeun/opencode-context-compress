@@ -37,6 +37,7 @@ const assistantEvent = (id: string, sessionID: string, total: number, overrides:
                 id,
                 sessionID,
                 role: "assistant",
+                agent: "orchestrator",
                 time: { completed: Date.now() },
                 tokens: { total },
                 ...overrides,
@@ -122,6 +123,42 @@ describe("report nudge event handler", () => {
         })
 
         await handler(assistantEvent("m1", sessionId, 500_000))
+
+        assert.equal(prompts.length, 0)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, undefined)
+    })
+
+    it("never opens automatic checkpoints for orchestrator subagents", async () => {
+        const stateManager = new SessionStateManager()
+        const prompts: string[] = []
+        const sessionId = "ses_auditor"
+        const handler = createReportNudgeEventHandler(
+            reportClient(prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
+
+        await handler(assistantEvent("m1", sessionId, 90_000, { agent: "auditor" }))
+        await handler(assistantEvent("m2", sessionId, 110_000, { agent: "auditor" }))
+
+        assert.equal(prompts.length, 0)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, undefined)
+    })
+
+    it("fails closed when the host message has no agent id", async () => {
+        const stateManager = new SessionStateManager()
+        const prompts: string[] = []
+        const sessionId = "ses_missing_agent"
+        const handler = createReportNudgeEventHandler(
+            reportClient(prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
+
+        await handler(assistantEvent("m1", sessionId, 90_000, { agent: undefined }))
+        await handler(assistantEvent("m2", sessionId, 110_000, { agent: undefined }))
 
         assert.equal(prompts.length, 0)
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, undefined)

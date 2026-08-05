@@ -28,6 +28,7 @@ export function createReportNudgeEventHandler(client, stateManager, logger, conf
         const info = input.event.properties?.info;
         if (!info ||
             info.role !== "assistant" ||
+            info.agent !== "orchestrator" ||
             info.summary === true ||
             info.error ||
             !info.time?.completed) {

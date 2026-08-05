@@ -50,6 +50,7 @@ export function createReportNudgeEventHandler(
         if (
             !info ||
             info.role !== "assistant" ||
+            info.agent !== "orchestrator" ||
             info.summary === true ||
             info.error ||
             !info.time?.completed
