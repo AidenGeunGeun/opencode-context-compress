@@ -81,19 +81,6 @@ export async function resumeSessionGoal(
     ) ?? undefined
 }
 
-export async function getSession(client: unknown, sessionId: string): Promise<Record<string, unknown> | undefined> {
-    const sessionClient = (client as { session?: { get?: (input: unknown) => Promise<unknown> } })?.session
-    if (typeof sessionClient?.get !== "function") {
-        return undefined
-    }
-
-    const response = usesFlatRequestShape(client)
-        ? await sessionClient.get({ sessionID: sessionId })
-        : await sessionClient.get({ path: { id: sessionId } })
-
-    return unwrapClientData(response) as Record<string, unknown> | undefined
-}
-
 export async function listSessionMessages(
     client: unknown,
     sessionId: string,

@@ -46,7 +46,7 @@ Treat this as a stateful OpenCode protocol plugin, not a text-rewriting utility.
 - Keep native OpenCode auto-compaction from racing plugin-owned automatic compression when that feature is enabled.
 - Keep Session Goal compatibility fail-open: exact synthetic continuation prefix + `Goal reference: goa_* <timestamp>` for boundary exceptions only; never strip Goal text from model context; never pause/resume Goals around ordinary management turns; do not reintroduce Goal token/elapsed fields.
 - Keep overflow recovery one-shot and owner-CAS gated on Goal `id` / `status` / `time.updated`; absence of Goal APIs disables only recovery.
-- Keep subagent behavior explicit. The current transform/state rules and effective tool permissions decide whether a session is eligible; do not silently broaden the scope.
+- Keep primary and subagent compression behavior identical while preserving exact-session state isolation. Effective configured permissions still decide whether tools are available; do not override host permission rules from plugin prompts.
 - Keep legacy completed state loadable. Ignore/clear stale `compressionMapSnapshot`; preserve historical residue cleanup so old completed management machinery stays hidden. Do not teach current agents retired workflows.
 - Keep `dist/` synchronized because this repository and local installs load built files directly.
 

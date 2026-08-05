@@ -168,7 +168,7 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     )
                 }
 
-                await reconcileSessionLifecycle(client, state, sessionId, logger, rawMessages)
+                await reconcileSessionLifecycle(state, sessionId, logger, rawMessages)
                 if (!state.persistenceSynchronized) {
                     throw new Error(
                         "compress could not synchronize saved session state. Nothing was compressed.",

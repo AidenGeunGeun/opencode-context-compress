@@ -25,7 +25,7 @@ export function getLastUserSessionId(messages: WithParts[]): string | undefined 
 }
 
 export function createChatMessageTransformHandler(
-    client: any,
+    _client: any,
     stateManager: SessionStateManager,
     logger: Logger,
     workingDirectory?: string,
@@ -36,8 +36,7 @@ export function createChatMessageTransformHandler(
 
         const state = stateManager.get(sessionId)
         const transformed = await stateManager.runExclusive(sessionId, async () => {
-            const syncResult = await checkSession(client, state, logger, output.messages)
-            if (state.isSubAgent) return false
+            const syncResult = await checkSession(state, logger, output.messages)
             if (!state.persistenceSynchronized) {
                 logger.error("Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript", {
                     sessionID: sessionId,
@@ -119,7 +118,6 @@ export function createCommandExecuteHandler(
                     input.sessionID,
                 )) as WithParts[]
                 await reconcileSessionLifecycle(
-                    client,
                     state,
                     input.sessionID,
                     logger,

@@ -117,6 +117,74 @@ describe("SessionStateManager", () => {
         await Promise.all([first, second])
         assert.deepEqual(order, ["first-start", "other", "first-end", "second"])
     })
+
+    it("reloads parent and child compression state from independent files", async () => {
+        const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const parentId = `parent-isolation-${suffix}`
+        const childId = `child-isolation-${suffix}`
+        await Promise.all([cleanupSessionFiles(parentId), cleanupSessionFiles(childId)])
+
+        try {
+            const initial = new SessionStateManager()
+            const parent = initial.get(parentId)
+            parent.compressed.messageIds.add("parent-anchor")
+            parent.compressSummaries = [
+                {
+                    anchorMessageId: "parent-anchor",
+                    messageIds: ["parent-anchor"],
+                    summary: "Parent-only summary",
+                },
+            ]
+            parent.autoCompressionEnabledOverride = false
+            parent.compressionCooldownAfterMessageId = "parent-cooldown"
+
+            const child = initial.get(childId)
+            child.compressed.messageIds.add("child-anchor")
+            child.compressSummaries = [
+                {
+                    anchorMessageId: "child-anchor",
+                    messageIds: ["child-anchor"],
+                    summary: "Child-only summary",
+                },
+            ]
+            child.autoCompressionEnabledOverride = true
+            child.autoCompressionTokenThresholdOverride = 123_456
+            child.compressionCooldownAfterMessageId = "child-cooldown"
+
+            await Promise.all([saveSessionState(parent, logger), saveSessionState(child, logger)])
+
+            const reloaded = new SessionStateManager()
+            const reloadedParent = reloaded.get(parentId)
+            const reloadedChild = reloaded.get(childId)
+            await Promise.all([
+                ensureSessionInitialized(
+                    reloadedParent,
+                    parentId,
+                    logger,
+                    [createMessage("parent-anchor", parentId, "user")] as any,
+                ),
+                ensureSessionInitialized(
+                    reloadedChild,
+                    childId,
+                    logger,
+                    [createMessage("child-anchor", childId, "user")] as any,
+                ),
+            ])
+
+            assert.equal(existsSync(getSessionFilePath(parentId)), true)
+            assert.equal(existsSync(getSessionFilePath(childId)), true)
+            assert.deepEqual(reloadedParent.compressSummaries.map((item) => item.summary), ["Parent-only summary"])
+            assert.deepEqual(reloadedChild.compressSummaries.map((item) => item.summary), ["Child-only summary"])
+            assert.equal(reloadedParent.autoCompressionEnabledOverride, false)
+            assert.equal(reloadedParent.autoCompressionTokenThresholdOverride, undefined)
+            assert.equal(reloadedParent.compressionCooldownAfterMessageId, "parent-cooldown")
+            assert.equal(reloadedChild.autoCompressionEnabledOverride, true)
+            assert.equal(reloadedChild.autoCompressionTokenThresholdOverride, 123_456)
+            assert.equal(reloadedChild.compressionCooldownAfterMessageId, "child-cooldown")
+        } finally {
+            await Promise.all([cleanupSessionFiles(parentId), cleanupSessionFiles(childId)])
+        }
+    })
 })
 
 describe("native compaction reset", () => {
@@ -172,11 +240,6 @@ describe("ensureSessionInitialized", () => {
         state.sessionId = sessionId
         state.variant = "cached-variant"
 
-        const client = {
-            session: {
-                get: async () => ({ data: {} }),
-            },
-        }
         const messages = [
             createMessage("m1", sessionId, "user"),
             {
@@ -185,7 +248,7 @@ describe("ensureSessionInitialized", () => {
             },
         ]
 
-        await ensureSessionInitialized(client, state, sessionId, logger, messages as any)
+        await ensureSessionInitialized(state, sessionId, logger, messages as any)
 
         assert.equal(state.initialized, true)
         assert.equal(state.sessionId, sessionId)
@@ -207,7 +270,6 @@ describe("ensureSessionInitialized", () => {
 
         try {
             await ensureSessionInitialized(
-                { session: { get: async () => ({ data: {} }) } },
                 state,
                 sessionId,
                 logger,
@@ -243,14 +305,9 @@ describe("ensureSessionInitialized", () => {
                 totalCompressTokens: 9,
             }
 
-            const client = {
-                session: {
-                    get: async () => ({ data: {} }),
-                },
-            }
             const messages = [createMessage("m1", sessionId, "user")]
 
-            const syncResult = await ensureSessionInitialized(client, state, sessionId, logger, messages as any)
+            const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages as any)
 
             assert.equal(syncResult.source, "disk-cleared")
             assert.equal(state.hasPersistedState, false)
@@ -294,18 +351,13 @@ describe("ensureSessionInitialized", () => {
             const loadResult = await loadSessionState(sessionId, logger)
             assert.equal(loadResult.status, "error")
 
-            const client = {
-                session: {
-                    get: async () => ({ data: {} }),
-                },
-            }
             const messages = [
                 createMessage("m1", sessionId, "user"),
                 createMessage("m2", sessionId, "assistant"),
                 createMessage("m3", sessionId, "assistant"),
             ]
 
-            const syncResult = await ensureSessionInitialized(client, state, sessionId, logger, messages as any)
+            const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages as any)
 
             assert.equal(syncResult.source, "memory")
             assert.equal(state.hasPersistedState, true)
@@ -438,7 +490,6 @@ describe("saveSessionState", () => {
 
             const reloadedState = new SessionStateManager().get(sessionId)
             await ensureSessionInitialized(
-                { session: { get: async () => ({ data: {} }) } },
                 reloadedState,
                 sessionId,
                 logger,

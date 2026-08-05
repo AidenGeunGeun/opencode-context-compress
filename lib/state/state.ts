@@ -2,7 +2,6 @@ import type { SessionState, WithParts } from "./types.js"
 import type { Logger } from "../logger.js"
 import { loadSessionState, saveSessionState } from "./persistence.js"
 import {
-    isSubAgentSession,
     isCompletedNativeCompaction,
     findLastCompactionTimestamp,
     resetOnCompaction,
@@ -192,13 +191,12 @@ function getCompressionStateCompactionOrder(
  * The caller must hold the session's SessionStateManager exclusive boundary.
  */
 export async function reconcileSessionLifecycle(
-    client: any,
     state: SessionState,
     sessionId: string,
     logger: Logger,
     messages: WithParts[],
 ): Promise<SessionStateSyncResult> {
-    const syncResult = await ensureSessionInitialized(client, state, sessionId, logger, messages)
+    const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages)
     if (!state.persistenceSynchronized) return syncResult
 
     const compactionTimestamp = findLastCompactionTimestamp(messages)
@@ -301,7 +299,6 @@ export class SessionStateManager {
 }
 
 export const checkSession = async (
-    client: any,
     state: SessionState,
     logger: Logger,
     messages: WithParts[],
@@ -319,7 +316,7 @@ export const checkSession = async (
     }
 
     try {
-        return await reconcileSessionLifecycle(client, state, state.sessionId, logger, messages)
+        return await reconcileSessionLifecycle(state, state.sessionId, logger, messages)
     } catch (err: any) {
         logger.error("Failed to initialize session state", { error: err.message })
         return unreconciled
@@ -330,7 +327,6 @@ export function createSessionState(): SessionState {
     return {
         sessionId: null,
         initialized: false,
-        isSubAgent: false,
         persistenceSynchronized: false,
         hasPersistedState: false,
         persistedLastUpdated: null,
@@ -358,7 +354,6 @@ export function createSessionState(): SessionState {
 }
 
 export async function ensureSessionInitialized(
-    client: any,
     state: SessionState,
     sessionId: string,
     logger: Logger,
@@ -371,13 +366,7 @@ export async function ensureSessionInitialized(
     }
 
     state.sessionId = sessionId
-
-    if (!state.initialized) {
-        const isSubAgent = await isSubAgentSession(client, sessionId, logger)
-        state.isSubAgent = isSubAgent
-
-        state.initialized = true
-    }
+    state.initialized = true
 
     return await refreshPersistedSessionState(state, sessionId, logger, messages)
 }

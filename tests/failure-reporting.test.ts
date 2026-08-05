@@ -8,7 +8,6 @@ import { dirname, join } from "node:path"
 import { createChatMessageTransformHandler } from "../lib/hooks.ts"
 import { Logger, describeError } from "../lib/logger.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
-import { isSubAgentSession } from "../lib/state/utils.ts"
 
 function createSpyLogger() {
     const logger = new Logger({ daily: false, context: false })
@@ -57,34 +56,6 @@ describe("describeError", () => {
         circular.self = circular
 
         assert.match(describeError(circular), /loop/)
-    })
-})
-
-describe("subagent detection failure", () => {
-    it("reports the lookup failure and falls back to treating the session as a main session", async () => {
-        const { logger, errors } = createSpyLogger()
-        const client = {
-            session: {
-                get: async () => {
-                    throw new Error("session lookup unavailable")
-                },
-            },
-        }
-
-        const isSubAgent = await isSubAgentSession(client, "session-lookup-failure", logger)
-
-        assert.equal(isSubAgent, false)
-        assert.equal(errors.length, 1)
-        assert.equal(errors[0].data.sessionID, "session-lookup-failure")
-        assert.match(errors[0].data.error, /session lookup unavailable/)
-    })
-
-    it("stays silent when the session is genuinely not a subagent", async () => {
-        const { logger, errors } = createSpyLogger()
-        const client = { session: { get: async () => ({ data: {} }) } }
-
-        assert.equal(await isSubAgentSession(client, "session-main", logger), false)
-        assert.equal(errors.length, 0)
     })
 })
 

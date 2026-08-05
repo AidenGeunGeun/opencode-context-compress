@@ -29,7 +29,6 @@ const createState = (
 ): SessionState => ({
     sessionId: "session-test",
     initialized: true,
-    isSubAgent: false,
     hasPersistedState: false,
     persistedLastUpdated: null,
     compressed: {

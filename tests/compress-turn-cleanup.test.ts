@@ -355,7 +355,7 @@ describe("compress-turn machinery cleanup", () => {
         }
     })
 
-    it("leaves subagent sessions unchanged and does not apply suppression state", async () => {
+    it("applies persisted blocks and management cleanup to subagent prompts", async () => {
         const sessionId = "session-cleanup-subagent"
         const manager = new SessionStateManager()
         const state = manager.get(sessionId)
@@ -365,7 +365,7 @@ describe("compress-turn machinery cleanup", () => {
             {
                 anchorMessageId: "sub-old",
                 messageIds: ["sub-old"],
-                summary: "This must not be injected in subagents.",
+                summary: "Subagent work was compressed independently.",
             },
         ]
         const messages = [
@@ -384,7 +384,11 @@ describe("compress-turn machinery cleanup", () => {
 
         await handler({}, output)
 
-        assert.deepEqual(output.messages, messages)
+        assert.equal(output.messages.length, 2)
+        assert.notEqual(output.messages[0].info.id, "sub-old")
+        assert.equal(output.messages[1].info.id, "sub-next")
+        assert.match(messageTexts(output.messages), /Subagent work was compressed independently/)
+        assert.doesNotMatch(messageTexts(output.messages), /Subagent old content|compress manage|compress-context-map/)
         assert.deepEqual(state.managementTurns, [{ triggerMessageId: "manage-subagent" }])
         assert.deepEqual([...state.compressed.messageIds], ["sub-old"])
     })

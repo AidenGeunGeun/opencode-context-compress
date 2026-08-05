@@ -46,7 +46,7 @@ index.ts
 
 lib/auto-compression.ts
   Reads completed assistant usage events, resolves the relative/absolute trigger,
-  deduplicates per-session starts, skips subagents, and opens an asynchronous
+  deduplicates per-session starts, and opens an asynchronous
   automatic management turn. On host `ContextOverflowError` with a blocked Goal,
   stages one bounded recovery turn and persists `goalOverflowRecovery` owner state.
 
@@ -202,10 +202,10 @@ Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateM
 
 Each session state tracks compressed IDs, summaries, manual/automatic/squash management-turn cleanup
 markers, compression stats, persisted auto-compression overrides and cooldown anchor, optional
-`goalOverflowRecovery` owner payload, subagent status, initialization, and runtime-only threshold
+`goalOverflowRecovery` owner payload, initialization, and runtime-only threshold
 metadata. Durable fields are persisted at
 `~/.local/share/opencode/storage/plugin/compress/<sessionId>.json` (or under `$XDG_DATA_HOME`).
-The `initialized` flag prevents repeated subagent/compaction bootstrap work; persisted state is
+The `initialized` flag enables the event fast path after the first lifecycle sync; persisted state is
 still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
 
 Durable mutations for one session MUST run through `SessionStateManager.runExclusive(sessionId, ...)`.
@@ -213,7 +213,8 @@ Construct and atomically save a candidate state before committing it to memory. 
 concurrent commands, compression tools, event hooks, and transforms from overwriting newer state;
 different sessions remain independent.
 
-Subagent sessions are detected via `isSubAgent` and skip compression entirely (early return in transform hook).
+Primary and subagent sessions follow the same compression policy and lifecycle. Exact session IDs
+keep their state, summaries, overrides, cooldowns, Goal recovery owners, and persisted files isolated.
 
 ### Maintainer compatibility notes
 
@@ -266,6 +267,8 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
   continuations `ignored`.
 - Overflow recovery is one-shot, owner-CAS gated on Goal `id` / `status` / `time.updated`, and
   disabled cleanly when Goal APIs are absent. Do not depend on Goal metrics fields.
+- Newly created task children need host permission construction that exempts only `compress` and
+  `squash` from blanket primary-tool child denies. Existing persisted child permissions are not migrated.
 - Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
 - Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
 - Logger flags are split: `debug` gates context snapshots; `dailyLog` gates the one-line activity log

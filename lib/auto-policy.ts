@@ -86,7 +86,7 @@ export function getPostCompressionCooldownRemaining(
     messages: WithParts[],
 ): number {
     const anchorMessageId = state.compressionCooldownAfterMessageId
-    if (!anchorMessageId || state.isSubAgent) return 0
+    if (!anchorMessageId) return 0
 
     const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId)
     if (anchorIndex === -1) return 0
@@ -132,7 +132,7 @@ export function isMessageWithinPostCompressionCooldown(
     messageId: string,
 ): boolean {
     const anchorMessageId = state.compressionCooldownAfterMessageId
-    if (!anchorMessageId || state.isSubAgent) return false
+    if (!anchorMessageId) return false
 
     const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId)
     if (anchorIndex === -1) return false

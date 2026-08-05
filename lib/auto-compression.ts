@@ -168,7 +168,6 @@ export function createAutomaticCompressionEventHandler(
             // Cooldown progress is derived from the transcript when it is next needed, so
             // skipping a transcript read here cannot lose responses or double-count events.
             if (
-                state.isSubAgent ||
                 !policy.enabled ||
                 contextTokens < threshold.thresholdTokens ||
                 state.autoCompressionStarting ||
@@ -198,20 +197,13 @@ export function createAutomaticCompressionEventHandler(
                     return undefined
                 }
 
-                await reconcileSessionLifecycle(client, state, info.sessionID, logger, messages)
+                await reconcileSessionLifecycle(state, info.sessionID, logger, messages)
                 if (!state.persistenceSynchronized) {
                     logger.warn("Automatic compression skipped because session policy could not be loaded", {
                         sessionId: info.sessionID,
                     })
                     return undefined
                 }
-                if (state.isSubAgent) {
-                    logger.debug("Automatic compression skipped for subagent session", {
-                        sessionId: info.sessionID,
-                    })
-                    return undefined
-                }
-
                 const cooldownApplies = isMessageWithinPostCompressionCooldown(
                     state,
                     messages,

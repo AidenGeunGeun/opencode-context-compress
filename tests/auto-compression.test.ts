@@ -13,6 +13,7 @@ import {
 } from "../lib/auto-compression.ts"
 import { DEFAULT_AUTO_COMPRESSION, type PluginConfig } from "../lib/config.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import { saveSessionState } from "../lib/state/persistence.ts"
 import {
     getPostCompressionCooldownRemaining,
     resolveEffectiveAutoCompressionPolicy,
@@ -190,7 +191,7 @@ describe("post-compression cooldown", () => {
         assert.equal(getPostCompressionCooldownRemaining(state, messages as any), 0)
     })
 
-    it("suppresses the next three responses above threshold and allows the fourth", async () => {
+    it("preserves the three-response cooldown for a reloaded subagent and allows the fourth", async () => {
         const sessionId = `session-auto-cooldown-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const messages: any[] = [
@@ -202,7 +203,7 @@ describe("post-compression cooldown", () => {
         const client = {
             _client: {},
             session: {
-                get: async () => ({ data: {} }),
+                get: async () => ({ data: { parentID: "parent-session" } }),
                 messages: async () => ({ data: messages }),
                 promptAsync: async (input: any) => {
                     promptCalls.push(input)
@@ -210,10 +211,10 @@ describe("post-compression cooldown", () => {
                 },
             },
         }
+        const initialState = new SessionStateManager().get(sessionId)
+        initialState.compressionCooldownAfterMessageId = "compress-anchor"
+        await saveSessionState(initialState, logger)
         const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-        state.compressionCooldownAfterMessageId = "compress-anchor"
         const cooldownConfig: PluginConfig = {
             ...config,
             autoCompression: {
@@ -253,7 +254,7 @@ describe("post-compression cooldown", () => {
 
             await complete("response-4")
             assert.equal(promptCalls.length, 1)
-            assert.equal(state.managementTurns[0].triggeredByMessageId, "response-4")
+            assert.equal(stateManager.get(sessionId).managementTurns[0].triggeredByMessageId, "response-4")
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -469,7 +470,7 @@ describe("automatic compression lifecycle", () => {
         }
     })
 
-    it("injects one asynchronous management turn with a protected tail and continuation guidance", async () => {
+    it("injects one subagent management turn with a protected tail and continuation guidance", async () => {
         const sessionId = `session-auto-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
 
@@ -487,7 +488,7 @@ describe("automatic compression lifecycle", () => {
         const client = {
             _client: {},
             session: {
-                get: async () => ({ data: {} }),
+                get: async () => ({ data: { parentID: "parent-session" } }),
                 messages: async () => ({ data: messages }),
                 promptAsync: async (input: any) => {
                     promptCalls.push(input)
@@ -558,6 +559,91 @@ describe("automatic compression lifecycle", () => {
         }
     })
 
+    it("does not duplicate an active subagent management turn", async () => {
+        const sessionId = `session-auto-subagent-active-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const latest = {
+            ...assistantMessage("latest", sessionId, "Large completed turn"),
+            info: {
+                ...assistantMessage("latest", sessionId, "Large completed turn").info,
+                tokens: { total: 400_000 },
+            },
+        }
+        const messages: any[] = [
+            userMessage("user", sessionId, "Continue child work"),
+            latest,
+            userMessage("manage-trigger", sessionId, "Automatic compression"),
+        ]
+        const initialState = new SessionStateManager().get(sessionId)
+        initialState.managementTurns = [
+            {
+                triggerMessageId: "manage-trigger",
+                source: "automatic",
+                triggeredByMessageId: latest.info.id,
+            },
+        ]
+        await saveSessionState(initialState, logger)
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: { parentID: "parent-session" } }),
+                messages: async () => ({ data: messages }),
+                promptAsync: async () => {
+                    promptCalls++
+                },
+            },
+        }
+
+        try {
+            const stateManager = new SessionStateManager()
+            const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
+            const event = { event: { type: "message.updated", properties: { info: latest.info } } }
+            await handler(event as any)
+            await handler(event as any)
+
+            assert.equal(promptCalls, 0)
+            assert.equal(stateManager.get(sessionId).managementTurns.length, 1)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("does not start subagent management when the protected tail covers all history", async () => {
+        const sessionId = `session-auto-subagent-protected-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const latest = {
+            ...assistantMessage("latest", sessionId, "Only child turn"),
+            info: {
+                ...assistantMessage("latest", sessionId, "Only child turn").info,
+                tokens: { total: 400_000 },
+            },
+        }
+        const messages: any[] = [userMessage("user", sessionId, "One child request"), latest]
+        let promptCalls = 0
+        const client = {
+            _client: {},
+            session: {
+                get: async () => ({ data: { parentID: "parent-session" } }),
+                messages: async () => ({ data: messages }),
+                promptAsync: async () => {
+                    promptCalls++
+                },
+            },
+        }
+
+        try {
+            const stateManager = new SessionStateManager()
+            const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
+            await handler({ event: { type: "message.updated", properties: { info: latest.info } } } as any)
+
+            assert.equal(promptCalls, 0)
+            assert.equal(stateManager.get(sessionId).managementTurns.length, 0)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
     it("does not initiate below the effective threshold", async () => {
         const sessionId = `session-auto-below-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const stateManager = new SessionStateManager()
@@ -594,7 +680,7 @@ describe("automatic compression lifecycle", () => {
         assert.equal(promptCalls, 0)
     })
 
-    it("stages one bounded recovery for the exact blocked Goal on context overflow", async () => {
+    it("stages one bounded subagent recovery for the exact blocked Goal on context overflow", async () => {
         const sessionId = `session-goal-overflow-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const overflow = {
             ...assistantMessage("overflow", sessionId, ""),
@@ -609,7 +695,7 @@ describe("automatic compression lifecycle", () => {
         const client = {
             _client: {},
             session: {
-                get: async () => ({ data: {} }),
+                get: async () => ({ data: { parentID: "parent-session" } }),
                 messages: async () => ({ data: messages }),
                 goal: async () => ({
                     data: {
@@ -651,7 +737,7 @@ describe("automatic compression lifecycle", () => {
         }
     })
 
-    it("keeps ordinary automatic compression working when the host has no Goal API", async () => {
+    it("keeps ordinary subagent compression working when the host has no Goal API", async () => {
         const sessionId = `session-no-goal-api-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const latest = {
             ...assistantMessage("latest", sessionId, "Large ordinary turn"),
@@ -665,7 +751,7 @@ describe("automatic compression lifecycle", () => {
         const client = {
             _client: {},
             session: {
-                get: async () => ({ data: {} }),
+                get: async () => ({ data: { parentID: "parent-session" } }),
                 messages: async () => ({ data: messages }),
                 promptAsync: async (input: any) => {
                     promptCalls.push(input)

@@ -43,7 +43,6 @@ export interface Compressed {
 export interface SessionState {
     sessionId: string | null
     initialized: boolean
-    isSubAgent: boolean
     /** Runtime-only: the persisted state was successfully loaded or confirmed absent. */
     persistenceSynchronized: boolean
     hasPersistedState: boolean

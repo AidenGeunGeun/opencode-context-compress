@@ -4,7 +4,6 @@ import { createOpencodeClient } from "@opencode-ai/sdk"
 import { createOpencodeClient as createV2Client } from "@opencode-ai/sdk/v2"
 
 import {
-    getSession,
     listSessionMessages,
     promptSession,
     promptSessionAsync,
@@ -17,10 +16,6 @@ describe("SDK client adapter", () => {
         const client = {
             _client: {},
             session: {
-                get: async (input: unknown) => {
-                    calls.push(["get", input])
-                    return { data: { id: "session-1", parentID: "parent-1" } }
-                },
                 messages: async (input: unknown) => {
                     calls.push(["messages", input])
                     return { data: [{ info: { id: "m1" }, parts: [] }] }
@@ -37,7 +32,6 @@ describe("SDK client adapter", () => {
             },
         }
 
-        const session = await getSession(client, "session-1")
         const messages = await listSessionMessages(client, "session-1")
         await promptSession(client, {
             sessionId: "session-1",
@@ -50,11 +44,9 @@ describe("SDK client adapter", () => {
             variant: "info",
         })
 
-        assert.equal(session?.parentID, "parent-1")
         assert.equal(messages.length, 1)
-        assert.deepEqual(calls[0], ["get", { path: { id: "session-1" } }])
-        assert.deepEqual(calls[1], ["messages", { path: { id: "session-1" } }])
-        assert.deepEqual(calls[2], [
+        assert.deepEqual(calls[0], ["messages", { path: { id: "session-1" } }])
+        assert.deepEqual(calls[1], [
             "prompt",
             {
                 path: { id: "session-1" },
@@ -68,7 +60,7 @@ describe("SDK client adapter", () => {
                 },
             },
         ])
-        assert.deepEqual(calls[3], [
+        assert.deepEqual(calls[2], [
             "toast",
             {
                 body: {
@@ -84,10 +76,6 @@ describe("SDK client adapter", () => {
     it("uses flat v2 request shapes for v2 SDK clients", async () => {
         const calls: unknown[] = []
         const client = createV2Client({ baseUrl: "http://127.0.0.1:0" })
-        client.session.get = (async (input: unknown) => {
-            calls.push(["get", input])
-            return { data: { id: "session-2" } }
-        }) as typeof client.session.get
         client.session.messages = (async (input: unknown) => {
             calls.push(["messages", input])
             return { data: [] }
@@ -100,7 +88,6 @@ describe("SDK client adapter", () => {
             calls.push(["toast", input])
         }) as typeof client.tui.showToast
 
-        await getSession(client, "session-2")
         await listSessionMessages(client, "session-2", { limit: 5 })
         await promptSession(client, {
             sessionId: "session-2",
@@ -111,9 +98,8 @@ describe("SDK client adapter", () => {
             variant: "warning",
         })
 
-        assert.deepEqual(calls[0], ["get", { sessionID: "session-2" }])
-        assert.deepEqual(calls[1], ["messages", { sessionID: "session-2", limit: 5 }])
-        assert.deepEqual(calls[2], [
+        assert.deepEqual(calls[0], ["messages", { sessionID: "session-2", limit: 5 }])
+        assert.deepEqual(calls[1], [
             "prompt",
             {
                 sessionID: "session-2",
@@ -125,7 +111,7 @@ describe("SDK client adapter", () => {
                 messageID: undefined,
             },
         ])
-        assert.deepEqual(calls[3], [
+        assert.deepEqual(calls[2], [
             "toast",
             {
                 title: undefined,

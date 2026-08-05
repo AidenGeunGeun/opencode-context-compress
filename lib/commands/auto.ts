@@ -103,7 +103,6 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
                 ctx.sessionId,
             )) as WithParts[]
             await reconcileSessionLifecycle(
-                ctx.client,
                 ctx.state,
                 ctx.sessionId,
                 ctx.logger,
