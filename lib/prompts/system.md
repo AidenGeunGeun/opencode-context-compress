@@ -20,5 +20,6 @@ Summary fidelity:
 
 Result handling:
 - A success receipt means the state was durably saved and the fold is already active. Do not call `compress` again this turn.
+- After successful compression, re-read the relevant task, spec, report, and project documentation before resuming active work. Compression removed detail from context; do not assume the summary preserved everything the task requires.
 - A failure means nothing was compressed. Surface the exact diagnostic and do not retry unless the user gives new authorization.
 </system-reminder>

@@ -119,6 +119,8 @@ describe("single-tool agent prompts", () => {
             assert.match(output, /handoff report file/i)
             assert.match(output, /cite its path/i)
             assert.match(output, /Do not restate the file/i)
+            assert.match(output, /re-read the relevant task, spec, report, and project documentation/i)
+            assert.match(output, /do not assume the summary preserved everything/i)
         }
     })
 
