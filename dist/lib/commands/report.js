@@ -13,19 +13,13 @@ function promptError(result) {
     // so stringifying one would surface the failure as "{}".
     return error ? describeError(error) : undefined;
 }
-/**
- * Shared visible-turn path for both the manual command and automatic context checkpoints.
- */
+/** Opens the user-requested report checkpoint immediately. */
 export async function handleReportCommand(ctx) {
     const { client, state, logger, sessionId, messages } = ctx;
     const params = getCurrentParams(state, messages, logger);
     const model = params.providerId && params.modelId
         ? { providerID: params.providerId, modelID: params.modelId }
         : undefined;
-    // Cleared before the prompt, not after: the transform runs while this turn is in flight and
-    // would otherwise append a second copy of the same checkpoint.
-    const queuedNudge = state.reportNudgePending === true;
-    state.reportNudgePending = false;
     let failure;
     try {
         failure = promptError(await promptSession(client, {
@@ -40,8 +34,6 @@ export async function handleReportCommand(ctx) {
         failure = describeError(error);
     }
     if (failure) {
-        // Never clobber a nudge the threshold queued while this prompt was in flight.
-        state.reportNudgePending = state.reportNudgePending || queuedNudge;
         logger.error("Handoff report prompt failed", { sessionId, error: failure });
         // Reported over the TUI rather than the chat transport that just failed.
         const notified = await showToast(client, {
@@ -55,13 +47,6 @@ export async function handleReportCommand(ctx) {
         }
         return;
     }
-    // The turn that just refreshed the report may itself have crossed the interval. That nudge
-    // is already satisfied, so consume it rather than opening another report turn.
-    // Not airtight: the host dispatches completion events fire-and-forget, so an event that
-    // lands after this point can still queue one reminder. Excluding it would mean identifying
-    // this turn's own assistant message, and the worst case is a single extra reminder the
-    // agent may answer with "nothing new" - not worth that machinery.
-    state.reportNudgePending = false;
     logger.info("Handoff report update requested manually", { sessionId });
 }
 //# sourceMappingURL=report.js.map

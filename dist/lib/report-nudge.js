@@ -1,7 +1,7 @@
+import { describeError } from "./logger.js";
 import { getAssistantContextTokens, } from "./auto-compression.js";
-import { findActiveManagementTurn } from "./messages/compress-transform.js";
-import { handleReportCommand } from "./commands/report.js";
-import { listSessionMessages } from "./sdk/client.js";
+import { renderReportNudgePrompt } from "./prompts/index.js";
+import { promptSessionAsync } from "./sdk/client.js";
 /**
  * Absolute raw-context trigger over provider-reported usage, the same signal automatic
  * compression uses. Crossing 100k, 200k, and so on advances the bucket and fires once. When
@@ -16,7 +16,7 @@ export function resolveReportNudge(contextTokens, previousBucket, tokenInterval)
         return { due: false, bucket: previousBucket };
     }
     const bucket = Math.floor(contextTokens / tokenInterval);
-    const due = bucket > 0 && (previousBucket === undefined || bucket > previousBucket);
+    const due = previousBucket !== undefined && bucket > previousBucket;
     return { due, bucket };
 }
 export function createReportNudgeEventHandler(client, stateManager, logger, config) {
@@ -34,62 +34,37 @@ export function createReportNudgeEventHandler(client, stateManager, logger, conf
             return;
         }
         const state = stateManager.get(info.sessionID);
-        let reserved;
+        const contextTokens = getAssistantContextTokens(info.tokens);
+        const decision = resolveReportNudge(contextTokens, state.reportNudgeBucket, config.reportNudge.tokenInterval);
+        state.reportNudgeBucket = decision.bucket;
+        if (!decision.due)
+            return;
         try {
-            reserved = await stateManager.runExclusive(info.sessionID, async () => {
-                const contextTokens = getAssistantContextTokens(info.tokens);
-                const decision = resolveReportNudge(contextTokens, state.reportNudgeBucket, config.reportNudge.tokenInterval);
-                state.reportNudgeBucket = decision.bucket;
-                if (!decision.due && !state.reportNudgePending)
-                    return undefined;
-                if (state.reportNudgeStarting)
-                    return undefined;
-                state.reportNudgePending = true;
-                state.reportNudgeStarting = true;
-                logger.info("Handoff report nudge queued", {
-                    sessionId: info.sessionID,
-                    messageId: info.id,
-                    contextTokens,
-                    bucket: decision.bucket,
-                    tokenInterval: config.reportNudge.tokenInterval,
-                });
-                const messages = (await listSessionMessages(client, info.sessionID));
-                if (messages.length === 0) {
-                    throw new Error("session messages were unavailable");
-                }
-                if (findActiveManagementTurn(state, messages)) {
-                    state.reportNudgePending = false;
-                    state.reportNudgeStarting = false;
-                    logger.info("Handoff report nudge dropped: compression already requests the update", {
-                        sessionId: info.sessionID,
-                    });
-                    return undefined;
-                }
-                return { state, messages };
+            const model = info.providerID && info.modelID
+                ? { providerID: info.providerID, modelID: info.modelID }
+                : undefined;
+            const result = await promptSessionAsync(client, {
+                sessionId: info.sessionID,
+                agent: info.agent,
+                model,
+                variant: state.variant,
+                parts: [{ type: "text", text: renderReportNudgePrompt() }],
+            });
+            const promptError = result?.error ?? result?.data?.info?.error ?? result?.info?.error;
+            if (promptError)
+                throw new Error(describeError(promptError));
+            logger.info("Opened visible handoff report checkpoint", {
+                sessionId: info.sessionID,
+                messageId: info.id,
+                contextTokens,
+                bucket: decision.bucket,
             });
         }
         catch (error) {
-            state.reportNudgePending = true;
-            state.reportNudgeStarting = false;
-            logger.error("Could not prepare the handoff report nudge", {
+            logger.error("Could not open the handoff report checkpoint", {
                 sessionId: info.sessionID,
                 error: error?.message || String(error),
             });
-            return;
-        }
-        if (!reserved)
-            return;
-        try {
-            await handleReportCommand({
-                client,
-                state: reserved.state,
-                logger,
-                sessionId: info.sessionID,
-                messages: reserved.messages,
-            });
-        }
-        finally {
-            reserved.state.reportNudgeStarting = false;
         }
     };
 }

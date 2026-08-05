@@ -1,5 +1,5 @@
 import type { PluginConfig } from "./config.js";
-import type { Logger } from "./logger.js";
+import { type Logger } from "./logger.js";
 import { type AssistantMessageInfo } from "./auto-compression.js";
 import { SessionStateManager } from "./state/index.js";
 export interface ReportNudgeDecision {

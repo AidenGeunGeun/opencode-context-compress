@@ -6,10 +6,7 @@ import {
     resolveReportNudge,
 } from "../lib/report-nudge.ts"
 import { DEFAULT_AUTO_COMPRESSION, DEFAULT_REPORT_NUDGE, type PluginConfig } from "../lib/config.ts"
-import { SessionStateManager, createSessionState } from "../lib/state/state.ts"
-import { renderSquashSystemPrompt } from "../lib/prompts/index.ts"
-import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
-import type { WithParts } from "../lib/state/index.ts"
+import { SessionStateManager } from "../lib/state/state.ts"
 
 const logger = {
     info: () => {},
@@ -32,30 +29,6 @@ const baseConfig: PluginConfig = {
     },
 }
 
-const userMessage = (id: string, sessionID: string, text: string): WithParts =>
-    ({
-        info: {
-            id,
-            sessionID,
-            role: "user" as const,
-            agent: "build",
-            model: { providerID: "openai", modelID: "gpt-test" },
-            time: { created: Date.now() },
-        },
-        parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text }],
-    }) as unknown as WithParts
-
-const assistantMessage = (id: string, sessionID: string): WithParts =>
-    ({
-        info: {
-            id,
-            sessionID,
-            role: "assistant" as const,
-            time: { created: Date.now(), completed: Date.now() },
-        },
-        parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text: "ok" }],
-    }) as unknown as WithParts
-
 const assistantEvent = (id: string, sessionID: string, total: number, overrides: Record<string, unknown> = {}) => ({
     event: {
         type: "message.updated",
@@ -72,15 +45,12 @@ const assistantEvent = (id: string, sessionID: string, total: number, overrides:
     },
 })
 
-const reportClient = (sessionID: string, prompts: string[]) => ({
+const reportClient = (prompts: string[]) => ({
     session: {
-        messages: async () => [userMessage("u1", sessionID, "work")],
-        prompt: async (input: any) => {
+        promptAsync: async (input: any) => {
             prompts.push(input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? "")
-            return { data: { info: { id: `report-${prompts.length}` } } }
         },
     },
-    tui: { showToast: async () => undefined },
 })
 
 describe("resolveReportNudge", () => {
@@ -125,12 +95,12 @@ describe("resolveReportNudge", () => {
         assert.deepEqual(resolveReportNudge(Number.NaN, 1, 100_000), { due: false, bucket: 1 })
     })
 
-    it("fires on a first usable reading already beyond the boundary", () => {
+    it("uses the first usable reading only as the previous-turn baseline", () => {
         const first = resolveReportNudge(0, undefined, 100_000)
         assert.equal(first.bucket, undefined)
 
         const second = resolveReportNudge(120_000, first.bucket, 100_000)
-        assert.equal(second.due, true)
+        assert.equal(second.due, false)
         assert.equal(second.bucket, 1)
     })
 
@@ -146,7 +116,7 @@ describe("report nudge event handler", () => {
         const stateManager = new SessionStateManager()
         const prompts: string[] = []
         const sessionId = "ses_disabled"
-        const handler = createReportNudgeEventHandler(reportClient(sessionId, prompts), stateManager, logger, {
+        const handler = createReportNudgeEventHandler(reportClient(prompts), stateManager, logger, {
             ...baseConfig,
             reportNudge: { enabled: false, tokenInterval: 100_000 },
         })
@@ -157,12 +127,12 @@ describe("report nudge event handler", () => {
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, undefined)
     })
 
-    it("opens one visible report turn at each absolute context boundary", async () => {
+    it("opens one visible async prompt when consecutive turns cross each boundary", async () => {
         const stateManager = new SessionStateManager()
         const prompts: string[] = []
         const sessionId = "ses_boundaries"
         const handler = createReportNudgeEventHandler(
-            reportClient(sessionId, prompts),
+            reportClient(prompts),
             stateManager,
             logger,
             baseConfig,
@@ -175,8 +145,6 @@ describe("report nudge event handler", () => {
         await handler(assistantEvent("m3", sessionId, 100_000))
         assert.equal(prompts.length, 1)
         assert.match(prompts[0], /HANDOFF REPORT CHECKPOINT/)
-        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
-        assert.equal(stateManager.get(sessionId).reportNudgePending, false)
 
         await handler(assistantEvent("m4", sessionId, 150_000))
         assert.equal(prompts.length, 1)
@@ -186,12 +154,69 @@ describe("report nudge event handler", () => {
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, 2)
     })
 
+    it("queues only one prompt when a single turn jumps across several boundaries", async () => {
+        const stateManager = new SessionStateManager()
+        const prompts: string[] = []
+        const sessionId = "ses_jump"
+        const handler = createReportNudgeEventHandler(
+            reportClient(prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
+
+        await handler(assistantEvent("m1", sessionId, 90_000))
+        await handler(assistantEvent("m2", sessionId, 310_000))
+
+        assert.equal(prompts.length, 1)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 3)
+    })
+
+    it("does not backfill a boundary on the first observation after process restart", async () => {
+        const stateManager = new SessionStateManager()
+        const prompts: string[] = []
+        const sessionId = "ses_restart"
+        const handler = createReportNudgeEventHandler(
+            reportClient(prompts),
+            stateManager,
+            logger,
+            baseConfig,
+        )
+
+        await handler(assistantEvent("m1", sessionId, 150_000))
+
+        assert.equal(prompts.length, 0)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
+    })
+
+    it("does not retry an aborted or rejected checkpoint inside the same bucket", async () => {
+        const stateManager = new SessionStateManager()
+        const sessionId = "ses_no_retry"
+        let attempts = 0
+        const client = {
+            session: {
+                promptAsync: async () => {
+                    attempts++
+                    return { error: { name: "MessageAbortedError" } }
+                },
+            },
+        }
+        const handler = createReportNudgeEventHandler(client, stateManager, logger, baseConfig)
+
+        await handler(assistantEvent("m1", sessionId, 90_000))
+        await handler(assistantEvent("m2", sessionId, 100_000))
+        await handler(assistantEvent("m3", sessionId, 110_000))
+
+        assert.equal(attempts, 1)
+        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
+    })
+
     it("ignores messages that are not completed assistant work", async () => {
         const stateManager = new SessionStateManager()
         const prompts: string[] = []
         const sessionId = "ses_filtered"
         const handler = createReportNudgeEventHandler(
-            reportClient(sessionId, prompts),
+            reportClient(prompts),
             stateManager,
             logger,
             baseConfig,
@@ -207,86 +232,11 @@ describe("report nudge event handler", () => {
         assert.equal(stateManager.get(sessionId).reportNudgeBucket, 0)
     })
 
-    it("opens immediately from a first usable reading already beyond 100,000", async () => {
-        const stateManager = new SessionStateManager()
-        const prompts: string[] = []
-        const sessionId = "ses_no_usage"
-        const handler = createReportNudgeEventHandler(
-            reportClient(sessionId, prompts),
-            stateManager,
-            logger,
-            baseConfig,
-        )
-
-        await handler(assistantEvent("m1", sessionId, 0, { tokens: undefined }))
-        await handler(assistantEvent("m2", sessionId, 150_000))
-
-        assert.equal(prompts.length, 1)
-        assert.equal(stateManager.get(sessionId).reportNudgeBucket, 1)
-    })
-
-    it("lets an active compression turn carry the report instruction instead", async () => {
-        const stateManager = new SessionStateManager()
-        const prompts: string[] = []
-        const sessionId = "ses_management"
-        const state = stateManager.get(sessionId)
-        state.managementTurns = [{ triggerMessageId: "mgmt1" }]
-        const client = {
-            ...reportClient(sessionId, prompts),
-            session: {
-                ...reportClient(sessionId, prompts).session,
-                messages: async () => [
-                    userMessage("u1", sessionId, "work"),
-                    userMessage("mgmt1", sessionId, "compress now"),
-                ],
-            },
-        }
-        const handler = createReportNudgeEventHandler(client, stateManager, logger, baseConfig)
-
-        await handler(assistantEvent("m1", sessionId, 100_000))
-
-        assert.equal(prompts.length, 0)
-        assert.equal(state.reportNudgePending, false)
-        assert.match(renderSquashSystemPrompt(), /handoff report file/i)
-        assert.match(renderGoalOverflowRecoveryPrompt(), /handoff report file/i)
-    })
-
-    it("keeps a failed automatic report request pending and retries on the next assistant event", async () => {
-        const stateManager = new SessionStateManager()
-        const sessionId = "ses_retry"
-        const prompts: string[] = []
-        let attempts = 0
-        const client = {
-            session: {
-                messages: async () => [userMessage("u1", sessionId, "work")],
-                prompt: async (input: any) => {
-                    attempts++
-                    prompts.push(input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? "")
-                    return attempts === 1
-                        ? { error: { message: "busy" } }
-                        : { data: { info: { id: "report-ok" } } }
-                },
-            },
-            tui: { showToast: async () => undefined },
-        }
-        const handler = createReportNudgeEventHandler(client, stateManager, logger, baseConfig)
-
-        await handler(assistantEvent("m1", sessionId, 100_000))
-        assert.equal(attempts, 1)
-        assert.equal(stateManager.get(sessionId).reportNudgePending, true)
-        assert.equal(stateManager.get(sessionId).reportNudgeStarting, false)
-
-        await handler(assistantEvent("m2", sessionId, 101_000))
-        assert.equal(attempts, 2)
-        assert.equal(stateManager.get(sessionId).reportNudgePending, false)
-        assert.equal(stateManager.get(sessionId).reportNudgeStarting, false)
-    })
-
     it("ignores unrelated events", async () => {
         const stateManager = new SessionStateManager()
         const prompts: string[] = []
         const handler = createReportNudgeEventHandler(
-            reportClient("ses_other", prompts),
+            reportClient(prompts),
             stateManager,
             logger,
             baseConfig,

@@ -78,8 +78,4 @@ export interface SessionState {
     lastAutoTriggeredMessageId?: string
     /** Runtime-only absolute context-usage bucket most recently observed. */
     reportNudgeBucket?: number
-    /** Runtime-only: a handoff-report checkpoint still needs a visible prompt turn. */
-    reportNudgePending?: boolean
-    /** Runtime-only lock preventing two usage events from opening duplicate report turns. */
-    reportNudgeStarting?: boolean
 }

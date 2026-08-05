@@ -159,7 +159,6 @@ describe("compress command smoke flow", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
-        state.reportNudgePending = true
 
         const prompts: string[] = []
         const toasts: any[] = []
@@ -195,8 +194,6 @@ describe("compress command smoke flow", () => {
             assert.equal(toasts.length, 1)
             assert.equal(toasts[0].variant, "error")
             assert.match(toasts[0].message, /session unavailable/)
-            // The agent was never asked, so a queued nudge must survive to try again.
-            assert.equal(stateManager.get(sessionId).reportNudgePending, true)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -208,7 +205,6 @@ describe("compress command smoke flow", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
-        state.reportNudgePending = true
 
         const toasts: any[] = []
         const client = {
@@ -236,41 +232,6 @@ describe("compress command smoke flow", () => {
 
             assert.equal(toasts.length, 1)
             assert.match(toasts[0].message, /ProviderError/)
-            assert.equal(stateManager.get(sessionId).reportNudgePending, true)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("keeps a nudge queued during a failed manual checkpoint instead of overwriting it", async () => {
-        const sessionId = `session-report-race-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-        state.reportNudgePending = false
-
-        const client = {
-            session: {
-                messages: async () => [createUserMessage(sessionId)],
-                prompt: async () => {
-                    // A threshold crossing lands while the manual prompt is still in flight.
-                    stateManager.get(sessionId).reportNudgePending = true
-                    return { error: { message: "gone" }, data: undefined }
-                },
-            },
-            tui: { showToast: async () => undefined },
-        }
-
-        try {
-            const handler = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
-            const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(handler, sessionId, output)
-
-            assert.equal(stateManager.get(sessionId).reportNudgePending, true)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -282,7 +243,6 @@ describe("compress command smoke flow", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
-        state.reportNudgePending = true
 
         const toasts: any[] = []
         const client = {
@@ -311,42 +271,6 @@ describe("compress command smoke flow", () => {
             assert.equal(output.cancelled, true)
             assert.equal(toasts.length, 1)
             assert.match(toasts[0].message, /prompt API unavailable/)
-            assert.equal(stateManager.get(sessionId).reportNudgePending, true)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("consumes a pending nudge when the manual checkpoint prompt succeeds", async () => {
-        const sessionId = `session-report-dedupe-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-        state.reportNudgePending = true
-
-        const client = {
-            session: {
-                messages: async () => [createUserMessage(sessionId)],
-                prompt: async () => {
-                    // The report turn itself crosses the interval and queues another nudge; the
-                    // update it would ask for has already just happened.
-                    stateManager.get(sessionId).reportNudgePending = true
-                    return { data: { info: { id: "ok" } } }
-                },
-            },
-            tui: { showToast: async () => undefined },
-        }
-
-        try {
-            const handler = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
-            const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(handler, sessionId, output)
-
-            assert.equal(stateManager.get(sessionId).reportNudgePending, false)
         } finally {
             await cleanupSessionFile(sessionId)
         }

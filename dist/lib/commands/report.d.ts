@@ -7,8 +7,6 @@ export interface ReportCommandContext {
     sessionId: string;
     messages: WithParts[];
 }
-/**
- * Shared visible-turn path for both the manual command and automatic context checkpoints.
- */
+/** Opens the user-requested report checkpoint immediately. */
 export declare function handleReportCommand(ctx: ReportCommandContext): Promise<void>;
 //# sourceMappingURL=report.d.ts.map

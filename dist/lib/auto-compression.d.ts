@@ -15,6 +15,7 @@ export interface AssistantMessageInfo {
     id: string;
     sessionID: string;
     role: "assistant";
+    agent?: string;
     providerID?: string;
     modelID?: string;
     summary?: boolean;
