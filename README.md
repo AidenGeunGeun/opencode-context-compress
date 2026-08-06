@@ -20,7 +20,7 @@ or let the plugin initiate the same workflow before any session fills its contex
   and a short block title; ordinary compression span selection is deterministic inside the plugin.
 - Manual compression runs when you trigger `/compress manage`.
 - Automatic compression runs once when completed assistant usage reaches the earlier of 90% of
-  the model-reported context window or 335,000 tokens by default.
+  the model-reported context window or 330,000 tokens by default.
 - When plugin-owned automatic compression is enabled, native OpenCode auto-compaction is disabled
   through the plugin config hook so the two mechanisms cannot race.
 - Public tools are `compress({ summary, topic })` for deterministic uncompressed-history folding and
@@ -44,6 +44,15 @@ or let the plugin initiate the same workflow before any session fills its contex
   chatter are hidden from future model prompts.
 - Automatic turns require a high-detail current-task handoff and tell the agent to resume the
   interrupted task immediately when work was genuinely still active.
+- The plugin never opens a session turn on its own for anything but compression: an automatic
+  threshold trigger, or a `/compress` command you ran.
+- Compression turns for the `orchestrator` agent additionally require the session's handoff report
+  file to be brought up to date before the `compress` call, while the evidence is still visible.
+  Every other agent's compression turn carries no report wording at all.
+- The first model request after a successful compression carries a transient notice telling the
+  agent its context was compressed, to re-read the relevant documentation, and to continue the
+  original task. It is appended by the prompt transform, never written to the session, and stops
+  appearing as soon as the agent produces work after the compression.
 
 ## Commands
 
@@ -57,7 +66,6 @@ or let the plugin initiate the same workflow before any session fills its contex
 - `/compress auto threshold N`: override this session's absolute token threshold.
 - `/compress auto ratio N`: override this session's context-window threshold with an integer percentage from 1 to 99.
 - `/compress auto reset`: clear this session's threshold and ratio overrides without changing its on/off setting or cooldown.
-- `/compress report`: ask the agent to bring its handoff report file up to date now. Listed and accepted only while `reportNudge.enabled` is on.
 
 `/compress manage` and `/compress squash` intentionally create model-visible turns.
 All `/compress auto` feedback is user-only. Session `off` disables every automatic trigger for
@@ -132,6 +140,22 @@ model-visible context contains only compressed `[bN]` blocks, normal conversatio
 compression runs, the preserved newest execution steps, and model-visible Goal continuation text.
 The cleanup leaves no marker or placeholder behind.
 
+### Post-compression notice
+
+After a successful `compress`, the prompt transform appends one plain user message at the tail of
+the model request telling the agent that its context was compressed, to re-read the relevant task,
+spec, report, and project documentation, and to continue the original task.
+
+The notice is derived, not tracked. There is no pending flag to clear, so a request that fails or
+is rebuilt simply recomputes the same answer and the notice is not lost. It is recomputed from the
+raw transcript on every transform: due while the assistant message carrying the successful
+`compress` call has produced no work after that call, and gone once it has. Ignored plugin status
+notifications, Goal continuation messages, and ordinary user messages do not count as work.
+
+Because it lives only in the transformed request, it is never persisted; a session with many
+compressions accumulates no injected-notice residue. It is shown to every agent, including
+subagents, and is not shown for `squash`.
+
 ## Installation
 
 ### npm (Recommended)
@@ -201,11 +225,7 @@ Default runtime config:
     "autoCompression": {
         "enabled": true,
         "contextWindowRatio": 0.9,
-        "tokenThreshold": 335000
-    },
-    "reportNudge": {
-        "enabled": false,
-        "tokenInterval": 150000
+        "tokenThreshold": 330000
     },
     "tools": {
         "compress": {
@@ -215,16 +235,6 @@ Default runtime config:
     }
 }
 ```
-
-`reportNudge` is for workflows where the agent maintains a handoff report file on disk as it works,
-so a lossy summary is not the only durable record. It is off by default because only such sessions
-have anything to update. When on, the plugin opens a short, visible user turn whenever
-provider-reported raw context crosses an absolute multiple of `tokenInterval` (default `150000`):
-150k, 300k, 450k, and so on. It uses the same session prompt path as `/compress manage`, so the
-checkpoint is persisted, appears in the UI, and cannot be buried inside older conversation. When compression drops context into a lower bucket,
-those absolute boundaries become eligible again as the new context grows. The reminder names no path and no sections —
-the agent's own prompt owns where the file lives and what belongs in it — and it explicitly allows
-"nothing new to record" as an answer.
 
 `protectedTurns` is general compression policy (manual, automatic, and authorized normal paths).
 Default is `3`. The legacy nested key `autoCompression.protectedTurns` is still accepted as a

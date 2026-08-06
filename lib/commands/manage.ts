@@ -160,7 +160,9 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
-        systemPrompt: renderSystemPrompt(),
+        systemPrompt: renderSystemPrompt(
+            getCurrentParams(ctx.state, ctx.messages, ctx.logger).agent,
+        ),
         retainedText: extractManageCommandResidual(ctx.arguments),
     })
 }

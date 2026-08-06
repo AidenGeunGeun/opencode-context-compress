@@ -25,7 +25,6 @@ const config: PluginConfig = {
     protectedTurns: 3,
     commands: { enabled: true },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
-    reportNudge: { enabled: false, tokenInterval: 100_000 },
     tools: {
         compress: { permission: "allow", showCompression: false },
     },
@@ -166,7 +165,7 @@ describe("session automatic-compression commands", () => {
             assert.equal(loaded.state.compressionCooldownAfterMessageId, "compress-anchor")
 
             const reset = await run("auto reset")
-            assert.equal(reset, "Defaults reset to 335,000 tokens and 90% threshold.")
+            assert.equal(reset, "Defaults reset to 330,000 tokens and 90% threshold.")
             assert.equal(state.autoCompressionEnabledOverride, false)
             assert.equal(state.autoCompressionTokenThresholdOverride, undefined)
             assert.equal(state.autoCompressionContextWindowRatioOverride, undefined)

@@ -1,0 +1,2 @@
+export declare const POST_COMPRESSION_NOTICE = "<system-reminder>\nCONTEXT WAS COMPRESSED\nEarlier conversation in this session was just replaced by a compressed block, so detail that used to be visible is no longer in context.\nBefore doing anything else, re-read the relevant task, spec, report, and project documentation. Do not assume the summary preserved everything the work requires.\nThen continue the original task.\n</system-reminder>\n";
+//# sourceMappingURL=post-compression-notice.generated.d.ts.map

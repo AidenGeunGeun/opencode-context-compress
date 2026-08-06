@@ -249,7 +249,7 @@ export function createAutomaticCompressionEventHandler(
                         logger,
                         sessionId: info.sessionID,
                         messages,
-                        systemPrompt: renderGoalOverflowRecoveryPrompt(),
+                        systemPrompt: renderGoalOverflowRecoveryPrompt(info.agent),
                         source: "automatic",
                         triggeredByMessageId: info.id,
                         contextTokens,
@@ -299,14 +299,17 @@ export function createAutomaticCompressionEventHandler(
                     logger,
                     sessionId: info.sessionID,
                     messages,
-                    systemPrompt: renderAutomaticSystemPrompt({
-                        context_tokens: contextTokens.toLocaleString("en-US"),
-                        threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
-                        threshold_reason: formatThresholdReason(
-                            threshold,
-                            policy.contextWindowRatio,
-                        ),
-                    }),
+                    systemPrompt: renderAutomaticSystemPrompt(
+                        {
+                            context_tokens: contextTokens.toLocaleString("en-US"),
+                            threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
+                            threshold_reason: formatThresholdReason(
+                                threshold,
+                                policy.contextWindowRatio,
+                            ),
+                        },
+                        info.agent,
+                    ),
                     source: "automatic",
                     triggeredByMessageId: info.id,
                     contextTokens,

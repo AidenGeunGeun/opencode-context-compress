@@ -34,7 +34,6 @@ const config: PluginConfig = {
     protectedTurns: 3,
     commands: { enabled: true },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
-    reportNudge: { enabled: false, tokenInterval: 100_000 },
     tools: {
         compress: { permission: "allow", showCompression: false },
     },
@@ -85,19 +84,19 @@ const assistantMessage = (id: string, sessionID: string, text: string) => ({
 })
 
 describe("automatic compression thresholds", () => {
-    it("defaults the absolute initiation threshold to 335,000 tokens", () => {
-        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 335_000)
+    it("defaults the absolute initiation threshold to 330,000 tokens", () => {
+        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 330_000)
         assert.equal(DEFAULT_AUTO_COMPRESSION.contextWindowRatio, 0.9)
         assert.equal(config.protectedTurns, 3)
     })
 
     it("uses the earlier of 90% of the context window and the absolute threshold", () => {
         const small = resolveAutomaticCompressionThreshold(180_000, DEFAULT_AUTO_COMPRESSION, 200_000)
-        const large = resolveAutomaticCompressionThreshold(335_000, DEFAULT_AUTO_COMPRESSION, 1_000_000)
+        const large = resolveAutomaticCompressionThreshold(330_000, DEFAULT_AUTO_COMPRESSION, 1_000_000)
 
         assert.equal(small.thresholdTokens, 180_000)
         assert.equal(small.reason, "context-window-ratio")
-        assert.equal(large.thresholdTokens, 335_000)
+        assert.equal(large.thresholdTokens, 330_000)
         assert.equal(large.reason, "absolute-token-threshold")
     })
 
@@ -540,7 +539,7 @@ describe("automatic compression lifecycle", () => {
             const payload = body.parts.map((part: any) => part.text).join("\n\n")
             assert.match(payload, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
             assert.match(payload, /355,000 tokens/)
-            assert.match(payload, /335,000 tokens/)
+            assert.match(payload, /330,000 tokens/)
             assert.match(payload, /preserves the newest configured execution steps verbatim/)
             assert.match(payload, /Compression is context maintenance, not a task-status transition/i)
             assert.match(payload, /continue immediately only when work was genuinely active/i)
@@ -553,7 +552,7 @@ describe("automatic compression lifecycle", () => {
             assert.equal(state.managementTurns[0].source, "automatic")
             assert.equal(state.managementTurns[0].triggeredByMessageId, "m8")
             assert.equal(state.managementTurns[0].protectedMessageIds, undefined)
-            assert.equal(state.managementTurns[0].thresholdTokens, 335_000)
+            assert.equal(state.managementTurns[0].thresholdTokens, 330_000)
             assert.equal(state.autoCompressionStarting, false)
         } finally {
             await cleanupSessionFile(sessionId)

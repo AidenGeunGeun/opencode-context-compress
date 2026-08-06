@@ -6,7 +6,7 @@ import { join } from "node:path"
 import {
     loadPrompt,
     renderAutomaticSystemPrompt,
-    renderReportNudgePrompt,
+    renderPostCompressionNotice,
     renderSquashSystemPrompt,
     renderSystemPrompt,
 } from "../lib/prompts/index.ts"
@@ -15,7 +15,9 @@ import { AUTOMATIC_SYSTEM } from "../lib/prompts/_codegen/automatic-system.gener
 import { COMPRESS } from "../lib/prompts/_codegen/compress.generated.ts"
 import { SQUASH_SYSTEM } from "../lib/prompts/_codegen/squash-system.generated.ts"
 import { SQUASH } from "../lib/prompts/_codegen/squash.generated.ts"
-import { REPORT_NUDGE } from "../lib/prompts/_codegen/report-nudge.generated.ts"
+import { REPORT } from "../lib/prompts/_codegen/report.generated.ts"
+import { SQUASH_REPORT } from "../lib/prompts/_codegen/squash-report.generated.ts"
+import { POST_COMPRESSION_NOTICE } from "../lib/prompts/_codegen/post-compression-notice.generated.ts"
 import { renderGoalOverflowRecoveryPrompt } from "../lib/goal.ts"
 
 const RETIRED_WORKFLOW = /compress_map|compress-context-map|pinned snapshot|numeric (?:entry|label)|from\/to|narrower range|consolidat(?:e|ion)/i
@@ -81,17 +83,36 @@ describe("single-tool agent prompts", () => {
         const compressSource = readFileSync(join(root, "lib/prompts/compress.md"), "utf8")
         const squashSystemSource = readFileSync(join(root, "lib/prompts/squash-system.md"), "utf8")
         const squashSource = readFileSync(join(root, "lib/prompts/squash.md"), "utf8")
-        const reportNudgeSource = readFileSync(join(root, "lib/prompts/report-nudge.md"), "utf8")
-        assert.equal(REPORT_NUDGE, reportNudgeSource)
-        assert.equal(REPORT_NUDGE.trim(), renderReportNudgePrompt())
+        const reportSource = readFileSync(join(root, "lib/prompts/report.md"), "utf8")
+        const noticeSource = readFileSync(
+            join(root, "lib/prompts/post-compression-notice.md"),
+            "utf8",
+        )
+        assert.equal(REPORT, reportSource)
+        assert.equal(POST_COMPRESSION_NOTICE, noticeSource)
+        assert.equal(POST_COMPRESSION_NOTICE.trim(), renderPostCompressionNotice())
         assert.equal(SYSTEM, systemSource)
         assert.equal(AUTOMATIC_SYSTEM, automaticSource)
         assert.equal(COMPRESS, compressSource)
         assert.equal(SQUASH_SYSTEM, squashSystemSource)
         assert.equal(SQUASH, squashSource)
-        assert.equal(SYSTEM.trim(), renderSystemPrompt())
+        assert.equal(
+            SYSTEM.trim().replace("\n{{report_block}}\n", ""),
+            renderSystemPrompt(),
+        )
+        assert.equal(
+            SYSTEM.trim().replace("{{report_block}}", REPORT.trim()),
+            renderSystemPrompt("orchestrator"),
+        )
         assert.equal(COMPRESS.trim(), loadPrompt("compress-tool-spec").trim())
-        assert.equal(SQUASH_SYSTEM.trim(), renderSquashSystemPrompt())
+        assert.equal(
+            SQUASH_SYSTEM.trim().replace(/\n*\{\{report_block\}\}\n*/g, "\n\n"),
+            renderSquashSystemPrompt(),
+        )
+        assert.equal(
+            SQUASH_SYSTEM.trim().replace("{{report_block}}", SQUASH_REPORT.trim()),
+            renderSquashSystemPrompt("orchestrator"),
+        )
         assert.equal(SQUASH.trim(), loadPrompt("squash-tool-spec").trim())
         for (const generated of [SYSTEM, AUTOMATIC_SYSTEM, COMPRESS]) {
             assert.doesNotMatch(generated, RETIRED_WORKFLOW)
@@ -99,29 +120,76 @@ describe("single-tool agent prompts", () => {
         assert.throws(() => loadPrompt("compress-map-tool-spec"), /Prompt not found/)
     })
 
-    it("renders the report nudge without naming a path or dictating sections", () => {
-        const output = renderReportNudgePrompt()
-        assert.match(output, /HANDOFF REPORT CHECKPOINT/)
-        assert.match(output, /that is a normal outcome/i)
-        assert.match(output, /Do not invent significance/i)
-        assert.doesNotMatch(output, /pm-report\.md|specs\//)
-    })
-
-    it("tells both compression prompts to refresh the report first and point the summary at it", () => {
-        for (const output of [
-            renderSystemPrompt(),
-            renderAutomaticSystemPrompt({
+    const compressionPrompts = (agent?: string) => [
+        renderSystemPrompt(agent),
+        renderAutomaticSystemPrompt(
+            {
                 context_tokens: "1",
                 threshold_tokens: "2",
                 threshold_reason: "test",
-            }),
-        ]) {
+            },
+            agent,
+        ),
+        renderGoalOverflowRecoveryPrompt(agent),
+    ]
+
+    it("requires the orchestrator to bring its report up to date before compressing", () => {
+        for (const output of compressionPrompts("orchestrator")) {
             assert.match(output, /handoff report file/i)
-            assert.match(output, /cite its path/i)
+            assert.match(output, /required step of this turn, not a suggestion/i)
+            assert.match(output, /before the `compress` call/i)
+            assert.match(output, /same fidelity the summary is held to/i)
+            assert.match(output, /cite the report's path/i)
             assert.match(output, /Do not restate the file/i)
-            assert.match(output, /re-read the relevant task, spec, report, and project documentation/i)
-            assert.match(output, /do not assume the summary preserved everything/i)
+            assert.doesNotMatch(output, /\{\{report_block\}\}/)
         }
+    })
+
+    it("omits the handoff-report instruction for other agents and for a missing identity", () => {
+        for (const agent of [undefined, "pm", "investigator", "Orchestrator"]) {
+            for (const output of compressionPrompts(agent)) {
+                assert.equal(output.includes(REPORT.trim()), false)
+                assert.doesNotMatch(output, /handoff report|report file|report's path/i)
+                assert.doesNotMatch(output, /bring it up to date|restate the file/i)
+                assert.doesNotMatch(output, /\{\{report_block\}\}/)
+            }
+        }
+    })
+
+    it("scopes the squash handoff-report instruction to the orchestrator", () => {
+        const orchestrator = renderSquashSystemPrompt("orchestrator")
+        assert.match(orchestrator, /handoff report file/i)
+        assert.match(orchestrator, /before squashing/i)
+        assert.doesNotMatch(orchestrator, /\{\{report_block\}\}/)
+
+        for (const agent of [undefined, "pm", "investigator", "Orchestrator"]) {
+            const output = renderSquashSystemPrompt(agent)
+            assert.equal(output.includes(SQUASH_REPORT.trim()), false)
+            assert.doesNotMatch(output, /handoff report|report file/i)
+            assert.doesNotMatch(output, /\{\{report_block\}\}/)
+        }
+    })
+
+    it("puts the orchestrator's report instruction ahead of the compress call", () => {
+        const output = renderSystemPrompt("orchestrator")
+        assert.ok(output.indexOf("Handoff report:") < output.indexOf("Call `compress` once"))
+    })
+
+    it("no longer carries the post-compression reread instruction in any compression prompt", () => {
+        for (const agent of [undefined, "orchestrator"]) {
+            for (const output of compressionPrompts(agent)) {
+                assert.doesNotMatch(output, /re-read the relevant task/i)
+                assert.doesNotMatch(output, /do not assume the summary preserved everything/i)
+            }
+        }
+    })
+
+    it("delivers the reread instruction through the transient notice instead", () => {
+        const output = renderPostCompressionNotice()
+        assert.match(output, /context was compressed/i)
+        assert.match(output, /re-read the relevant task, spec, report, and project documentation/i)
+        assert.match(output, /do not assume the summary preserved everything/i)
+        assert.match(output, /continue the original task/i)
     })
 
     it("uses the same one-call workflow for Goal overflow recovery", () => {

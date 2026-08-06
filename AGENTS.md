@@ -49,6 +49,7 @@ lib/auto-compression.ts
   deduplicates per-session starts, and opens an asynchronous
   automatic management turn. On host `ContextOverflowError` with a blocked Goal,
   stages one bounded recovery turn and persists `goalOverflowRecovery` owner state.
+  Automatic and Goal-overflow prompts use the completed assistant's `info.agent` identity.
 
 lib/auto-policy.ts
   Resolves global and session-level automatic-compression policy and derives the
@@ -57,7 +58,7 @@ lib/auto-policy.ts
 
 lib/goal.ts
   Goal continuation recognition (synthetic + exact prefix + `Goal reference: goa_* <ts>`),
-  `ContextOverflowError` detection, overflow recovery prompt text, and
+  `ContextOverflowError` detection, agent-gated overflow recovery prompt text, and
   `recoverGoalAfterCompression` (feature-detected resume with owner CAS on `id` /
   `status` / `time.updated` only; fail-open when the host has no Goal API). No Goal
   token/elapsed metrics.
@@ -97,6 +98,14 @@ lib/messages/compress-transform.ts
   preserve a protocol-valid tool-call/result pair without synthetic placeholder
   text.
 
+lib/messages/post-compression-notice.ts
+  Derives the transient post-compression reread notice on every transform from
+  `compressionCooldownAfterMessageId`; there is no consume-once flag or summary-anchor
+  lookup. Part-level inspection accounts for the compress call and its same-step siblings
+  sharing one assistant message; only non-empty assistant text and tool parts count as resumed
+  work. Plugin status notices, Goal continuations, and ordinary user messages do not consume
+  it. Appends a normal, non-`ignored` user message as the final element.
+
 lib/messages/legacy-residue.ts
   Maintainer-facing cleanup for historical management machinery, including
   residual retired tool parts from older sessions, so completed turns stay hidden.
@@ -105,8 +114,9 @@ lib/commands/manage.ts
   Starts both manual and automatic management turns: requires the `compress`
   tool, checks that automatic history remains selectable after tail protection,
   clears any stale legacy snapshot field, persists the cleanup anchor, and sends a self-contained
-  reminder that requires one `compress({ summary, topic })` call. Optional
-  `goalOverflowRecovery` is staged with automatic overflow recovery turns.
+  reminder that requires one `compress({ summary, topic })` call. Manual prompts use
+  `getCurrentParams(...).agent`; optional `goalOverflowRecovery` is staged with automatic
+  overflow recovery turns.
 
 lib/commands/squash.ts
   Implements explicit `/compress squash [instruction]`: checks shared tool permission, durable
@@ -122,15 +132,17 @@ lib/messages/blocks.ts
   formatting used by rendering, validation, and receipts. Labels are never persisted.
 
 lib/hooks.ts
-  Transform, slash-command routing, and chat.message variant caching. Goal
-  continuation messages do not bound open management turns. No queue, worker,
-  or map-pin state.
+  Transform, slash-command routing, and chat.message variant caching. Evaluates the
+  post-compression notice against raw `output.messages` before compression cleanup, then
+  appends it after `applyCompressTransforms` so the rebuild cannot discard it. Goal continuation
+  messages do not bound open management turns. No queue, worker, or map-pin state.
 
 lib/config.ts
   Config schema + layered loading/merge (global/config-dir/project), defaults,
   validation, and command/tool permission normalization. Top-level
   `protectedTurns` (default 3); legacy `autoCompression.protectedTurns` is a
-  fallback when the top-level key is absent.
+  fallback when the top-level key is absent. The default absolute automatic threshold
+  is 330,000 tokens.
 
 lib/sdk/client.ts
   Nested v1 / flat v2 SDK adapter for session and TUI calls, plus feature-detected
@@ -143,7 +155,8 @@ lib/state/*
   Session state, persistence, and compaction resets.
   Durable optional `goalOverflowRecovery` owner payload for one-shot overflow
   recovery; cleared with other session resets. Stale `compressionMapSnapshot`
-  is ignored/cleared on load/reconcile and never executed.
+  is ignored/cleared on load/reconcile and never executed. Post-compression notice
+  eligibility is derived from the cooldown anchor and transcript, not persisted separately.
 ```
 
 ## Runtime Flow
@@ -155,7 +168,9 @@ lib/state/*
    the current message (prompt contract; runtime does not inspect that text). `/compress manage`
    opens a management turn with a self-contained reminder requiring one
    `compress({ summary, topic })` call. The `compress` tool must be permitted or the command
-   fails user-only before opening a model turn.
+   fails user-only before opening a model turn. Manual, automatic, and Goal-overflow prompts
+   require a handoff-report update only when the exact agent identity is `orchestrator`;
+   missing or other identities receive no report block.
 4. `/compress squash` opens a separate user-authorized management turn only when at least two
    reconcilable existing blocks are present. Its `squash` call replaces one selected contiguous
    block range without touching uncompressed history, compressed ID sets, or cooldown state.
@@ -175,7 +190,10 @@ lib/state/*
    for the very next model continuation - no further visible user message is required - and a
    three-eligible-response cooldown is armed before another automatic or model-initiated
    compression may run. If the completed turn was Goal overflow recovery, the plugin re-reads
-   the Goal and resumes only the exact blocked owner via the public Goal API when present.
+   the Goal and resumes only the exact blocked owner via the public Goal API when present. A
+   transient reread notice is shown after each successful `compress`, including manual and
+   automatic paths, to every agent including subagents, but not for squash. It remains due
+   until genuine assistant work appears.
 9. While a management turn is still open, its reminder and tool
    results stay visible so the agent can work; the completing tool call itself
    remains afterward too, with its literal input intact until the turn is historical. Synthetic
@@ -193,6 +211,10 @@ lib/state/*
 - Ordinary agent-facing prompts describe only the deterministic `compress` happy path (`summary`,
   `topic`, eligible uncompressed history, protected newest execution steps). Range language belongs
   only in the dedicated squash prompts; do not reintroduce retired workflows elsewhere.
+- `report.md` is injected into manual, automatic, and Goal-overflow compression prompts only for
+  exact agent identity `orchestrator`; the placeholder is removed entirely for every other identity.
+- `post-compression-notice.md` supplies the reread instruction through the transient transform
+  notice, not through a compression prompt.
 
 ## Per-Session State Management
 
@@ -258,6 +280,9 @@ This plugin was originally called "DCP" (Dynamic Context Pruning). It was rename
 - Completed management turns leave no model-visible machinery marker; future prompts show blocks,
   inter-compress normal conversation, and the preserved newest execution steps (Goal continuation
   text stays model-visible).
+- The post-compression notice exists only in the transformed request and is never written to the
+  session transcript. Rebuilt or failed requests recompute it from raw messages, so repeated
+  compression does not accumulate residue or lose a due notice.
 - `[bN]` labels are derived by anchor position in the conversation stream, not by insertion order
   in `state.compressSummaries`. Existing blocks are append-only and immutable under a new fold.
 - `protectedTurns` defaults to `3`. Prefer the top-level config key; `autoCompression.protectedTurns`

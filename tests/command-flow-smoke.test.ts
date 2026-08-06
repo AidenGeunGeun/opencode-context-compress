@@ -28,7 +28,6 @@ const config: PluginConfig = {
         contextWindowRatio: 0.9,
         tokenThreshold: 300_000,
     },
-    reportNudge: { enabled: false, tokenInterval: 100_000 },
     tools: {
         compress: { permission: "allow", showCompression: false },
     },
@@ -110,8 +109,8 @@ describe("compress command smoke flow", () => {
         }
     })
 
-    it("prompts the report checkpoint on demand only while the nudge feature is enabled", async () => {
-        const sessionId = `session-report-smoke-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    it("no longer runs /compress report and falls through to help without that line", async () => {
+        const sessionId = `session-report-removed-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const stateManager = new SessionStateManager()
         stateManager.get(sessionId).initialized = true
@@ -129,148 +128,15 @@ describe("compress command smoke flow", () => {
         }
 
         try {
-            const enabled = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
-            const enabledOutput = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(enabled, sessionId, enabledOutput)
-
-            assert.equal(enabledOutput.cancelled, true)
-            assert.equal(promptTexts.length, 1)
-            assert.match(promptTexts[0], /HANDOFF REPORT CHECKPOINT/)
-
-            const disabled = createCommandExecuteHandler(client, stateManager, logger, config)
-            const disabledOutput = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(disabled, sessionId, disabledOutput)
-
-            // Falls through to help, which omits the command it cannot run.
-            assert.equal(promptTexts.length, 2)
-            assert.match(promptTexts[1], /Compress commands/)
-            assert.doesNotMatch(promptTexts[1], /compress report/)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("surfaces a resolved prompt error instead of logging the report checkpoint as sent", async () => {
-        const sessionId = `session-report-fail-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-
-        const prompts: string[] = []
-        const toasts: any[] = []
-        const client = {
-            session: {
-                messages: async () => [createUserMessage(sessionId)],
-                // The SDK resolves transport failures rather than throwing.
-                prompt: async (input: any) => {
-                    prompts.push(input.body?.parts?.[0]?.text ?? input.parts?.[0]?.text ?? "")
-                    return { error: { message: "session unavailable" }, data: undefined }
-                },
-            },
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input.body ?? input)
-                    return undefined
-                },
-            },
-        }
-
-        try {
-            const handler = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
-            const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(handler, sessionId, output)
-
-            // One attempt only: the failure notice must not go back through the transport that
-            // just failed.
-            assert.equal(prompts.length, 1)
-            assert.match(prompts[0], /HANDOFF REPORT CHECKPOINT/)
-            assert.equal(toasts.length, 1)
-            assert.equal(toasts[0].variant, "error")
-            assert.match(toasts[0].message, /session unavailable/)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("treats a provider-rejected assistant turn as a failed checkpoint, not a sent one", async () => {
-        const sessionId = `session-report-nested-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-
-        const toasts: any[] = []
-        const client = {
-            session: {
-                messages: async () => [createUserMessage(sessionId)],
-                // HTTP succeeded; the assistant turn itself carries the failure. The flat client
-                // shape returns that message without the `data` envelope.
-                prompt: async () => ({ info: { id: "m1", error: new Error("ProviderError: 500") } }),
-            },
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input.body ?? input)
-                    return undefined
-                },
-            },
-        }
-
-        try {
-            const handler = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
-            const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
-            await handlerReport(handler, sessionId, output)
-
-            assert.equal(toasts.length, 1)
-            assert.match(toasts[0].message, /ProviderError/)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("reports a thrown prompt failure rather than letting it escape the command", async () => {
-        const sessionId = `session-report-throw-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-
-        const toasts: any[] = []
-        const client = {
-            session: {
-                messages: async () => [createUserMessage(sessionId)],
-                prompt: async () => {
-                    throw new Error("prompt API unavailable")
-                },
-            },
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input.body ?? input)
-                    return undefined
-                },
-            },
-        }
-
-        try {
-            const handler = createCommandExecuteHandler(client, stateManager, logger, {
-                ...config,
-                reportNudge: { enabled: true, tokenInterval: 100_000 },
-            })
+            const handler = createCommandExecuteHandler(client, stateManager, logger, config)
             const output = { parts: [{ type: "text", text: "placeholder" }], cancelled: false }
             await handlerReport(handler, sessionId, output)
 
             assert.equal(output.cancelled, true)
-            assert.equal(toasts.length, 1)
-            assert.match(toasts[0].message, /prompt API unavailable/)
+            assert.equal(promptTexts.length, 1)
+            assert.match(promptTexts[0], /Compress commands/)
+            assert.doesNotMatch(promptTexts[0], /compress report/)
+            assert.doesNotMatch(promptTexts[0], /HANDOFF REPORT CHECKPOINT/)
         } finally {
             await cleanupSessionFile(sessionId)
         }

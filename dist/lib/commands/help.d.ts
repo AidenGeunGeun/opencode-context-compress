@@ -10,7 +10,6 @@ export interface HelpCommandContext {
     logger: Logger;
     sessionId: string;
     messages: WithParts[];
-    reportNudgeEnabled: boolean;
 }
 export declare function handleHelpCommand(ctx: HelpCommandContext): Promise<void>;
 //# sourceMappingURL=help.d.ts.map

@@ -1,16 +1,16 @@
-import { applyCompressTransforms } from "./messages/index.js";
+import { appendPostCompressionNotice, applyCompressTransforms, isPostCompressionNoticeDue, } from "./messages/index.js";
 import { checkSession } from "./state/index.js";
 import { handleStatsCommand } from "./commands/stats.js";
 import { handleContextCommand } from "./commands/context.js";
 import { handleHelpCommand } from "./commands/help.js";
 import { handleManageCommand } from "./commands/manage.js";
-import { handleReportCommand } from "./commands/report.js";
 import { handleAutoCommand } from "./commands/auto.js";
 import { handleSquashCommand } from "./commands/squash.js";
 import { suppressDefaultCommandExecution } from "./commands/suppress.js";
 import { reconcileSessionLifecycle } from "./state/state.js";
 import { listSessionMessages } from "./sdk/client.js";
 import { isIgnoredUserMessage } from "./messages/utils.js";
+import { getLastUserMessage } from "./shared-utils.js";
 export function getLastUserSessionId(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].info.role === "user") {
@@ -24,6 +24,7 @@ export function createChatMessageTransformHandler(_client, stateManager, logger,
         const sessionId = getLastUserSessionId(output.messages);
         if (!sessionId)
             return;
+        const noticeBaseMessage = getLastUserMessage(output.messages);
         const state = stateManager.get(sessionId);
         const transformed = await stateManager.runExclusive(sessionId, async () => {
             const syncResult = await checkSession(state, logger, output.messages);
@@ -45,7 +46,13 @@ export function createChatMessageTransformHandler(_client, stateManager, logger,
                 compressedMessageCount: appliedCompressedMessageCount,
                 summaryCount: appliedSummaryCount,
             });
+            // Derived from the raw transcript, before the transforms rebuild it: cleanup can
+            // suppress the compressing message itself once a later user message bounds it.
+            const noticeDue = isPostCompressionNoticeDue(state, output.messages);
             applyCompressTransforms(state, logger, output.messages);
+            if (noticeDue && noticeBaseMessage) {
+                appendPostCompressionNotice(output.messages, noticeBaseMessage);
+            }
             return true;
         });
         if (transformed) {
@@ -129,22 +136,6 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 suppressDefaultCommandExecution(output);
                 return;
             }
-            if (subcommand === "report") {
-                if (config.reportNudge.enabled) {
-                    await handleReportCommand({
-                        client,
-                        state,
-                        logger,
-                        sessionId: input.sessionID,
-                        messages,
-                    });
-                    suppressDefaultCommandExecution(output);
-                    return;
-                }
-                logger.warn("Ignored /compress report because reportNudge is disabled", {
-                    sessionId: input.sessionID,
-                });
-            }
             if (subcommand === "auto") {
                 await handleAutoCommand({
                     client,
@@ -165,7 +156,6 @@ export function createCommandExecuteHandler(client, stateManager, logger, config
                 logger,
                 sessionId: input.sessionID,
                 messages,
-                reportNudgeEnabled: config.reportNudge.enabled,
             });
             suppressDefaultCommandExecution(output);
         }

@@ -70,7 +70,5 @@ export interface SessionState {
     autoCompressionStarting?: boolean;
     /** Runtime-only deduplication marker for repeated message.updated events. */
     lastAutoTriggeredMessageId?: string;
-    /** Runtime-only absolute context-usage bucket most recently observed. */
-    reportNudgeBucket?: number;
 }
 //# sourceMappingURL=types.d.ts.map

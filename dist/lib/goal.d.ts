@@ -9,6 +9,6 @@ export declare function isGoalContinuationMessage(message: {
     parts: unknown[];
 }): boolean;
 export declare function isContextOverflowError(error: unknown): boolean;
-export declare function renderGoalOverflowRecoveryPrompt(): string;
+export declare function renderGoalOverflowRecoveryPrompt(agent?: string): string;
 export declare function recoverGoalAfterCompression(client: unknown, sessionId: string, recovery: GoalOverflowRecovery): Promise<"resumed" | "changed" | "unavailable">;
 //# sourceMappingURL=goal.d.ts.map

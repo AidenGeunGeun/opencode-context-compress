@@ -1,4 +1,5 @@
 import { getSessionGoal, resumeSessionGoal } from "./sdk/client.js";
+import { renderReportInstruction } from "./prompts/index.js";
 const CONTINUATION_PREFIX = "Continue pursuing the active session goal.";
 const GOAL_REFERENCE = /^Goal reference: goa_\S+ \d+$/m;
 export function isGoalContinuationMessage(message) {
@@ -18,13 +19,14 @@ export function isGoalContinuationMessage(message) {
 export function isContextOverflowError(error) {
     return !!error && typeof error === "object" && "name" in error && error.name === "ContextOverflowError";
 }
-export function renderGoalOverflowRecoveryPrompt() {
+export function renderGoalOverflowRecoveryPrompt(agent) {
+    const reportInstruction = renderReportInstruction(agent);
     return [
         "<system-reminder>",
         "CONTEXT OVERFLOW RECOVERY REQUIRED",
         "The unchanged active session Goal was blocked because its provider turn exceeded the context window.",
         "This is one bounded recovery attempt. Review the conversation, then call compress once with one faithful summary and short topic.",
-        "If this session maintains a handoff report file, bring it up to date first, while the evidence is still visible.",
+        ...(reportInstruction ? ["", reportInstruction, ""] : []),
         "The plugin preserves the newest configured execution steps and compresses all eligible earlier history after the newest existing block.",
         "If the call fails, stop and surface the exact failure. Do not retry compression and do not change Goal state yourself.",
         "After durable compression, the plugin will resume only the exact blocked Goal version that caused this recovery.",

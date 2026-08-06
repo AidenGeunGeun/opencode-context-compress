@@ -48,7 +48,7 @@ export async function handleSquashCommand(ctx) {
         }
         return stageManagementTurnWithinLock({
             ...ctx,
-            systemPrompt: renderSquashSystemPrompt(),
+            systemPrompt: renderSquashSystemPrompt(currentParams.agent),
             retainedText: extractSquashCommandResidual(ctx.arguments),
             source: "squash",
         });

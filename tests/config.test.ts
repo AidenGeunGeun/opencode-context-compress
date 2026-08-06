@@ -2,44 +2,25 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
-    DEFAULT_REPORT_NUDGE,
+    DEFAULT_AUTO_COMPRESSION,
     getInvalidConfigKeys,
-    mergeReportNudge,
     resolveProtectedTurnsSetting,
 } from "../lib/config.ts"
 
-describe("reportNudge configuration", () => {
-    it("ships disabled with a 150,000 token interval", () => {
-        assert.equal(DEFAULT_REPORT_NUDGE.enabled, false)
-        assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 150_000)
+describe("automatic compression defaults", () => {
+    it("initiates at 330,000 tokens or 90% of the context window", () => {
+        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 330_000)
+        assert.equal(DEFAULT_AUTO_COMPRESSION.contextWindowRatio, 0.9)
     })
 
-    it("accepts both documented keys and rejects unknown ones", () => {
+    it("rejects keys outside the documented surface", () => {
         assert.deepEqual(
-            getInvalidConfigKeys({ reportNudge: { enabled: true, tokenInterval: 50_000 } }),
-            [],
+            getInvalidConfigKeys({
+                autoCompression: { tokenThreshold: 200_000 },
+                periodicNudge: { enabled: true },
+            }),
+            ["periodicNudge", "periodicNudge.enabled"],
         )
-        assert.deepEqual(getInvalidConfigKeys({ reportNudge: { intervalTokens: 50_000 } }), [
-            "reportNudge.intervalTokens",
-        ])
-    })
-
-    it("merges valid overrides and falls back to the base for malformed ones", () => {
-        const base = { enabled: false, tokenInterval: 100_000 }
-
-        assert.deepEqual(mergeReportNudge(base, { enabled: true, tokenInterval: 50_000 }), {
-            enabled: true,
-            tokenInterval: 50_000,
-        })
-        assert.deepEqual(mergeReportNudge(base, undefined), base)
-        assert.deepEqual(mergeReportNudge(base, null as any), base)
-        assert.deepEqual(mergeReportNudge(base, [] as any), base)
-
-        // "false" is truthy, so passing it through would switch the feature on.
-        assert.deepEqual(mergeReportNudge(base, { enabled: "false" as any }), base)
-        assert.deepEqual(mergeReportNudge(base, { tokenInterval: 0 }), base)
-        assert.deepEqual(mergeReportNudge(base, { tokenInterval: -5 }), base)
-        assert.deepEqual(mergeReportNudge(base, { tokenInterval: Number.NaN }), base)
     })
 })
 

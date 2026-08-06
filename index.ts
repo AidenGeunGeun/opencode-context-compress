@@ -13,7 +13,6 @@ import {
     createAutomaticCompressionEventHandler,
     createChatParamsHandler,
 } from "./lib/auto-compression.js"
-import { createReportNudgeEventHandler } from "./lib/report-nudge.js"
 
 const stateManager = new SessionStateManager()
 
@@ -38,15 +37,9 @@ const plugin: Plugin = (async (ctx) => {
         logger,
         config,
     )
-    const reportNudgeEvent = createReportNudgeEventHandler(ctx.client, stateManager, logger, config)
 
     const hooks = {
-        // Compression runs first so a fault in the advisory nudge can never keep the session
-        // from compressing.
-        event: async (input: any) => {
-            await automaticCompressionEvent(input)
-            await reportNudgeEvent(input)
-        },
+        event: automaticCompressionEvent,
         "experimental.chat.messages.transform": createChatMessageTransformHandler(
             ctx.client,
             stateManager,

@@ -102,7 +102,7 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
 
         return stageManagementTurnWithinLock({
             ...ctx,
-            systemPrompt: renderSquashSystemPrompt(),
+            systemPrompt: renderSquashSystemPrompt(currentParams.agent),
             retainedText: extractSquashCommandResidual(ctx.arguments),
             source: "squash",
         })
