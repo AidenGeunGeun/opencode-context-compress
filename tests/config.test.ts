@@ -9,9 +9,9 @@ import {
 } from "../lib/config.ts"
 
 describe("reportNudge configuration", () => {
-    it("ships disabled with a 100,000 token interval", () => {
+    it("ships disabled with a 150,000 token interval", () => {
         assert.equal(DEFAULT_REPORT_NUDGE.enabled, false)
-        assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 100_000)
+        assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 150_000)
     })
 
     it("accepts both documented keys and rejects unknown ones", () => {

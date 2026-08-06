@@ -205,7 +205,7 @@ Default runtime config:
     },
     "reportNudge": {
         "enabled": false,
-        "tokenInterval": 100000
+        "tokenInterval": 150000
     },
     "tools": {
         "compress": {
@@ -219,8 +219,8 @@ Default runtime config:
 `reportNudge` is for workflows where the agent maintains a handoff report file on disk as it works,
 so a lossy summary is not the only durable record. It is off by default because only such sessions
 have anything to update. When on, the plugin opens a short, visible user turn whenever
-provider-reported raw context crosses an absolute multiple of `tokenInterval` (default `100000`):
-100k, 200k, 300k, and so on. It uses the same session prompt path as `/compress manage`, so the
+provider-reported raw context crosses an absolute multiple of `tokenInterval` (default `150000`):
+150k, 300k, 450k, and so on. It uses the same session prompt path as `/compress manage`, so the
 checkpoint is persisted, appears in the UI, and cannot be buried inside older conversation. When compression drops context into a lower bucket,
 those absolute boundaries become eligible again as the new context grows. The reminder names no path and no sections —
 the agent's own prompt owns where the file lives and what belongs in it — and it explicitly allows

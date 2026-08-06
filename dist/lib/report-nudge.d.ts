@@ -8,8 +8,8 @@ export interface ReportNudgeDecision {
 }
 /**
  * Absolute raw-context trigger over provider-reported usage, the same signal automatic
- * compression uses. Crossing 100k, 200k, and so on advances the bucket and fires once. When
- * compression shrinks the context into a lower bucket, tracking drops with it so those absolute
+ * compression uses. Crossing each configured absolute boundary advances the bucket and fires once.
+ * When compression shrinks the context into a lower bucket, tracking drops with it so those
  * boundaries can fire again as the new context grows. An unusable reading leaves state untouched.
  */
 export declare function resolveReportNudge(contextTokens: number, previousBucket: number | undefined, tokenInterval: number): ReportNudgeDecision;

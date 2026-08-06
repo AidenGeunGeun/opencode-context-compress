@@ -55,8 +55,8 @@ const reportClient = (prompts: string[]) => ({
 })
 
 describe("resolveReportNudge", () => {
-    it("defaults to a 100,000 token interval and stays off until a profile enables it", () => {
-        assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 100_000)
+    it("defaults to a 150,000 token interval and stays off until a profile enables it", () => {
+        assert.equal(DEFAULT_REPORT_NUDGE.tokenInterval, 150_000)
         assert.equal(DEFAULT_REPORT_NUDGE.enabled, false)
     })
 

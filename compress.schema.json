@@ -90,13 +90,13 @@
                 "tokenInterval": {
                     "type": "number",
                     "exclusiveMinimum": 0,
-                    "default": 100000,
+                    "default": 150000,
                     "description": "Nudge when provider-reported raw context usage crosses each multiple of this value"
                 }
             },
             "default": {
                 "enabled": false,
-                "tokenInterval": 100000
+                "tokenInterval": 150000
             }
         },
         "commands": {

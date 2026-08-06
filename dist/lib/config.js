@@ -14,7 +14,7 @@ export const DEFAULT_AUTO_COMPRESSION = {
  */
 export const DEFAULT_REPORT_NUDGE = {
     enabled: false,
-    tokenInterval: 100_000,
+    tokenInterval: 150_000,
 };
 export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
     if (layer.protectedTurns !== undefined)

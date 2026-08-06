@@ -41,7 +41,7 @@ export interface ReportNudge {
  */
 export const DEFAULT_REPORT_NUDGE: ReportNudge = {
     enabled: false,
-    tokenInterval: 100_000,
+    tokenInterval: 150_000,
 }
 
 export function resolveProtectedTurnsSetting(
