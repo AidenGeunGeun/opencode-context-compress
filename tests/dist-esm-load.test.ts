@@ -1,211 +1,167 @@
-import { execFile } from "node:child_process"
-import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
 import { describe, it } from "node:test"
-import { fileURLToPath, pathToFileURL } from "node:url"
-import { promisify } from "node:util"
+import assert from "node:assert/strict"
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
-import type { Hooks, PluginInput } from "@opencode-ai/plugin"
+describe("built OpenCode 2.0.13 Promise plugin", () => {
+    it("loads and executes command, context, generate, and tool paths", async () => {
+        const root = await mkdtemp(join(tmpdir(), "context-compress-2013-"))
+        const previousConfig = process.env.XDG_CONFIG_HOME
+        const previousData = process.env.XDG_DATA_HOME
+        process.env.XDG_CONFIG_HOME = join(root, "config")
+        process.env.XDG_DATA_HOME = join(root, "data")
+        await mkdir(join(root, "config", "opencode"), { recursive: true })
+        await writeFile(join(root, "config", "opencode", "compress.json"), JSON.stringify({
+            protectedTurns: 0,
+            notification: "off",
+            autoCompression: { enabled: false },
+        }))
 
-const execFileAsync = promisify(execFile)
-const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const envKeys = [
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "OPENCODE_CONFIG_DIR",
-    "OPENCODE_SERVER_PASSWORD",
-] as const
-
-async function createSandbox() {
-    const sandbox = await mkdtemp(join(tmpdir(), "compress-plugin-esm-"))
-    return {
-        root: sandbox,
-        configHome: join(sandbox, "config"),
-        dataHome: join(sandbox, "data"),
-        opencodeConfigDir: join(sandbox, "opencode-config"),
-    }
-}
-
-async function withIsolatedProcessEnv<T>(fn: (sandbox: Awaited<ReturnType<typeof createSandbox>>) => Promise<T>) {
-    const sandbox = await createSandbox()
-    const previous = Object.fromEntries(envKeys.map((key) => [key, process.env[key]])) as Record<
-        (typeof envKeys)[number],
-        string | undefined
-    >
-
-    process.env.XDG_CONFIG_HOME = sandbox.configHome
-    process.env.XDG_DATA_HOME = sandbox.dataHome
-    process.env.OPENCODE_CONFIG_DIR = sandbox.opencodeConfigDir
-    process.env.OPENCODE_SERVER_PASSWORD = ""
-
-    try {
-        return await fn(sandbox)
-    } finally {
-        for (const key of envKeys) {
-            if (previous[key] === undefined) {
-                delete process.env[key]
-            } else {
-                process.env[key] = previous[key]
-            }
-        }
-        await rm(sandbox.root, { recursive: true, force: true })
-    }
-}
-
-function sandboxEnv(sandbox: Awaited<ReturnType<typeof createSandbox>>): NodeJS.ProcessEnv {
-    return {
-        PATH: process.env.PATH ?? "",
-        HOME: process.env.HOME ?? "",
-        XDG_CONFIG_HOME: sandbox.configHome,
-        XDG_DATA_HOME: sandbox.dataHome,
-        OPENCODE_CONFIG_DIR: sandbox.opencodeConfigDir,
-        OPENCODE_SERVER_PASSWORD: "",
-    }
-}
-
-function assertHookContract(hooks: Hooks) {
-    assert.equal(typeof hooks, "object")
-    assert.equal(typeof hooks.event, "function")
-    assert.equal(typeof hooks["experimental.chat.messages.transform"], "function")
-    assert.equal(typeof hooks["chat.params"], "function")
-    assert.equal(typeof hooks["chat.message"], "function")
-    assert.equal(typeof hooks["command.execute.before"], "function")
-    assert.equal(typeof hooks.config, "function")
-
-    assert.equal(typeof hooks.tool, "object")
-    assert.deepEqual(Object.keys(hooks.tool ?? {}), ["compress", "squash"])
-
-    for (const toolName of ["compress", "squash"] as const) {
-        const definition = hooks.tool?.[toolName]
-        assert.equal(typeof definition?.description, "string")
-        assert.equal(typeof definition?.args, "object")
-        assert.equal(typeof definition?.execute, "function")
-    }
-}
-
-describe("built Node ESM package", () => {
-    it("loads dist/index.js in a fresh Node ESM process", async () => {
-        const sandbox = await createSandbox()
         try {
-            const script = `
-                import('./dist/index.js')
-                    .then((module) => {
-                        if (typeof module.default !== 'function') {
-                            throw new Error('default export is not a function')
-                        }
-                        console.log(typeof module.default)
-                    })
-                    .catch((error) => {
-                        console.error(error?.stack || error?.message || error)
-                        process.exit(1)
-                    })
-            `
+            const staged = process.env.OPENCODE_COMPRESS_TEST_BUNDLE
+            const bundle = staged ? pathToFileURL(staged).href : "../dist/index.js"
+            const { default: plugin } = await import(`${bundle}?test=${Date.now()}`)
+            assert.equal(plugin.id, "opencode-context-compress")
+            assert.equal(typeof plugin.setup, "function")
+            assert.equal("server" in plugin, false)
 
-            const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
-                cwd: projectRoot,
-                env: sandboxEnv(sandbox),
-            })
-
-            assert.equal(stdout.trim(), "function")
-        } finally {
-            await rm(sandbox.root, { recursive: true, force: true })
-        }
-    })
-
-    it("returns the expected plugin hooks from the built default export", async () => {
-        await withIsolatedProcessEnv(async (sandbox) => {
-            const moduleUrl = pathToFileURL(join(projectRoot, "dist", "index.js")).href
-            const { default: plugin } = (await import(moduleUrl)) as {
-                default: (input: PluginInput) => Promise<Hooks>
-            }
-
-            assert.equal(typeof plugin, "function")
-
-            const client = {
-                session: {
-                    get: async () => ({ data: {} }),
-                    messages: async () => ({ data: [] }),
-                },
-                tui: {
-                    showToast: async () => undefined,
-                    appendPrompt: async () => undefined,
-                },
-            } as unknown as PluginInput["client"]
-
-            const ctx: PluginInput = {
-                client,
-                directory: sandbox.root,
-                worktree: sandbox.root,
-                project: {} as PluginInput["project"],
-                serverUrl: new URL("http://127.0.0.1"),
-                $: undefined as unknown as PluginInput["$"],
-            }
-
-            const hooks = await plugin(ctx)
-            assertHookContract(hooks)
-
-            const opencodeConfig: Record<string, any> = {}
-            await hooks.config?.(opencodeConfig as any)
-            assert.equal(opencodeConfig.compaction.auto, false)
-            assert.equal(opencodeConfig.command.compress.description, "Show available context compression commands")
-            assert.deepEqual(opencodeConfig.experimental.primary_tools, ["compress", "squash"])
-            assert.equal("compress_map" in opencodeConfig.permission, false)
-            assert.equal(opencodeConfig.permission.compress, "allow")
-            assert.equal(opencodeConfig.permission.squash, "allow")
-
-            await hooks["chat.message"]?.(
-                { sessionID: "contract-session", variant: "contract" },
-                { message: {} as any, parts: [] },
-            )
-            await hooks["experimental.chat.messages.transform"]?.({}, { messages: [] })
-            await hooks["command.execute.before"]?.(
-                { command: "unrelated", sessionID: "contract-session", arguments: "" },
-                { parts: [] },
-            )
-        })
-    })
-
-    it("ships the deterministic selector's fail-closed reconciliation guard", async () => {
-        const moduleUrl = pathToFileURL(
-            join(projectRoot, "dist", "lib", "messages", "context-map.js"),
-        ).href
-        const { selectDeterministicCompressionSpan } = (await import(moduleUrl)) as {
-            selectDeterministicCompressionSpan: (...args: any[]) => unknown
-        }
-        const state = {
-            compressed: { toolIds: new Set(), messageIds: new Set(["missing-anchor"]) },
-            compressSummaries: [
+            const commands: any[] = []
+            const tools: any[] = []
+            const hooks = new Map<string, (input: any) => Promise<void>>()
+            const synthetic: any[] = []
+            const registration = { dispose: async () => undefined }
+            const sessionID = "session-2013-smoke"
+            const projected = [
+                { id: "old-user", type: "user", text: "older", time: { created: 1 } },
                 {
-                    anchorMessageId: "missing-anchor",
-                    messageIds: ["missing-anchor"],
-                    summary: "durable block",
+                    id: "old-assistant",
+                    type: "assistant",
+                    agent: "build",
+                    model: { providerID: "openai", id: "gpt-test" },
+                    content: [{ type: "text", text: "done" }],
+                    finish: "stop",
+                    tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+                    time: { created: 2, completed: 3 },
                 },
-            ],
-            managementTurns: [],
-        }
-        const messages = [
-            {
-                info: {
-                    id: "visible",
-                    role: "user",
-                    sessionID: "dist-selection",
-                    time: { created: Date.now() },
+                { id: "owner", type: "user", text: "compress now", time: { created: 4 } },
+                {
+                    id: "tool-message",
+                    type: "assistant",
+                    agent: "build",
+                    model: { providerID: "openai", id: "gpt-test" },
+                    content: [{
+                        type: "tool",
+                        id: "call-compress",
+                        name: "compress",
+                        state: { status: "running", input: { summary: "Earlier", topic: "Earlier" } },
+                        time: { created: 5 },
+                    }],
+                    tokens: { input: 12, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                    time: { created: 5 },
                 },
-                parts: [{ type: "text", text: "visible" }],
-            },
-        ]
+            ]
+            const events = { async *[Symbol.asyncIterator]() {} }
+            const cleanup = await plugin.setup({
+                location: { directory: root },
+                command: {
+                    transform: async (callback: any) => {
+                        callback({ add: (command: any) => commands.push(command) })
+                        return registration
+                    },
+                },
+                tool: {
+                    transform: async (callback: any) => {
+                        callback({ add: (tool: any) => tools.push(tool) })
+                        return registration
+                    },
+                },
+                session: {
+                    context: async () => projected,
+                    wait: async () => undefined,
+                    synthetic: async (input: any) => void synthetic.push(input),
+                    prompt: async () => undefined,
+                    get: async () => ({ location: { directory: root } }),
+                    hook: async (name: string, callback: any) => {
+                        hooks.set(name, callback)
+                        return registration
+                    },
+                },
+                model: {
+                    list: async () => ({ data: [{
+                        id: "gpt-test",
+                        providerID: "openai",
+                        limit: { context: 1000 },
+                    }] }),
+                },
+                event: { subscribe: () => events },
+            } as any)
 
-        assert.throws(
-            () =>
-                selectDeterministicCompressionSpan(
-                    messages,
-                    state,
-                    { info: () => {}, warn: () => {} },
-                    0,
-                ),
-            /could not reconcile an existing compressed block/,
-        )
+            assert.deepEqual(commands.map((command) => command.name), ["compress"])
+            assert.deepEqual(tools.map((tool) => tool.name), ["compress", "squash"])
+            assert.deepEqual([...hooks.keys()], ["context", "generate"])
+
+            await commands[0].execute({
+                sessionID,
+                prompt: { text: "help" },
+                delivery: "steer",
+            })
+            assert.match(synthetic[0].text, /Compress commands/)
+            assert.equal(synthetic[0].resume, false)
+
+            const modelMessages = [
+                { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
+                { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "done" }] },
+                { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
+                { id: "tool-message", role: "assistant", content: [{ type: "tool-call", id: "call-compress", name: "compress", input: {} }] },
+            ]
+            await hooks.get("context")?.({
+                sessionID,
+                agent: "build",
+                model: { providerID: "openai", id: "gpt-test" },
+                system: [],
+                messages: modelMessages,
+                tools: {},
+                generation: {},
+                providerOptions: {},
+            })
+            assert.equal(modelMessages.length, 4)
+
+            const result = await tools[0].execute(
+                { summary: "Earlier work completed", topic: "Earlier" },
+                { sessionID, agent: "build", messageID: "tool-message", id: "call-compress", progress: async () => undefined },
+            )
+            assert.match(result.content, /Compression complete/)
+
+            const sideMessages = [
+                ...modelMessages.map((message) => structuredClone(message)),
+                { role: "user", content: [{ type: "text", text: "What happened earlier?" }] },
+            ]
+            await hooks.get("generate")?.({
+                sessionID,
+                agent: "build",
+                model: { providerID: "openai", id: "gpt-test" },
+                system: [],
+                messages: sideMessages,
+                tools: {},
+                generation: {},
+                providerOptions: {},
+            })
+            assert.equal(sideMessages.some((message) => message.id === "old-user" || message.id === "old-assistant"), false)
+            assert.match(JSON.stringify(sideMessages), /Earlier work completed/)
+            assert.deepEqual(sideMessages.at(-1), {
+                role: "user",
+                content: [{ type: "text", text: "What happened earlier?" }],
+            })
+            assert.equal(projected.length, 4)
+            await cleanup?.()
+        } finally {
+            if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME
+            else process.env.XDG_CONFIG_HOME = previousConfig
+            if (previousData === undefined) delete process.env.XDG_DATA_HOME
+            else process.env.XDG_DATA_HOME = previousData
+            await rm(root, { recursive: true, force: true })
+        }
     })
 })

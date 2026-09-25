@@ -1,177 +1,72 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { createOpencodeClient } from "@opencode-ai/sdk"
-import { createOpencodeClient as createV2Client } from "@opencode-ai/sdk/v2"
-
 import {
     listSessionMessages,
+    pluginClient,
     promptSession,
-    promptSessionAsync,
-    showToast,
+    setSessionSelection,
 } from "../lib/sdk/client.ts"
 
-describe("SDK client adapter", () => {
-    it("uses nested v1 request shapes for plugin host clients", async () => {
-        const calls: unknown[] = []
-        const client = {
-            _client: {},
-            session: {
-                messages: async (input: unknown) => {
-                    calls.push(["messages", input])
-                    return { data: [{ info: { id: "m1" }, parts: [] }] }
+describe("beta Promise session adapter", () => {
+    it("projects session.context history with the current selection", async () => {
+        const client = pluginClient({
+            context: async () => [
+                { id: "user", type: "user", text: "hello", time: { created: 1 } },
+                { id: "idle", type: "idle", outcome: "failed", time: { created: 2 } },
+                {
+                    id: "assistant",
+                    type: "assistant",
+                    agent: "build",
+                    model: { providerID: "openai", id: "gpt-test" },
+                    content: [{ type: "text", text: "done" }],
+                    tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                    time: { created: 2, completed: 3 },
                 },
-                prompt: async (input: unknown) => {
-                    calls.push(["prompt", input])
-                    return { data: { info: { id: "m2", parentID: "m1" } } }
-                },
-            },
-            tui: {
-                showToast: async (input: unknown) => {
-                    calls.push(["toast", input])
-                },
-            },
-        }
+            ],
+            prompt: async () => undefined,
+            synthetic: async () => undefined,
+            wait: async () => undefined,
+        } as any)
+        setSessionSelection(client, "session", {
+            agent: "build",
+            model: { providerID: "openai", id: "gpt-test", variant: "high" },
+        })
 
-        const messages = await listSessionMessages(client, "session-1")
+        const messages = await listSessionMessages(client, "session") as any[]
+        assert.deepEqual(messages.map((message) => message.info.id), ["user", "assistant"])
+        assert.equal(messages[0].info.variant, "high")
+        assert.equal(messages[1].info.parentID, "user")
+    })
+
+    it("uses prompt for model work and admit-only synthetic feedback", async () => {
+        const calls: Array<[string, unknown]> = []
+        const client = pluginClient({
+            context: async () => [],
+            prompt: async (input) => void calls.push(["prompt", input]),
+            synthetic: async (input) => void calls.push(["synthetic", input]),
+            wait: async (input) => void calls.push(["wait", input]),
+        } as any)
+
         await promptSession(client, {
-            sessionId: "session-1",
-            parts: [{ type: "text", text: "hello" }],
+            sessionId: "session",
+            messageId: "message",
+            parts: [{ type: "text", text: "manage" }],
+        })
+        await promptSession(client, {
+            sessionId: "session",
             noReply: true,
-        })
-        await showToast(client, {
-            title: "Test",
-            message: "toast",
-            variant: "info",
+            parts: [{ type: "text", text: "status" }],
         })
 
-        assert.equal(messages.length, 1)
-        assert.deepEqual(calls[0], ["messages", { path: { id: "session-1" } }])
-        assert.deepEqual(calls[1], [
-            "prompt",
-            {
-                path: { id: "session-1" },
-                body: {
-                    parts: [{ type: "text", text: "hello" }],
-                    agent: undefined,
-                    model: undefined,
-                    variant: undefined,
-                    noReply: true,
-                    messageID: undefined,
-                },
-            },
+        assert.deepEqual(calls, [
+            ["prompt", { sessionID: "session", text: "manage", id: "message", delivery: "steer", resume: true }],
+            ["synthetic", {
+                sessionID: "session",
+                text: "status",
+                description: "status",
+                metadata: { "opencode.context-compress.ignored": true },
+                resume: false,
+            }],
         ])
-        assert.deepEqual(calls[2], [
-            "toast",
-            {
-                body: {
-                    title: "Test",
-                    message: "toast",
-                    variant: "info",
-                    duration: undefined,
-                },
-            },
-        ])
-    })
-
-    it("uses flat v2 request shapes for v2 SDK clients", async () => {
-        const calls: unknown[] = []
-        const client = createV2Client({ baseUrl: "http://127.0.0.1:0" })
-        client.session.messages = (async (input: unknown) => {
-            calls.push(["messages", input])
-            return { data: [] }
-        }) as typeof client.session.messages
-        client.session.prompt = (async (input: unknown) => {
-            calls.push(["prompt", input])
-            return { data: { info: { id: "m3" } } }
-        }) as typeof client.session.prompt
-        client.tui.showToast = (async (input: unknown) => {
-            calls.push(["toast", input])
-        }) as typeof client.tui.showToast
-
-        await listSessionMessages(client, "session-2", { limit: 5 })
-        await promptSession(client, {
-            sessionId: "session-2",
-            parts: [{ type: "text", text: "v2" }],
-        })
-        await showToast(client, {
-            message: "v2 toast",
-            variant: "warning",
-        })
-
-        assert.deepEqual(calls[0], ["messages", { sessionID: "session-2", limit: 5 }])
-        assert.deepEqual(calls[1], [
-            "prompt",
-            {
-                sessionID: "session-2",
-                parts: [{ type: "text", text: "v2" }],
-                agent: undefined,
-                model: undefined,
-                variant: undefined,
-                noReply: undefined,
-                messageID: undefined,
-            },
-        ])
-        assert.deepEqual(calls[2], [
-            "toast",
-            {
-                title: undefined,
-                message: "v2 toast",
-                variant: "warning",
-                duration: undefined,
-                directory: undefined,
-            },
-        ])
-    })
-
-    it("detects installed SDK client generations", () => {
-        const v1Client = createOpencodeClient({ baseUrl: "http://127.0.0.1:0" })
-        const v2Client = createV2Client({ baseUrl: "http://127.0.0.1:0" })
-
-        assert.equal("_client" in v1Client, true)
-        assert.equal("client" in v2Client, true)
-    })
-
-    it("uses promptAsync when the host exposes it and falls back to prompt otherwise", async () => {
-        const calls: unknown[] = []
-        const asyncClient = {
-            _client: {},
-            session: {
-                promptAsync: async (input: unknown) => {
-                    calls.push(input)
-                },
-            },
-        }
-
-        await promptSessionAsync(asyncClient, {
-            sessionId: "session-async",
-            parts: [{ type: "text", text: "compress now" }],
-            messageId: "message-async",
-        })
-
-        assert.deepEqual(calls[0], {
-            path: { id: "session-async" },
-            body: {
-                parts: [{ type: "text", text: "compress now" }],
-                agent: undefined,
-                model: undefined,
-                variant: undefined,
-                noReply: undefined,
-                messageID: "message-async",
-            },
-        })
-
-        let fallbackCalls = 0
-        await promptSessionAsync(
-            {
-                _client: {},
-                session: {
-                    prompt: async () => {
-                        fallbackCalls++
-                    },
-                },
-            },
-            { sessionId: "session-fallback", parts: [{ type: "text", text: "fallback" }] },
-        )
-        assert.equal(fallbackCalls, 1)
     })
 })

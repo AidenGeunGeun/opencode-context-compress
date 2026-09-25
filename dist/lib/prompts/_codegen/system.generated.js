@@ -3,27 +3,23 @@
 // To modify, edit system.md and run `npm run generate:prompts`
 export const SYSTEM = `<system-reminder>
 CONTEXT MANAGEMENT REQUESTED
-The user ran \`/compress manage\`. Review the conversation and make one compression call with a faithful summary and a short block title. The plugin deterministically replaces all eligible uncompressed history after the newest existing block while preserving the newest configured execution steps verbatim.
+The user ran \`/compress manage\`. Preserve enough context for another agent to pursue the same intended outcome without reinterpreting the user's decisions. Compression is context maintenance, not task completion.
 
-If a \`<user-message>\` block is present, it contains the user's specific instructions for this compression turn. Follow it while preserving summary truthfulness and continuity.
+Follow any \`<user-message>\` guidance for this request without sacrificing truthfulness. Call \`compress\` once with \`summary\` and \`topic\`. Selection is automatic: existing blocks are excluded while preserving the newest configured execution steps verbatim.
 
-{{report_block}}
+Before compression, update applicable existing durable documentation only for verified facts, settled decisions, or state that actually changed, and only when the task authorizes those edits. Follow the project's documentation conventions; do not create reports, logs, or new continuity documents merely for compression. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
 
-Procedure:
-1. Review all currently visible conversation evidence.
-2. Reconcile chronology before writing: later evidence supersedes stale plans, tentative conclusions, and outdated pending-work statements.
-3. Call \`compress\` once with \`summary\` and \`topic\`. Existing compressed blocks are excluded automatically.
+Summary guidance (use short headings where helpful; omit empty sections):
+- User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
+- Decisions and boundaries: confirmed requirements, constraints, permissions, and agreed protocols. Separate user decisions from your assumptions, proposals, and unresolved discussion; compression grants no new authority.
+- Current state: completed work with its evidence, incomplete work, material failures or uncertainty, and whether a final response was already delivered.
+- Continuation: the approach being pursued and the next concrete action, if one exists. Preserve relevant running jobs or subagents and their IDs; check their status rather than launching duplicates.
+- References: exact paths, commands, identifiers, and findings needed to continue without repeating investigation.
 
-Summary fidelity:
-- Write the durable continuation record a future agent needs after the eligible history is replaced. Preserve the objective and WHY, controlling spec or task contract, confirmed decisions and constraints, relevant chronology, changed files and artifacts, load-bearing commands and concrete results, failures and fixes, verification and review findings, explicit unknowns, and the latest evidenced task disposition.
-- Do not carry work forward as pending when later evidence shows it completed. Do not claim completion without evidence. Preserve whether a final response, report, or handoff was already delivered and the outcome it stated.
-- Include an exact next action only when one genuinely exists. Do not invent one for completed work or reopen work merely because compression occurred.
-- Never invent unsupported facts, actions, changes, command results, tests, approvals, or completion. State missing, conflicting, ambiguous, or unverified evidence explicitly.
-- Remove only replaceable noise and repetition. The preserved newest execution steps remain visible after compression and may correct or supersede the summary, so do not contradict their later evidence.
+Keep a compact handoff, not a transcript. Preserve decision-relevant rationale and evidence, not every conversational exchange or raw output. Later evidence supersedes stale plans; never invent facts, approvals, results, or completion. The retained recent execution steps may further update the summary.
 
-Result handling:
-- A success receipt means the state was durably saved and the fold is already active. Do not call \`compress\` again this turn.
-- A failure means nothing was compressed. Surface the exact diagnostic and do not retry unless the user gives new authorization.
+A success receipt confirms a durable save and an active fold; do not compress again this turn. Follow the user's requested next step and preserve the actual task disposition: continue authorized active work, but do not reopen completed work, duplicate a final response, or manufacture work while awaiting the user.
+A failure means nothing was compressed. Surface the exact diagnostic before deciding whether a retry is warranted.
 </system-reminder>
 `;
 //# sourceMappingURL=system.generated.js.map

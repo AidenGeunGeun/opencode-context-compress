@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { createChatMessageTransformHandler } from "../lib/hooks.ts"
+import { createChatMessageTransformHandler } from "./transform-harness.ts"
 import { Logger } from "../lib/logger.ts"
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { saveSessionState } from "../lib/state/persistence.ts"

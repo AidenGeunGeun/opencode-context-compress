@@ -17,7 +17,6 @@ export function resetOnCompaction(state) {
     state.compressSummaries = [];
     state.managementTurns = [];
     state.compressionMapSnapshot = undefined;
-    state.goalOverflowRecovery = undefined;
     state.autoCompressionStarting = false;
     state.lastAutoTriggeredMessageId = undefined;
 }

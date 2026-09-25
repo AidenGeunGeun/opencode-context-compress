@@ -81,7 +81,7 @@ function compressCallMessage(
     } as any
 }
 
-function toolContext(sessionID: string, messageID: string, callID: string, ask = async () => {}) {
+function toolContext(sessionID: string, messageID: string, callID: string) {
     return {
         sessionID,
         messageID,
@@ -91,7 +91,6 @@ function toolContext(sessionID: string, messageID: string, callID: string, ask =
         worktree: "/tmp",
         abort: new AbortController().signal,
         metadata: () => {},
-        ask,
     } as any
 }
 
@@ -99,7 +98,7 @@ function client(messages: any[]) {
     return {
         session: {
             get: async () => ({ data: {} }),
-            messages: async () => ({ data: messages }),
+            context: async () => messages,
         },
     }
 }
@@ -166,17 +165,6 @@ async function executePath(
 }
 
 describe("single-tool compression", () => {
-    it("accepts only summary and topic in the public schema", () => {
-        const tool = createCompressTool({
-            client: client([]),
-            stateManager: new SessionStateManager(),
-            logger,
-            config: baseConfig,
-        }) as any
-
-        assert.deepEqual(Object.keys(tool.args), ["summary", "topic"])
-    })
-
     it("rejects blank summary or topic values before changing state", async () => {
         const sessionId = "blank-arguments"
         const stateManager = new SessionStateManager()
@@ -239,6 +227,47 @@ describe("single-tool compression", () => {
             }
         })
     }
+
+    it("accepts a delayed compress call after wrap-up work in the still-open automatic turn", async () => {
+        const sessionId = `automatic-wrap-up-${Date.now()}-${Math.random()}`
+        const callID = "call-automatic-wrap-up"
+        const trigger = textMessage("manage-trigger", sessionId, "user")
+        const messages = [
+            textMessage("old-user", sessionId, "user"),
+            textMessage("old-step", sessionId, "assistant", { stepStart: true }),
+            trigger,
+            textMessage("wrapped-up-step", sessionId, "assistant", { stepStart: true }),
+            compressCallMessage("compress-message", sessionId, trigger.info.id, callID),
+        ]
+        const stateManager = new SessionStateManager()
+        const state = stateManager.get(sessionId)
+        state.initialized = true
+        state.managementTurns = [
+            {
+                triggerMessageId: trigger.info.id,
+                source: "automatic",
+            },
+        ]
+        const tool = createCompressTool({
+            client: client(messages),
+            stateManager,
+            logger,
+            config: baseConfig,
+        })
+
+        try {
+            const receipt = await tool.execute(
+                { summary: "Wrap-up work and prior history", topic: "Automatic wrap-up" },
+                toolContext(sessionId, "compress-message", callID),
+            )
+
+            assert.match(receipt, /Automatic compression finished/)
+            assert.deepEqual(state.compressSummaries[0].messageIds, ["old-user", "old-step"])
+            assert.ok(state.managementTurns[0].completedAt)
+        } finally {
+            await cleanup(sessionId)
+        }
+    })
 
     it("keeps existing blocks immutable and appends a new block after the newest one", async () => {
         const sessionId = `existing-block-${Date.now()}-${Math.random()}`
@@ -307,9 +336,24 @@ describe("single-tool compression", () => {
         }
     })
 
-    it("fails closed when current-turn ownership is ambiguous", () => {
+    it("ignores synthetic notifications but fails closed on an intervening user", () => {
         const sessionId = "ambiguous"
         const state = new SessionStateManager().get(sessionId)
+        const synthetic = textMessage("background-complete", sessionId, "user")
+        synthetic.info.sourceType = "synthetic"
+        const accepted = [
+            textMessage("history", sessionId, "user"),
+            textMessage("owner", sessionId, "user"),
+            synthetic,
+            compressCallMessage("compress-message", sessionId, "owner", "call"),
+        ]
+        assert.deepEqual(
+            resolveCompressionBoundary(accepted, state, "compress-message", "call").history.map(
+                (message) => message.info.id,
+            ),
+            ["history"],
+        )
+
         const messages = [
             textMessage("owner", sessionId, "user"),
             textMessage("intervening", sessionId, "user"),
@@ -333,7 +377,6 @@ describe("single-tool compression", () => {
         const stateManager = new SessionStateManager()
         const state = stateManager.get(sessionId)
         state.initialized = true
-        let asked = false
         const tool = createCompressTool({
             client: client(messages),
             stateManager,
@@ -343,38 +386,11 @@ describe("single-tool compression", () => {
 
         const receipt = await tool.execute(
             { summary: "unused", topic: "Unused" },
-            toolContext(sessionId, "compress-message", callID, async () => { asked = true }),
+            toolContext(sessionId, "compress-message", callID),
         )
         assert.match(receipt, /Nothing eligible to compress/)
-        assert.equal(asked, false)
         assert.deepEqual(state.compressSummaries, [])
         assert.equal(existsSync(sessionFile(sessionId)), false)
-    })
-
-    it("keeps state unchanged when permission is rejected", async () => {
-        const sessionId = `permission-failure-${Date.now()}-${Math.random()}`
-        const callID = "call-denied"
-        const messages = [
-            textMessage("history", sessionId, "user"),
-            textMessage("owner", sessionId, "user"),
-            compressCallMessage("compress-message", sessionId, "owner", callID),
-        ]
-        const stateManager = new SessionStateManager()
-        const state = stateManager.get(sessionId)
-        state.initialized = true
-        const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig,
-        })
-
-        await assert.rejects(
-            tool.execute(
-                { summary: "unused", topic: "Unused" },
-                toolContext(sessionId, "compress-message", callID, async () => { throw new Error("denied") }),
-            ),
-            /denied/,
-        )
-        assert.deepEqual(state.compressSummaries, [])
-        assert.equal(state.compressed.messageIds.size, 0)
     })
 
     it("keeps state unchanged when the transcript fetch fails", async () => {
@@ -386,7 +402,7 @@ describe("single-tool compression", () => {
             client: {
                 session: {
                     get: async () => ({ data: {} }),
-                    messages: async () => { throw new Error("offline") },
+                    context: async () => { throw new Error("offline") },
                 },
             },
             stateManager,

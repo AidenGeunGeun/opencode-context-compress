@@ -1,4 +1,3 @@
-import { tool } from "@opencode-ai/plugin/tool";
 import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js";
 import { saveSessionState } from "../state/persistence.js";
 import { loadPrompt } from "../prompts/index.js";
@@ -8,15 +7,14 @@ import { sendCompressNotification } from "../ui/notification.js";
 import { selectDeterministicCompressionSpan } from "../messages/context-map.js";
 import { findActiveManagementTurn } from "../messages/compress-transform.js";
 import { isIgnoredUserMessage } from "../messages/utils.js";
-import { isGoalContinuationMessage, recoverGoalAfterCompression } from "../goal.js";
 import { listSessionMessages } from "../sdk/client.js";
 import { getPostCompressionCooldownRemaining } from "../auto-policy.js";
 import { orderCompressBlocks } from "../messages/blocks.js";
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
 function isVisibleUserMessage(message) {
     return (message.info.role === "user" &&
-        !isIgnoredUserMessage(message) &&
-        !isGoalContinuationMessage(message));
+        message.info.sourceType !== "synthetic" &&
+        !isIgnoredUserMessage(message));
 }
 function findExecutingToolMessage(rawMessages, messageId, callId) {
     const matches = rawMessages
@@ -33,7 +31,7 @@ export function resolveCompressionBoundary(rawMessages, state, toolMessageId, ca
     const activeTurn = findActiveManagementTurn(state, rawMessages);
     if (activeTurn) {
         if (activeTurn.turn.source === "squash") {
-            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.");
+            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.");
         }
         return {
             history: rawMessages.slice(0, activeTurn.triggerIndex),
@@ -60,7 +58,7 @@ export function resolveCompressionBoundary(rawMessages, state, toolMessageId, ca
         .find((turn) => !turn.completedAt && turn.triggerMessageId === parentId);
     if (matchingManagementTurn) {
         if (matchingManagementTurn.source === "squash") {
-            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.");
+            throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.");
         }
         return {
             history: rawMessages.slice(0, owner.index),
@@ -83,15 +81,11 @@ function buildCompressReceipt(topic, blockId, restoreDisposition) {
         : finish;
 }
 export function createCompressTool(ctx) {
-    return tool({
+    return {
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            summary: tool.schema
-                .string()
-                .describe("Truthful durable replacement for all eligible history"),
-            topic: tool.schema
-                .string()
-                .describe("Short block title, usually 3-5 words"),
+            summary: { type: "string", description: "Compact structured continuation handoff described by this tool's instructions" },
+            topic: { type: "string", description: "Short block title, usually 3-5 words" },
         },
         async execute(args, toolCtx) {
             const { client, stateManager, logger } = ctx;
@@ -120,7 +114,8 @@ export function createCompressTool(ctx) {
                 if (!state.persistenceSynchronized) {
                     throw new Error("compress could not synchronize saved session state. Nothing was compressed.");
                 }
-                const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, typeof toolCtx.callID === "string" ? toolCtx.callID : undefined);
+                const callId = toolCtx.id ?? toolCtx.callID;
+                const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, callId);
                 if (!boundary.managementTurn &&
                     getPostCompressionCooldownRemaining(state, rawMessages) > 0) {
                     const remaining = getPostCompressionCooldownRemaining(state, rawMessages);
@@ -132,12 +127,6 @@ export function createCompressTool(ctx) {
                 }
                 const containedToolIds = collectToolIdsInRange(span.messages, 0, span.messages.length - 1);
                 const estimatedCompressedTokens = estimateTokensBatch(collectContentInRange(span.messages, 0, span.messages.length - 1), state.modelContext?.providerId);
-                await toolCtx.ask({
-                    permission: "compress",
-                    patterns: ["*"],
-                    always: ["*"],
-                    metadata: {},
-                });
                 const candidateCompressed = {
                     toolIds: new Set(state.compressed.toolIds),
                     messageIds: new Set(state.compressed.messageIds),
@@ -197,10 +186,6 @@ export function createCompressTool(ctx) {
                     estimatedCompressedTokens,
                     storedBlockId: storedBlock.label,
                     continueTask: boundary.managementTurn?.source === "automatic",
-                    goalOverflowRecovery: boundary.managementTurn?.triggeredByMessageId ===
-                        state.goalOverflowRecovery?.overflowMessageId
-                        ? state.goalOverflowRecovery
-                        : undefined,
                     currentParams: {
                         providerId: state.modelContext?.providerId,
                         modelId: state.modelContext?.modelId,
@@ -213,18 +198,9 @@ export function createCompressTool(ctx) {
                 return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
             }
             await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
-            const recovery = outcome.goalOverflowRecovery
-                ? await recoverGoalAfterCompression(client, sessionId, outcome.goalOverflowRecovery)
-                : undefined;
-            const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, recovery ? recovery === "resumed" : outcome.continueTask);
-            if (recovery === "changed") {
-                return `${receipt} The blocked Goal changed, so it was not resumed.`;
-            }
-            if (recovery === "unavailable") {
-                return `${receipt} Goal recovery is unavailable on this host, so no Goal was resumed.`;
-            }
+            const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
             return receipt;
         },
-    });
+    };
 }
 //# sourceMappingURL=compress.js.map

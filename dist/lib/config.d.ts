@@ -1,4 +1,6 @@
-import type { PluginInput } from "@opencode-ai/plugin";
+export interface ConfigContext {
+    directory: string;
+}
 export interface CompressTool {
     permission: "ask" | "allow" | "deny";
     showCompression: boolean;
@@ -30,5 +32,5 @@ export interface PluginConfig {
 }
 export declare const VALID_CONFIG_KEYS: Set<string>;
 export declare function getInvalidConfigKeys(userConfig: Record<string, any>): string[];
-export declare function getConfig(ctx: PluginInput): PluginConfig;
+export declare function getConfig(ctx: ConfigContext): PluginConfig;
 //# sourceMappingURL=config.d.ts.map

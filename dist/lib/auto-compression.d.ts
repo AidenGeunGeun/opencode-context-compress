@@ -45,12 +45,5 @@ export declare function createChatParamsHandler(stateManager: SessionStateManage
         };
     };
 }) => Promise<void>;
-export declare function createAutomaticCompressionEventHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig): (input: {
-    event?: {
-        type?: string;
-        properties?: {
-            info?: AssistantMessageInfo;
-        };
-    };
-}) => Promise<void>;
+export declare function createAutomaticCompressionEventHandler(client: any, stateManager: SessionStateManager, logger: Logger, config: PluginConfig, acceptsSession?: (sessionID: string, event: unknown) => Promise<boolean>): (input: unknown) => Promise<void>;
 //# sourceMappingURL=auto-compression.d.ts.map

@@ -3,6 +3,46 @@ import type { SessionState } from "../state/index.js"
 import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js"
 import type { PluginConfig } from "../config.js"
 import { promptSession, showToast } from "../sdk/client.js"
+import type { CompressToolContext } from "../tools/types.js"
+
+export async function sendSquashNotification(
+    client: CompressToolContext["client"],
+    logger: Logger,
+    config: PluginConfig,
+    sessionId: string,
+    outcome: {
+        oldFrom: string
+        oldTo: string
+        newLabel: string
+        topic: string
+        selectedBlocks: number
+        blocksBefore: number
+        blocksAfter: number
+        oldVisibleTokens: number
+        newVisibleTokens: number
+    },
+): Promise<void> {
+    if (config.notification === "off") return
+    const delta = outcome.oldVisibleTokens - outcome.newVisibleTokens
+    const change = delta > 0 ? "reduced" : delta < 0 ? "increased" : "unchanged"
+    const message = [
+        "▣ Context Squash | Complete",
+        `→ Replaced: [${outcome.oldFrom}]-[${outcome.oldTo}] → [${outcome.newLabel}] (${outcome.selectedBlocks} blocks → 1)`,
+        `→ Total blocks: ${outcome.blocksBefore} → ${outcome.blocksAfter} (${outcome.blocksBefore} - ${outcome.selectedBlocks} + 1)`,
+        `→ Selected-block context (estimated): ${formatTokenCount(outcome.oldVisibleTokens)} → ${formatTokenCount(outcome.newVisibleTokens)}; ${change} by ${formatTokenCount(Math.abs(delta))}`,
+        ...(config.notification === "detailed" ? [`→ Topic: ${outcome.topic}`] : []),
+    ].join("\n")
+    if (config.notificationType === "toast") {
+        const shown = await showToast(client, {
+            title: "Squash Notification",
+            message,
+            variant: "info",
+            duration: 5000,
+        })
+        if (shown) return
+    }
+    await sendIgnoredMessage(client, sessionId, message, {}, logger)
+}
 
 const TOAST_BODY_MAX_LINES = 12
 const TOAST_SUMMARY_MAX_CHARS = 600

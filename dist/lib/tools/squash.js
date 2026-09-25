@@ -1,4 +1,3 @@
-import { tool } from "@opencode-ai/plugin/tool";
 import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js";
 import { saveSessionState } from "../state/persistence.js";
 import { loadPrompt } from "../prompts/index.js";
@@ -6,6 +5,7 @@ import { estimateTokensBatch } from "../token-utils.js";
 import { findActiveManagementTurn } from "../messages/compress-transform.js";
 import { formatCompressBlockContent, orderCompressBlocks, } from "../messages/blocks.js";
 import { listSessionMessages } from "../sdk/client.js";
+import { sendSquashNotification } from "../ui/notification.js";
 const SQUASH_TOOL_DESCRIPTION = loadPrompt("squash-tool-spec");
 const BLOCK_LABEL = /^b(?:0|[1-9]\d*)$/;
 function parseBlockLabel(value, field) {
@@ -17,31 +17,6 @@ function parseBlockLabel(value, field) {
         throw new Error(`squash requires ${field} to be a current block label such as b1`);
     }
     return index;
-}
-function findExecutingSquashMessage(rawMessages, messageId, callId) {
-    const matches = rawMessages
-        .map((message, index) => ({ message, index }))
-        .filter(({ message }) => message.info.id === messageId);
-    if (matches.length !== 1 || matches[0].message.info.role !== "assistant")
-        return undefined;
-    const hasExecutingCall = matches[0].message.parts.some((part) => part.type === "tool" &&
-        part.tool === "squash" &&
-        (!callId || part.callID === callId));
-    return hasExecutingCall ? matches[0] : undefined;
-}
-function resolveAuthorizedSquash(rawMessages, state, toolMessageId, callId) {
-    const executing = findExecutingSquashMessage(rawMessages, toolMessageId, callId);
-    const active = findActiveManagementTurn(state, rawMessages);
-    if (!executing ||
-        !active ||
-        active.turn.source !== "squash" ||
-        executing.index <= active.triggerIndex) {
-        throw new Error("squash is only authorized inside the active management turn created by the current user's `/compress squash` command. Nothing changed.");
-    }
-    return {
-        turn: active.turn,
-        orderedBlocks: orderCompressBlocks(rawMessages, state.compressSummaries),
-    };
 }
 function buildReplacement(selected, summary, topic) {
     const messageIds = [];
@@ -62,13 +37,13 @@ function buildReplacement(selected, summary, topic) {
     };
 }
 export function createSquashTool(ctx) {
-    return tool({
+    return {
         description: SQUASH_TOOL_DESCRIPTION,
         args: {
-            from: tool.schema.string().describe("Inclusive current block label, for example b1"),
-            to: tool.schema.string().describe("Inclusive current block label, for example b12"),
-            summary: tool.schema.string().describe("Truthful replacement for only the selected blocks"),
-            topic: tool.schema.string().describe("Short replacement block title"),
+            from: { type: "string", description: "Inclusive current block label, for example b1" },
+            to: { type: "string", description: "Inclusive current block label, for example b12" },
+            summary: { type: "string", description: "Truthful replacement for only the selected blocks" },
+            topic: { type: "string", description: "Short replacement block title" },
         },
         async execute(args, toolCtx) {
             const input = args;
@@ -99,44 +74,41 @@ export function createSquashTool(ctx) {
                 if (!state.persistenceSynchronized) {
                     throw new Error("squash could not synchronize saved session state. Nothing changed.");
                 }
-                const callId = typeof toolCtx.callID === "string" ? toolCtx.callID : undefined;
-                const authorized = resolveAuthorizedSquash(rawMessages, state, toolCtx.messageID, callId);
+                const orderedBlocks = orderCompressBlocks(rawMessages, state.compressSummaries);
+                const active = findActiveManagementTurn(state, rawMessages);
+                const managementTurn = active?.turn.source === "squash" ? active.turn : undefined;
                 if (fromIndex > toIndex) {
                     throw new Error("squash requires from to precede or equal to to. Nothing changed.");
                 }
-                if (fromIndex >= authorized.orderedBlocks.length ||
-                    toIndex >= authorized.orderedBlocks.length) {
+                if (fromIndex >= orderedBlocks.length ||
+                    toIndex >= orderedBlocks.length) {
                     throw new Error("squash block range does not exist in the current block ordering. Nothing changed.");
                 }
                 if (toIndex - fromIndex + 1 < 2) {
                     throw new Error("squash requires a range containing at least two blocks. Nothing changed.");
                 }
-                const selected = authorized.orderedBlocks.slice(fromIndex, toIndex + 1);
+                const selected = orderedBlocks.slice(fromIndex, toIndex + 1);
                 const replacement = buildReplacement(selected, summary, topic);
                 const replacementLabel = selected[0].label;
                 const oldVisibleTokens = estimateTokensBatch(selected.map(formatCompressBlockContent), state.modelContext?.providerId);
                 const newVisibleTokens = estimateTokensBatch([formatCompressBlockContent({ label: replacementLabel, summary: replacement })], state.modelContext?.providerId);
                 const estimatedSavedTokens = Math.max(0, oldVisibleTokens - newVisibleTokens);
-                await toolCtx.ask({
-                    permission: "compress",
-                    patterns: ["*"],
-                    always: ["*"],
-                    metadata: {},
-                });
-                const orderedSummaries = authorized.orderedBlocks.map((block) => block.summary);
+                const orderedSummaries = orderedBlocks.map((block) => block.summary);
                 const candidateSummaries = [
                     ...orderedSummaries.slice(0, fromIndex),
                     replacement,
                     ...orderedSummaries.slice(toIndex + 1),
                 ];
                 const completedAt = new Date().toISOString();
-                const candidateManagementTurns = state.managementTurns.map((turn) => turn === authorized.turn
-                    ? {
-                        ...turn,
-                        completedAt,
-                        completedMessageId: toolCtx.messageID,
-                    }
-                    : turn);
+                const candidateManagementTurns = managementTurn
+                    ? state.managementTurns.map((turn) => turn === managementTurn
+                        ? {
+                            ...turn,
+                            completedAt,
+                            completedMessageId: toolCtx.messageID,
+                        }
+                        : turn)
+                    : [...state.managementTurns];
                 const candidateState = {
                     ...state,
                     compressSummaries: candidateSummaries,
@@ -157,10 +129,16 @@ export function createSquashTool(ctx) {
                     oldTo: selected[selected.length - 1].label,
                     newLabel: replacementLabel,
                     topic,
+                    selectedBlocks: selected.length,
+                    blocksBefore: orderedBlocks.length,
+                    blocksAfter: candidateSummaries.length,
+                    oldVisibleTokens,
+                    newVisibleTokens,
                 };
             });
+            await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
             return `Squash complete. Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
         },
-    });
+    };
 }
 //# sourceMappingURL=squash.js.map

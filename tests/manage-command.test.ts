@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { extractManageCommandResidual, handleManageCommand } from "../lib/commands/manage.ts"
+import { extractManageCommandResidual, generateAutomaticPromptMessageId, generateManagePromptMessageId, handleManageCommand } from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
 import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
 
@@ -15,6 +15,19 @@ const logger = {
     error: () => {},
     debug: () => {},
 } as any
+
+it("keeps automatic admission identity stable across unrelated prompt creation", () => {
+    const trigger = {
+        id: "assistant-threshold-crossing", sessionID: "session-a", role: "assistant" as const,
+        time: { created: 1788599600000, completed: 1788599634450 },
+    }
+    const first = generateAutomaticPromptMessageId("session-a", trigger)
+    generateManagePromptMessageId()
+    assert.equal(generateAutomaticPromptMessageId("session-a", structuredClone(trigger)), first)
+    assert.notEqual(generateAutomaticPromptMessageId("session-b", trigger), first)
+    assert.notEqual(generateAutomaticPromptMessageId("session-a", { ...trigger, id: "next-step" }), first)
+    assert.match(first, /^msg_[0-9a-f]{26}$/)
+})
 
 const config: PluginConfig = {
     enabled: true,
@@ -81,20 +94,6 @@ const createPromptResponse = (assistantId: string, userId: string) => ({
     },
 })
 
-const insertLiveMessageById = <T extends { id: string }>(messages: T[], message: T) => {
-    let low = 0
-    let high = messages.length
-    while (low < high) {
-        const mid = Math.floor((low + high) / 2)
-        if (messages[mid].id < message.id) {
-            low = mid + 1
-        } else {
-            high = mid
-        }
-    }
-    messages.splice(low, 0, message)
-}
-
 describe("handleManageCommand", () => {
     it("does not open a management turn when compress is denied", async () => {
         const sessionId = `session-manage-tool-denied-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -103,14 +102,11 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         let promptCalls = 0
-        const toasts: any[] = []
+        const feedback: any[] = []
         const client = {
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input)
-                },
-            },
             session: {
+                wait: async () => undefined,
+                synthetic: async (input: any) => feedback.push(input),
                 prompt: async () => {
                     promptCalls++
                 },
@@ -137,8 +133,8 @@ describe("handleManageCommand", () => {
 
         assert.equal(promptCalls, 0)
         assert.equal(state.managementTurns.length, 0)
-        assert.equal(toasts.length, 1)
-        assert.match(toasts[0].body.message, /Enable the compression tool/)
+        assert.equal(feedback.length, 1)
+        assert.match(feedback[0].text, /Enable the compression tool/)
     })
 
     it("sends a self-contained one-call reminder and anchors cleanup to the generated prompt message ID", async () => {
@@ -154,10 +150,8 @@ describe("handleManageCommand", () => {
         const client = {
             session: {
                 prompt: async (input: any) => {
-                    promptBody = input.body
-                    // Real OpenCode threads the assistant reply's parentID to the
-                    // literal messageID we supplied here.
-                    return createPromptResponse(generatedAssistantId, input.body.messageID)
+                    promptBody = input
+                    return createPromptResponse(generatedAssistantId, input.id)
                 },
             },
         }
@@ -174,19 +168,18 @@ describe("handleManageCommand", () => {
                 arguments: "manage",
             })
 
-            const parts: any[] = promptBody.parts
-            const reminderText = parts[0].text
-            const fullPayload = parts.map((part) => part.text).join("\n\n")
+            const reminderText = promptBody.text
+            const fullPayload = promptBody.text
             assert.match(reminderText, /<system-reminder>/)
             assert.match(reminderText, /Call `compress` once with `summary` and `topic`/)
             assert.match(reminderText, /A failure means nothing was compressed/)
             assert.doesNotMatch(reminderText, /compress_map|context-map/i)
             assert.doesNotMatch(fullPayload, /compress_map|context-map/i)
-            assert.equal(parts.length, 1)
-
-            assert.match(promptBody.messageID, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+            assert.match(promptBody.id, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
             assert.equal(state.managementTurns.length, 1)
-            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
+        assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
+        assert.deepEqual(promptBody.metadata, { "opencode.context-compress.management": true })
+            assert.equal(state.managementTurns[0].cleanupVersion, 2)
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -210,7 +203,7 @@ describe("handleManageCommand", () => {
         const client = {
             session: {
                 prompt: async (input: any) => {
-                    promptBody = input.body
+                    promptBody = input
                     return createPromptResponse(generatedAssistantId, misleadingNotificationId)
                 },
             },
@@ -229,64 +222,9 @@ describe("handleManageCommand", () => {
             })
 
             assert.equal(state.managementTurns.length, 1)
-            assert.ok(promptBody.messageID, "expected a generated messageID to be sent")
-            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.messageID)
+            assert.ok(promptBody.id, "expected a generated message ID to be sent")
+            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
             assert.notEqual(state.managementTurns[0].triggerMessageId, misleadingNotificationId)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
-    it("uses the assigned prompt ID that preserves live-render ordering", async () => {
-        const sessionId = `session-manage-render-order-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const state = createSessionState()
-        state.sessionId = sessionId
-        state.initialized = true
-        state.persistenceSynchronized = true
-
-        const generatedAssistantId = "msg_zzzzzzzzzzzzzzzzzzzzzzzzzz"
-        let promptBody: any
-        const client = {
-            session: {
-                prompt: async (input: any) => {
-                    promptBody = input.body
-                    return createPromptResponse(generatedAssistantId, input.body.messageID)
-                },
-            },
-        }
-
-        try {
-            await handleManageCommand({
-                client,
-                stateManager: new SessionStateManager(),
-                state,
-                config,
-                logger,
-                sessionId,
-                messages: [createUserMessage(sessionId)] as any,
-                arguments: "manage",
-            })
-
-            const triggerMessageId = state.managementTurns[0].triggerMessageId
-            assert.equal(promptBody.messageID, triggerMessageId)
-            assert.ok(
-                triggerMessageId > "msg_f36d1953e001LLAN53Qcy9ZdYU",
-                "generated manage prompt ID must sort after recent OpenCode msg_f... IDs",
-            )
-
-            const liveMessages: Array<{ id: string; role: "user" | "assistant"; parentID?: string }> = []
-            insertLiveMessageById(liveMessages, { id: triggerMessageId, role: "user" })
-            insertLiveMessageById(liveMessages, {
-                id: generatedAssistantId,
-                role: "assistant",
-                parentID: triggerMessageId,
-            })
-
-            assert.deepEqual(
-                liveMessages.map((message) => message.id),
-                [triggerMessageId, generatedAssistantId],
-            )
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -298,15 +236,12 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
 
-        const toasts: any[] = []
+        const feedback: any[] = []
         let promptCalls = 0
         const client = {
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input)
-                },
-            },
             session: {
+                wait: async () => undefined,
+                synthetic: async (input: any) => feedback.push(input),
                 prompt: async () => {
                     promptCalls++
                 },
@@ -326,8 +261,8 @@ describe("handleManageCommand", () => {
 
         assert.equal(promptCalls, 0)
         assert.equal(state.managementTurns.length, 0)
-        assert.equal(toasts.length, 1)
-        assert.match(toasts[0].body.message, /Compression management could not start/)
+        assert.equal(feedback.length, 1)
+        assert.match(feedback[0].text, /Compression management could not start/)
     })
 
     it("does not start management when saved session state was not synchronized", async () => {
@@ -335,15 +270,12 @@ describe("handleManageCommand", () => {
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
-        const toasts: any[] = []
+        const feedback: any[] = []
         let promptCalls = 0
         const client = {
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input)
-                },
-            },
             session: {
+                wait: async () => undefined,
+                synthetic: async (input: any) => feedback.push(input),
                 prompt: async () => {
                     promptCalls++
                 },
@@ -363,8 +295,8 @@ describe("handleManageCommand", () => {
 
         assert.equal(promptCalls, 0)
         assert.equal(state.managementTurns.length, 0)
-        assert.equal(toasts.length, 1)
-        assert.match(toasts[0].body.message, /saved session state could not be loaded/)
+        assert.equal(feedback.length, 1)
+        assert.match(feedback[0].text, /saved session state could not be loaded/)
     })
 
     it("shows visible feedback when the manage prompt throws", async () => {
@@ -375,15 +307,12 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
 
-        const toasts: any[] = []
+        const feedback: any[] = []
         let promptCalls = 0
         const client = {
-            tui: {
-                showToast: async (input: any) => {
-                    toasts.push(input)
-                },
-            },
             session: {
+                wait: async () => undefined,
+                synthetic: async (input: any) => feedback.push(input),
                 prompt: async () => {
                     promptCalls++
                     throw new Error("agent unavailable")
@@ -405,8 +334,8 @@ describe("handleManageCommand", () => {
 
             assert.equal(promptCalls, 1)
             assert.equal(state.managementTurns.length, 0)
-            assert.equal(toasts.length, 1)
-            assert.match(toasts[0].body.message, /agent unavailable/)
+            assert.equal(feedback.length, 1)
+            assert.match(feedback[0].text, /agent unavailable/)
         } finally {
             await cleanupSessionFile(sessionId)
         }

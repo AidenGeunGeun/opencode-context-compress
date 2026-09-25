@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { transformMessagesForSearch } from "../lib/messages/compress-transform.ts"
+import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { backfillCompressSummaryMessageIds } from "../lib/state/persistence.ts"
 import type { CompressSummary, SessionState } from "../lib/state/types.ts"
 
@@ -64,6 +65,35 @@ describe("compressed message transformation", () => {
         assert.equal(syntheticMap.size, 1)
         assert.equal(transformed[0].info.id, "m1")
         assert.equal((transformed[1] as any).parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
+    })
+
+    it("excludes Version 2 machinery from a future summary without dropping other parts", () => {
+        const state = createState()
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-v2",
+                cleanupVersion: 2,
+                completedAt: new Date().toISOString(),
+                completedMessageId: "compress-v2",
+            },
+        ]
+        const completion = textMessage("compress-v2", "reasoning before compression", "assistant") as any
+        completion.parts.push({ type: "tool", tool: "compress", callID: "call-v2", state: { status: "completed" } })
+        completion.parts.push({ type: "text", text: "work after compression" })
+        const rawMessages = [
+            textMessage("before-v2", "before"),
+            textMessage("manage-v2", "CONTEXT MANAGEMENT REQUESTED"),
+            completion,
+            textMessage("after-v2", "continued work", "assistant"),
+            textMessage("user-v2", "next request"),
+        ]
+
+        const span = selectDeterministicCompressionSpan(rawMessages as any, state, logger, 0)
+
+        assert.deepEqual(span.messageIds, ["before-v2", "compress-v2", "after-v2", "user-v2"])
+        assert.equal(span.messages.flatMap((message) => message.parts).some((part: any) => part.tool === "compress"), false)
+        assert.match(JSON.stringify(span.messages), /reasoning before compression|work after compression|continued work/)
+        assert.doesNotMatch(JSON.stringify(span.messages), /CONTEXT MANAGEMENT REQUESTED/)
     })
 
 })

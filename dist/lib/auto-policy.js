@@ -1,5 +1,4 @@
 import { isIgnoredUserMessage } from "./messages/utils.js";
-import { isGoalContinuationMessage } from "./goal.js";
 export const POST_COMPRESSION_COOLDOWN_RESPONSES = 3;
 export function resolveEffectiveAutoCompressionPolicy(config, state) {
     const enabledOverride = state.autoCompressionEnabledOverride;
@@ -19,7 +18,9 @@ export function messageContainsCompressCall(message) {
     return !!message?.parts?.some((part) => part.type === "tool" && part.tool === "compress");
 }
 function isVisibleUserMessage(message) {
-    return message.info.role === "user" && !isIgnoredUserMessage(message) && !isGoalContinuationMessage(message);
+    return (message.info.role === "user" &&
+        message.info.sourceType !== "synthetic" &&
+        !isIgnoredUserMessage(message));
 }
 function collectManagementTurnMessageIds(state, messages) {
     const managementMessageIds = new Set();

@@ -1,4 +1,4 @@
-import { transformMessagesForSearch } from "./compress-transform.js";
+import { stripV2MachineryForCompressionSelection, transformMessagesForSearch, } from "./compress-transform.js";
 function deriveProtectedTailMessageIds(messages, protectedTurns) {
     if (protectedTurns <= 0 || messages.length === 0)
         return [];
@@ -21,7 +21,9 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
  * preserving the configured newest execution steps verbatim.
  */
 export function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
-    const { transformed, syntheticMap } = transformMessagesForSearch(rawHistory, state, logger);
+    const search = transformMessagesForSearch(rawHistory, state, logger);
+    const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
+    const syntheticMap = search.syntheticMap;
     const representedBlockAnchors = new Set([...syntheticMap.values()].map((summary) => summary.anchorMessageId));
     const missingBlock = state.compressSummaries.find((summary) => !representedBlockAnchors.has(summary.anchorMessageId));
     if (missingBlock) {

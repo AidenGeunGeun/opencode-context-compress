@@ -13,15 +13,13 @@ Selection:
 
 Summary fidelity:
 - This is additional lossy compression of summaries. The hidden original messages are unavailable and cannot be restored or reread.
-- Preserve the selected blocks' internal chronology, objectives, decisions, constraints, established outcomes, unresolved state at the end of that historical range, and load-bearing evidence that remains necessary.
+- Compress only the selected historical trajectory, not the whole current state. Preserve the selected blocks' internal chronology, objectives, decisions, constraints, established outcomes, unresolved state at the end of that historical range, and load-bearing evidence that remains necessary.
 - Never reorder events, blend noncontiguous periods, or import later out-of-range events into the historical replacement as though they occurred inside the selected range.
 - You may consult newer out-of-range evidence only to avoid a plainly misleading condensation. Leave that newer evidence represented in its own later block or conversation rather than moving it backward.
-
-{{report_block}}
 
 Call `squash` once with `from`, `to`, `summary`, and `topic`.
 
 Result handling:
 - A success receipt means the replacement is durable and already active. Do not make a second squash or compress call this turn.
-- A failure means nothing changed. Surface the exact diagnostic and do not retry unless the user gives new authorization.
+- A failure means nothing changed. Surface the exact diagnostic before deciding whether a retry is warranted.
 </system-reminder>

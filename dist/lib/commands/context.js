@@ -57,7 +57,7 @@ function analyzeTokens(state, messages, providerId) {
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info;
-            if (assistantInfo.tokens?.input > 0 || assistantInfo.tokens?.cache?.read > 0) {
+            if ((assistantInfo.tokens?.input ?? 0) > 0 || (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
                 firstAssistant = assistantInfo;
                 break;
             }
@@ -68,7 +68,7 @@ function analyzeTokens(state, messages, providerId) {
         const msg = messages[i];
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info;
-            if (assistantInfo.tokens?.output > 0) {
+            if ((assistantInfo.tokens?.output ?? 0) > 0) {
                 lastAssistant = assistantInfo;
                 break;
             }

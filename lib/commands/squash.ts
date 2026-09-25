@@ -58,13 +58,14 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
             }
         }
 
-        if (findActiveManagementTurn(ctx.state, ctx.messages)) {
+        const active = findActiveManagementTurn(ctx.state, ctx.messages)
+        if (active && active.turn.source !== "squash") {
             return async () => {
                 await sendManageFailureFeedback(
                     ctx.client,
                     ctx.logger,
                     ctx.sessionId,
-                    "Block squash could not start because another compression management turn is still active.",
+                    "Block squash could not start because a compression management turn is still active.",
                     currentParams,
                 )
                 return false
@@ -102,7 +103,7 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
 
         return stageManagementTurnWithinLock({
             ...ctx,
-            systemPrompt: renderSquashSystemPrompt(currentParams.agent),
+            systemPrompt: renderSquashSystemPrompt(),
             retainedText: extractSquashCommandResidual(ctx.arguments),
             source: "squash",
         })

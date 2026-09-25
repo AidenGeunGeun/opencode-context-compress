@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Logger } from "../logger.js"
 import type { ManagementTurn, SessionState, WithParts } from "../state/index.js"
 import type { SessionStateManager } from "../state/state.js"
@@ -8,8 +9,7 @@ import { getCurrentParams } from "../token-utils.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
-import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js"
-import type { GoalOverflowRecovery } from "../goal.js"
+import { promptSession, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
     client: any
@@ -37,7 +37,6 @@ export interface ManagementTurnStartContext {
     thresholdTokens?: number
     protectedTurns?: number
     asyncPrompt?: boolean
-    goalOverflowRecovery?: GoalOverflowRecovery
 }
 
 export type StagedManagementTurn = () => Promise<boolean>
@@ -77,27 +76,38 @@ const ASCENDING_ID_RANDOM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi
 let lastGeneratedMessageIdTimestamp = 0
 let lastGeneratedMessageIdCounter = 0
 
-function generateAscendingMessageIdSuffix(timestamp = Date.now()): string {
-    if (timestamp !== lastGeneratedMessageIdTimestamp) {
-        lastGeneratedMessageIdTimestamp = timestamp
-        lastGeneratedMessageIdCounter = 0
+function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity?: string): string {
+    if (!identity) {
+        if (timestamp !== lastGeneratedMessageIdTimestamp) {
+            lastGeneratedMessageIdTimestamp = timestamp
+            lastGeneratedMessageIdCounter = 0
+        }
+        lastGeneratedMessageIdCounter++
     }
-    lastGeneratedMessageIdCounter++
 
-    const current = BigInt(timestamp) * 0x1000n + BigInt(lastGeneratedMessageIdCounter)
+    const current = BigInt(timestamp) * 0x1000n + BigInt(identity ? 0 : lastGeneratedMessageIdCounter)
+    const value = ~current
     const time = Array.from({ length: 6 }, (_, index) =>
-        Number((current >> BigInt(40 - 8 * index)) & 0xffn)
+        Number((value >> BigInt(40 - 8 * index)) & 0xffn)
             .toString(16)
             .padStart(2, "0"),
     ).join("")
-    const random = Array.from({ length: 14 }, () =>
+    const random = identity ? createHash("sha256").update(identity).digest("hex").slice(0, 14) : Array.from({ length: 14 }, () =>
         ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)],
     ).join("")
     return time + random
 }
 
 export function generateManagePromptMessageId(): string {
-    return `msg_${generateAscendingMessageIdSuffix()}`
+    return `msg_${generateLiveOrderedMessageIdSuffix()}`
+}
+
+export function generateAutomaticPromptMessageId(sessionId: string, trigger: WithParts["info"]): string {
+    // The host deduplicates prompt admission by ID, including across plugin instances.
+    return `msg_${generateLiveOrderedMessageIdSuffix(
+        trigger.time.completed ?? trigger.time.created,
+        JSON.stringify(["automatic-compression", sessionId, trigger.id]),
+    )}`
 }
 
 /**
@@ -160,9 +170,7 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
-        systemPrompt: renderSystemPrompt(
-            getCurrentParams(ctx.state, ctx.messages, ctx.logger).agent,
-        ),
+        systemPrompt: renderSystemPrompt(),
         retainedText: extractManageCommandResidual(ctx.arguments),
     })
 }
@@ -220,9 +228,18 @@ export async function stageManagementTurnWithinLock(
         })
     }
 
-    const triggerMessageId = generateManagePromptMessageId()
+    const trigger = ctx.source === "automatic"
+        ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
+        : undefined
+    if (ctx.source === "automatic" && !trigger) {
+        throw new Error("Automatic compression trigger is missing from projected history")
+    }
+    const triggerMessageId = trigger
+        ? generateAutomaticPromptMessageId(sessionId, trigger.info)
+        : generateManagePromptMessageId()
     const managementTurn: ManagementTurn = {
         triggerMessageId,
+        cleanupVersion: 2,
         ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
         ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
@@ -233,7 +250,6 @@ export async function stageManagementTurnWithinLock(
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
         compressionMapSnapshot: undefined,
-        ...(ctx.goalOverflowRecovery ? { goalOverflowRecovery: ctx.goalOverflowRecovery } : {}),
     }
     const statePersisted = await saveSessionState(candidateState, logger)
     if (!statePersisted) {
@@ -265,14 +281,14 @@ export async function stageManagementTurnWithinLock(
     return async () => {
         let promptResult: any
         try {
-            const sendPrompt = ctx.asyncPrompt ? promptSessionAsync : promptSession
-            promptResult = await sendPrompt(client, {
+            promptResult = await promptSession(client, {
                 sessionId,
                 agent: currentParams.agent,
                 model,
                 variant: currentParams.variant,
                 parts: messageParts,
                 messageId: triggerMessageId,
+                metadata: { "opencode.context-compress.management": true },
             })
         } catch (err: any) {
             const rollbackResult = await stateManager.runExclusive(sessionId, async () => {

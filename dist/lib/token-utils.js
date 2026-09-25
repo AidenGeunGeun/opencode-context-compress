@@ -19,16 +19,16 @@ export function getCurrentParams(state, messages, logger) {
     if (!userMsg) {
         logger.debug("No user message found when determining current params");
         return {
-            providerId: undefined,
-            modelId: undefined,
-            agent: undefined,
+            providerId: state.modelContext?.providerId,
+            modelId: state.modelContext?.modelId,
+            agent: state.currentAgent,
             variant: state.variant,
         };
     }
     const userInfo = userMsg.info;
-    const agent = userInfo.agent;
-    const providerId = userInfo.model.providerID;
-    const modelId = userInfo.model.modelID;
+    const agent = userInfo.agent ?? state.currentAgent;
+    const providerId = userInfo.model?.providerID ?? state.modelContext?.providerId;
+    const modelId = userInfo.model?.modelID ?? state.modelContext?.modelId;
     const variant = state.variant ?? userInfo.variant;
     return { providerId, modelId, agent, variant };
 }

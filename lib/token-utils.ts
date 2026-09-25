@@ -1,5 +1,5 @@
 import { SessionState, WithParts } from "./state/index.js"
-import { UserMessage } from "@opencode-ai/sdk/v2"
+import type { UserMessage } from "./state/types.js"
 import { Logger } from "./logger.js"
 import { getLastUserMessage } from "./shared-utils.js"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
@@ -33,16 +33,19 @@ export function getCurrentParams(
     if (!userMsg) {
         logger.debug("No user message found when determining current params")
         return {
-            providerId: undefined,
-            modelId: undefined,
-            agent: undefined,
+            providerId: state.modelContext?.providerId,
+            modelId: state.modelContext?.modelId,
+            agent: state.currentAgent,
             variant: state.variant,
         }
     }
-    const userInfo = userMsg.info as UserMessage
-    const agent: string = userInfo.agent
-    const providerId: string | undefined = userInfo.model.providerID
-    const modelId: string | undefined = userInfo.model.modelID
+    const userInfo = userMsg.info as UserMessage & {
+        agent?: string
+        model?: { providerID?: string; modelID?: string }
+    }
+    const agent = userInfo.agent ?? state.currentAgent
+    const providerId = userInfo.model?.providerID ?? state.modelContext?.providerId
+    const modelId = userInfo.model?.modelID ?? state.modelContext?.modelId
     const variant: string | undefined = state.variant ?? userInfo.variant
 
     return { providerId, modelId, agent, variant }

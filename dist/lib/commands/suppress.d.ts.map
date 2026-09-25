@@ -1,1 +1,0 @@
-{"version":3,"file":"suppress.d.ts","sourceRoot":"","sources":["../../../lib/commands/suppress.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,oBAAoB,GAAG;IAC/B,KAAK,EAAE,OAAO,EAAE,CAAA;IAChB,SAAS,CAAC,EAAE,OAAO,CAAA;CACtB,CAAA;AAED,wBAAgB,2BAA2B,CAAC,MAAM,EAAE,oBAAoB,GAAG,OAAO,CAEjF;AAED,wBAAgB,+BAA+B,CAAC,MAAM,EAAE,oBAAoB,GAAG,IAAI,CAIlF"}

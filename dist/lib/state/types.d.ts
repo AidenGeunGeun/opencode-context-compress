@@ -1,5 +1,63 @@
-import { Message, Part } from "@opencode-ai/sdk/v2";
-import type { GoalOverflowRecovery } from "../goal.js";
+export interface MessageBase {
+    id: string;
+    sessionID: string;
+    role: "user" | "assistant" | "system";
+    sourceType?: string;
+    time: {
+        created: number;
+        completed?: number;
+    };
+    agent?: string;
+    variant?: string;
+    model?: {
+        providerID: string;
+        modelID: string;
+    };
+    providerID?: string;
+    modelID?: string;
+    parentID?: string;
+    summary?: boolean;
+    finish?: string;
+    error?: unknown;
+    tokens?: {
+        input: number;
+        output: number;
+        reasoning: number;
+        cache: {
+            read: number;
+            write: number;
+        };
+    };
+}
+export interface TextPart {
+    type: "text" | "reasoning";
+    text: string;
+    id?: string;
+    sessionID?: string;
+    messageID?: string;
+    synthetic?: boolean;
+    ignored?: boolean;
+}
+export interface ToolPart {
+    type: "tool";
+    callID: string;
+    tool: string;
+    executed?: boolean;
+    state: {
+        status: "streaming" | "running" | "completed" | "error";
+        input: string | Record<string, unknown>;
+        output?: string;
+        error?: string;
+    };
+}
+export interface MarkerPart {
+    type: "step-start" | "step-finish" | "compaction" | "file" | "patch" | "snapshot" | "subtask";
+    [key: string]: unknown;
+}
+export type Message = MessageBase;
+export type UserMessage = MessageBase;
+export type AssistantMessage = MessageBase;
+export type Part = TextPart | ToolPart | MarkerPart;
 export interface WithParts {
     info: Message;
     parts: Part[];
@@ -16,6 +74,8 @@ export interface CompressSummary {
 }
 export interface ManagementTurn {
     triggerMessageId: string;
+    /** Prospective cleanup contract. Missing means preserve legacy span cleanup semantics. */
+    cleanupVersion?: 2;
     retainedText?: string;
     /** Present for plugin-initiated automatic turns or explicit squash management. */
     source?: "automatic" | "squash";
@@ -55,11 +115,11 @@ export interface SessionState {
     autoCompressionContextWindowRatioOverride?: number;
     /** Assistant message carrying the most recent successful `compress` call. */
     compressionCooldownAfterMessageId?: string;
-    /** Exact blocked Goal version associated with the one overflow recovery attempt. */
-    goalOverflowRecovery?: GoalOverflowRecovery;
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number;
     variant: string | undefined;
+    /** Runtime-only agent identity supplied by hosts that omit it from projected user messages. */
+    currentAgent?: string;
     /** Runtime-only model metadata captured from the latest chat.params hook. */
     modelContext?: {
         providerId: string;

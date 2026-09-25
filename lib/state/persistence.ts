@@ -15,7 +15,6 @@ import type {
     ManagementTurn,
     WithParts,
 } from "./types.js"
-import type { GoalOverflowRecovery } from "../goal.js"
 import type { Logger } from "../logger.js"
 
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
@@ -34,7 +33,6 @@ export interface PersistedSessionState {
     autoCompressionTokenThresholdOverride?: number
     autoCompressionContextWindowRatioOverride?: number
     compressionCooldownAfterMessageId?: string
-    goalOverflowRecovery?: GoalOverflowRecovery
     lastCompaction?: number
     lastUpdated: string
 }
@@ -191,6 +189,7 @@ function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefi
         seen.add(turn.triggerMessageId)
         normalized.push({
             triggerMessageId: turn.triggerMessageId,
+            ...(turn.cleanupVersion === 2 ? { cleanupVersion: 2 as const } : {}),
             ...(typeof turn.retainedText === "string" && turn.retainedText.length > 0
                 ? { retainedText: turn.retainedText }
                 : {}),
@@ -227,27 +226,6 @@ function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefi
         })
     }
     return normalized
-}
-
-function normalizeGoalOverflowRecovery(value: unknown): GoalOverflowRecovery | undefined {
-    if (!value || typeof value !== "object") return undefined
-    const recovery = value as Record<string, unknown>
-    if (
-        typeof recovery.overflowMessageId !== "string" ||
-        recovery.overflowMessageId.length === 0 ||
-        typeof recovery.goalID !== "string" ||
-        !recovery.goalID.startsWith("goa_") ||
-        typeof recovery.timeUpdated !== "number" ||
-        !Number.isSafeInteger(recovery.timeUpdated) ||
-        recovery.timeUpdated <= 0
-    ) {
-        return undefined
-    }
-    return {
-        overflowMessageId: recovery.overflowMessageId,
-        goalID: recovery.goalID,
-        timeUpdated: recovery.timeUpdated,
-    }
 }
 
 export function backfillCompressSummaryMessageIds(
@@ -335,9 +313,6 @@ export async function saveSessionState(
                       compressionCooldownAfterMessageId:
                           sessionState.compressionCooldownAfterMessageId,
                   }
-                : {}),
-            ...(sessionState.goalOverflowRecovery
-                ? { goalOverflowRecovery: sessionState.goalOverflowRecovery }
                 : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
@@ -463,7 +438,6 @@ export async function loadSessionState(
     })
 
     const managementTurns = normalizeManagementTurns(state.managementTurns)
-    const goalOverflowRecovery = normalizeGoalOverflowRecovery(state.goalOverflowRecovery)
     const result: PersistedSessionState = {
         sessionName: state.sessionName,
         compressed: state.compressed,
@@ -497,7 +471,6 @@ export async function loadSessionState(
                       state.compressionCooldownAfterMessageId,
               }
             : {}),
-        ...(goalOverflowRecovery ? { goalOverflowRecovery } : {}),
         ...(typeof state.lastCompaction === "number" &&
         Number.isFinite(state.lastCompaction) &&
         state.lastCompaction > 0

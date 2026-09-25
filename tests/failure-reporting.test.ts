@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-import { createChatMessageTransformHandler } from "../lib/hooks.ts"
+import { createChatMessageTransformHandler } from "./transform-harness.ts"
 import { Logger, describeError } from "../lib/logger.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 

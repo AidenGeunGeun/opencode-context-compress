@@ -2,8 +2,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs
 import { join, dirname } from "path"
 import { homedir } from "os"
 import { parse } from "jsonc-parser"
-import type { PluginInput } from "@opencode-ai/plugin"
-import { showToast } from "./sdk/client.js"
+
+export interface ConfigContext {
+    directory: string
+}
 
 export interface CompressTool {
     permission: "ask" | "allow" | "deny"
@@ -27,7 +29,7 @@ export interface AutoCompression {
 export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     enabled: true,
     contextWindowRatio: 0.9,
-    tokenThreshold: 330_000,
+    tokenThreshold: 432_000,
 }
 
 export function resolveProtectedTurnsSetting(
@@ -259,7 +261,6 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
 
 // Show validation warnings for a config file
 function showConfigValidationWarnings(
-    ctx: PluginInput,
     configPath: string,
     configData: Record<string, any>,
     isProject: boolean,
@@ -289,14 +290,7 @@ function showConfigValidationWarnings(
         }
     }
 
-    setTimeout(() => {
-        void showToast(ctx.client, {
-            title: `Context Compress: Invalid ${configType}`,
-            message: `${configPath}\n${messages.join("\n")}`,
-            variant: "warning",
-            duration: 7000,
-        })
-    }, 7000)
+    console.warn(`Context Compress: Invalid ${configType}\n${configPath}\n${messages.join("\n")}`)
 }
 
 const defaultConfig: PluginConfig = {
@@ -337,7 +331,7 @@ function findOpencodeDir(startDir: string): string | null {
     return null
 }
 
-function getConfigPaths(ctx?: PluginInput): {
+function getConfigPaths(ctx?: ConfigContext): {
     global: string | null
     configDir: string | null
     project: string | null
@@ -467,7 +461,7 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
     }
 }
 
-export function getConfig(ctx: PluginInput): PluginConfig {
+export function getConfig(ctx: ConfigContext): PluginConfig {
     let config = deepCloneConfig(defaultConfig)
     let hasExplicitProtectedTurns = false
     const configPaths = getConfigPaths(ctx)
@@ -476,17 +470,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global)
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid config",
-                    message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
-                    variant: "warning",
-                    duration: 7000,
-                })
-            }, 7000)
+            console.warn(`Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`)
         } else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.global, result.data, false)
+            showConfigValidationWarnings(configPaths.global, result.data, false)
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
@@ -516,17 +503,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
     if (configPaths.configDir) {
         const result = loadConfigFile(configPaths.configDir)
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid configDir config",
-                    message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
-                    variant: "warning",
-                    duration: 7000,
-                })
-            }, 7000)
+            console.warn(`Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`)
         } else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.configDir, result.data, true)
+            showConfigValidationWarnings(configPaths.configDir, result.data, true)
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
@@ -554,17 +534,10 @@ export function getConfig(ctx: PluginInput): PluginConfig {
     if (configPaths.project) {
         const result = loadConfigFile(configPaths.project)
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid project config",
-                    message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
-                    variant: "warning",
-                    duration: 7000,
-                })
-            }, 7000)
+            console.warn(`Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`)
         } else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.project, result.data, true)
+            showConfigValidationWarnings(configPaths.project, result.data, true)
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,

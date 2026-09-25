@@ -98,6 +98,7 @@ function normalizeManagementTurns(turns) {
         seen.add(turn.triggerMessageId);
         normalized.push({
             triggerMessageId: turn.triggerMessageId,
+            ...(turn.cleanupVersion === 2 ? { cleanupVersion: 2 } : {}),
             ...(typeof turn.retainedText === "string" && turn.retainedText.length > 0
                 ? { retainedText: turn.retainedText }
                 : {}),
@@ -129,25 +130,6 @@ function normalizeManagementTurns(turns) {
         });
     }
     return normalized;
-}
-function normalizeGoalOverflowRecovery(value) {
-    if (!value || typeof value !== "object")
-        return undefined;
-    const recovery = value;
-    if (typeof recovery.overflowMessageId !== "string" ||
-        recovery.overflowMessageId.length === 0 ||
-        typeof recovery.goalID !== "string" ||
-        !recovery.goalID.startsWith("goa_") ||
-        typeof recovery.timeUpdated !== "number" ||
-        !Number.isSafeInteger(recovery.timeUpdated) ||
-        recovery.timeUpdated <= 0) {
-        return undefined;
-    }
-    return {
-        overflowMessageId: recovery.overflowMessageId,
-        goalID: recovery.goalID,
-        timeUpdated: recovery.timeUpdated,
-    };
 }
 export function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
     return summaries.map((summary) => {
@@ -216,9 +198,6 @@ export async function saveSessionState(sessionState, logger, sessionName) {
                 ? {
                     compressionCooldownAfterMessageId: sessionState.compressionCooldownAfterMessageId,
                 }
-                : {}),
-            ...(sessionState.goalOverflowRecovery
-                ? { goalOverflowRecovery: sessionState.goalOverflowRecovery }
                 : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
@@ -323,7 +302,6 @@ export async function loadSessionState(sessionId, logger, messages) {
         migrated,
     });
     const managementTurns = normalizeManagementTurns(state.managementTurns);
-    const goalOverflowRecovery = normalizeGoalOverflowRecovery(state.goalOverflowRecovery);
     const result = {
         sessionName: state.sessionName,
         compressed: state.compressed,
@@ -354,7 +332,6 @@ export async function loadSessionState(sessionId, logger, messages) {
                 compressionCooldownAfterMessageId: state.compressionCooldownAfterMessageId,
             }
             : {}),
-        ...(goalOverflowRecovery ? { goalOverflowRecovery } : {}),
         ...(typeof state.lastCompaction === "number" &&
             Number.isFinite(state.lastCompaction) &&
             state.lastCompaction > 0

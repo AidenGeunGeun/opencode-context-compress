@@ -1,7 +1,7 @@
 import { ulid } from "ulid"
 import { createHash } from "crypto"
 import type { WithParts } from "../state/index.js"
-import type { UserMessage } from "@opencode-ai/sdk/v2"
+import type { UserMessage } from "../state/types.js"
 
 export const COMPRESS_SUMMARY_PREFIX = "[Compressed conversation block]\n\n"
 

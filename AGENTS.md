@@ -1,315 +1,79 @@
-# AGENTS.md - opencode-context-compress
+# OpenCode Context Compress
 
-## Overview
+Target the OpenCode Promise plugin API pinned in `package.json`. Do not reintroduce fork
+`server`/`setup` dual hosting, Session Goal integration, persona-specific prompts, command
+interception hooks, or a compaction-veto hook.
 
-`opencode-context-compress` is a TypeScript OpenCode plugin for model-directed manual and automatic context compression.
-
-Core contract:
-
-- `/compress manage` remains the explicit manual workflow.
-- Automatic compression can initiate the same one-turn workflow after completed provider usage
-  reaches the configured relative or absolute threshold.
-- The active agent writes one truthful `summary` and short `topic`; there is no separate
-  summarizer loop and ordinary compression has no agent-chosen numeric range.
-- The primary public tool is `compress({ summary, topic })`. The plugin deterministically selects all
-  eligible uncompressed history after the newest existing block, excludes existing blocks, and
-  preserves the newest `protectedTurns` execution steps (default `3`) on manual, automatic, and
-  authorized normal paths.
-- One separate public maintenance tool: `squash({ from, to, summary, topic })`, authorized only by
-  the current user's `/compress squash` command, replaces one contiguous positional `[bN]` range
-  of at least two existing blocks. It never changes ordinary deterministic selection.
-- Only `compress` must be available for ordinary management or automatic starts. Autonomous
-  normal-turn use is a prompt-level prohibition (`lib/prompts/compress.md`); unlike `squash`,
-  runtime does not require an explicit compression request in the user message—only a visible
-  user owner of the executing call.
-
-## Build and Test
+## Setup
 
 ```bash
-npm run build
-npm test
+npm install
+```
+
+Requires `bun` (build runtime) and `tsc` (TypeScript compiler, resolved via `node_modules/.bin`). The `prebuild` script auto-generates prompt files from `lib/prompts/*.md` before compiling.
+
+## Contract
+
+- Register `/compress` through `command.transform(...draft.add)` and its `execute` callback.
+- Read authoritative projected history with `session.context()`.
+- Return command/status feedback with `session.synthetic({ resume: false })` so it never starts a
+  model run. Clients must show admitted feedback immediately and in full; queue admission alone does
+  not verify that behavior. Do not enable `resume` merely to make feedback visible.
+- Start management turns with `session.prompt()`.
+- Mark management prompts with `opencode.context-compress.management` metadata so side chats hide
+  internal compression exchanges without hiding user messages.
+- Automatic prompts use a stable ID derived from the session and completed triggering message so the
+  host deduplicates admission across plugin instances. Manual prompts retain fresh IDs. Local locks
+  serialize only one state-manager instance. Event ownership compares directory and workspace ID
+  when the event carries them; public Session lookup supplies the directory fallback.
+- Register `compress` and `squash` with Zod input schemas.
+- Apply durable folds in the session `context` hook.
+- Observe automatic thresholds, forks, and native compaction through the event stream. Remap
+  inherited compression references to copied message IDs before a fork's first model request;
+  the context hook also recovers when its fork event was missed.
+- Require `compaction.auto: false` in OpenCode configuration.
+
+Compression selection is deterministic: exclude existing blocks, select eligible uncompressed
+history after the newest block, and preserve the newest `protectedTurns` execution steps. `squash`
+changes only a contiguous range of existing blocks. Durable state remains compatible with existing
+blocks, management turns, cooldowns, auto overrides, and the legacy `dcp` migration directory;
+ignore retired fields.
+
+## Structure
+
+- `index.ts` exports the Promise plugin.
+- `lib/plugin.ts` registers commands, tools, hooks, and events.
+- `lib/commands` implements command behavior.
+- `lib/messages` owns projection, selection, transforms, cleanup, and notices.
+- `lib/state` owns per-session locking, persistence, migration, and native-compaction reconciliation.
+- `lib/tools` owns durable compress and squash writes.
+- `lib/sdk` owns the client and session message listing.
+- `lib/ui` owns notification rendering.
+- `lib/*.ts` (auto-compression, auto-policy, config, logger, shared-utils, token-utils) own cross-cutting utilities.
+- `lib/prompts/*.md` are sources; `lib/prompts/_codegen` is generated. Do not edit generated files directly.
+- `compress.schema.json` is the JSON Schema for plugin configuration.
+- Build pipeline: `tsc` then `bun build index.ts --outdir dist` (ESM). The `prebuild` step runs `generate:prompts` first.
+
+## Validation
+
+```bash
+npm run typecheck   # generates prompts, then tsc --noEmit
+npm run build       # clean && tsc && bun build index.ts → dist (ESM)
+npm test            # builds first, then node --import tsx --test tests/*.test.ts
+```
+
+Keep `dist/index.js` at the root of `dist`, because OpenCode configuration points to the `dist`
+directory. For host smoke tests, isolate both `XDG_CONFIG_HOME` and `XDG_DATA_HOME`; never use live
+services, databases, or configuration.
+
+For a live-loaded checkout, do not run `npm run build` or `npm test`: they clean and replace the watched `dist`. Prepare a candidate without activating it:
+
+```bash
+npm run typecheck
 node --import tsx --test tests/prompts.test.ts
+compression_stage=$(mktemp -d /private/tmp/opencode-compress-stage.XXXXXX)
+./node_modules/.bin/tsc --outDir "$compression_stage/dist"
+bun build index.ts --outdir "$compression_stage/dist" --entry-naming index.js --target bun --format esm --packages external --sourcemap=linked
 ```
 
-`npm test` runs `npm run build` first, then all `tests/*.test.ts` files.
-`npm run typecheck` regenerates prompts and typechecks without emitting.
-`npm run generate:prompts` refreshes `lib/prompts/_codegen/*.generated.ts` from `lib/prompts/*.md`.
-
-## Architecture
-
-```text
-index.ts
-  Plugin entrypoint. Loads config, initializes logger/state, wires hooks,
-  conditionally registers the compress and squash tool surfaces, and updates OpenCode
-  config metadata (including disabling native auto-compaction when plugin
-  auto-compression is enabled).
-
-lib/auto-compression.ts
-  Reads completed assistant usage events, resolves the relative/absolute trigger,
-  deduplicates per-session starts, and opens an asynchronous
-  automatic management turn. On host `ContextOverflowError` with a blocked Goal,
-  stages one bounded recovery turn and persists `goalOverflowRecovery` owner state.
-  Automatic and Goal-overflow prompts use the completed assistant's `info.agent` identity.
-
-lib/auto-policy.ts
-  Resolves global and session-level automatic-compression policy and derives the
-  fixed post-compression cooldown from persisted anchors plus the raw transcript.
-  Visible-user boundary detection excludes recognized Goal continuation messages.
-
-lib/goal.ts
-  Goal continuation recognition (synthetic + exact prefix + `Goal reference: goa_* <ts>`),
-  `ContextOverflowError` detection, agent-gated overflow recovery prompt text, and
-  `recoverGoalAfterCompression` (feature-detected resume with owner CAS on `id` /
-  `status` / `time.updated` only; fail-open when the host has no Goal API). No Goal
-  token/elapsed metrics.
-
-lib/commands/auto.ts
-  Implements session-scoped `/compress auto` status, on/off, threshold, ratio,
-  and reset controls with user-only feedback and atomic persistence. on/off are
-  idempotent: already-matching effective state reports source without writing.
-
-lib/tools/compress.ts
-  Single public compression tool. Accepts non-empty `summary` and `topic` only.
-  Inside `runExclusive`, fetches messages, reconciles lifecycle, resolves the
-  management or owning visible-user boundary, runs deterministic span selection
-  via `selectDeterministicCompressionSpan`, requests permission, and atomically
-  persists the new block, IDs, stats, management completion marker when
-  applicable, and cooldown anchor. Clears any stale legacy snapshot field.
-  Normal-turn success stores the fold without inventing a management marker.
-  Success is a tiny receipt. After success, if this turn was Goal overflow
-  recovery, calls `recoverGoalAfterCompression` and annotates the receipt when
-  the Goal changed or the host API is unavailable.
-
-lib/messages/context-map.ts
-  Deterministic span selection (not a model-visible map). Applies existing
-  transforms, finds the newest block, takes uncompressed candidates after it,
-  derives the newest `protectedTurns` execution steps (step-start counting with
-  recent-message fallback), and returns selected vs protected physical IDs.
-  Also used to decide whether automatic management has any selectable history.
-
-lib/messages/compress-transform.ts
-  Applies persisted compression decisions and completed management-turn cleanup
-  to outgoing message context. `findActiveManagementTurn` identifies the
-  session's still-open management turn (not yet completed by its owning tool, not
-  yet bounded by a later visible user message). Goal continuation messages do
-  not count as visible-user boundaries. Once a turn is completed, its span is
-  hidden immediately - no next user message is required - except the completing
-  compression tool call, which stays briefly with its literal input intact to
-  preserve a protocol-valid tool-call/result pair without synthetic placeholder
-  text.
-
-lib/messages/post-compression-notice.ts
-  Derives the transient post-compression reread notice on every transform from
-  `compressionCooldownAfterMessageId`; there is no consume-once flag or summary-anchor
-  lookup. Part-level inspection accounts for the compress call and its same-step siblings
-  sharing one assistant message; only non-empty assistant text and tool parts count as resumed
-  work. Plugin status notices, Goal continuations, and ordinary user messages do not consume
-  it. Appends a normal, non-`ignored` user message as the final element.
-
-lib/messages/legacy-residue.ts
-  Maintainer-facing cleanup for historical management machinery, including
-  residual retired tool parts from older sessions, so completed turns stay hidden.
-
-lib/commands/manage.ts
-  Starts both manual and automatic management turns: requires the `compress`
-  tool, checks that automatic history remains selectable after tail protection,
-  clears any stale legacy snapshot field, persists the cleanup anchor, and sends a self-contained
-  reminder that requires one `compress({ summary, topic })` call. Manual prompts use
-  `getCurrentParams(...).agent`; optional `goalOverflowRecovery` is staged with automatic
-  overflow recovery turns.
-
-lib/commands/squash.ts
-  Implements explicit `/compress squash [instruction]`: checks shared tool permission, durable
-  block reconciliation/count, and active-turn collisions before staging source `"squash"`.
-
-lib/tools/squash.ts
-  Separate user-authorized block-range maintenance tool. Validates current positional labels,
-  replaces one canonical contiguous range atomically, preserves compressed IDs/cooldown, and
-  counts only positive visible-summary token reduction.
-
-lib/messages/blocks.ts
-  Shared canonical anchor-order derivation, positional `[bN]` labels, and model-visible block
-  formatting used by rendering, validation, and receipts. Labels are never persisted.
-
-lib/hooks.ts
-  Transform, slash-command routing, and chat.message variant caching. Evaluates the
-  post-compression notice against raw `output.messages` before compression cleanup, then
-  appends it after `applyCompressTransforms` so the rebuild cannot discard it. Goal continuation
-  messages do not bound open management turns. No queue, worker, or map-pin state.
-
-lib/config.ts
-  Config schema + layered loading/merge (global/config-dir/project), defaults,
-  validation, and command/tool permission normalization. Top-level
-  `protectedTurns` (default 3); legacy `autoCompression.protectedTurns` is a
-  fallback when the top-level key is absent. The default absolute automatic threshold
-  is 330,000 tokens.
-
-lib/sdk/client.ts
-  Nested v1 / flat v2 SDK adapter for session and TUI calls, plus feature-detected
-  `getSessionGoal` / `resumeSessionGoal`. Local `SessionGoalInfo` matches the reduced
-  host shape (`id`, `sessionID`, `objective`, `status`, `time.created` / `time.updated`);
-  overflow recovery only needs `id`, `status`, and `time.updated`. Optional owner CAS
-  on resume; missing Goal methods return `undefined` without breaking compression.
-
-lib/state/*
-  Session state, persistence, and compaction resets.
-  Durable optional `goalOverflowRecovery` owner payload for one-shot overflow
-  recovery; cleared with other session resets. Stale `compressionMapSnapshot`
-  is ignored/cleared on load/reconcile and never executed. Post-compression notice
-  eligibility is derived from the cooldown anchor and transcript, not persisted separately.
-```
-
-## Runtime Flow
-
-1. Startup loads config and initializes state.
-2. Hooks cache model limits, observe completed assistant usage, apply compression
-   transforms, and route `/compress` commands.
-3. During normal work agents must call `compress` only with explicit user authorization in
-   the current message (prompt contract; runtime does not inspect that text). `/compress manage`
-   opens a management turn with a self-contained reminder requiring one
-   `compress({ summary, topic })` call. The `compress` tool must be permitted or the command
-   fails user-only before opening a model turn. Manual, automatic, and Goal-overflow prompts
-   require a handoff-report update only when the exact agent identity is `orchestrator`;
-   missing or other identities receive no report block.
-4. `/compress squash` opens a separate user-authorized management turn only when at least two
-   reconcilable existing blocks are present. Its `squash` call replaces one selected contiguous
-   block range without touching uncompressed history, compressed ID sets, or cooldown state.
-5. `/compress auto` reads or changes the current session's persisted auto-compression
-   overrides. `on`/`off` are no-ops when the effective state already matches. Global
-   `autoCompression.enabled: false` remains authoritative.
-6. Automatic compression starts the same one-call workflow once usage reaches the earlier of
-   the configured context-window ratio and absolute token threshold, only when `compress` is
-   available. The success receipt instructs task continuation when work was still active.
-   Separately, a host `ContextOverflowError` on a blocked Goal stages one recovery management
-   turn with `goalOverflowRecovery` owner state.
-7. Inside `compress`, selection is deterministic: boundary → newest block → all eligible
-   uncompressed history after it → exclude newest `protectedTurns` execution steps → never
-   touch existing blocks. No agent-chosen range, map, or pin.
-8. On a successful `compress` call, persistence is atomic via `runExclusive`: the block, IDs,
-   stats, completion marker, and cooldown anchor are stored together. The fold takes effect
-   for the very next model continuation - no further visible user message is required - and a
-   three-eligible-response cooldown is armed before another automatic or model-initiated
-   compression may run. If the completed turn was Goal overflow recovery, the plugin re-reads
-   the Goal and resumes only the exact blocked owner via the public Goal API when present. A
-   transient reread notice is shown after each successful `compress`, including manual and
-   automatic paths, to every agent including subagents, but not for squash. It remains due
-   until genuine assistant work appears.
-9. While a management turn is still open, its reminder and tool
-   results stay visible so the agent can work; the completing tool call itself
-   remains afterward too, with its literal input intact until the turn is historical. Synthetic
-   Goal continuation messages do not bound that open management turn.
-10. On later turns, completed management machinery is hidden; only `[bN]` blocks, normal
-   inter-compress conversation, the preserved newest execution steps, and model-visible Goal
-   continuation text remain. Successful compress, a new management turn, native compaction, or
-   lifecycle reconcile also clear any leftover stale snapshot field. No queue/worker/extra state.
-
-## Prompt Generation
-
-- Source prompt templates: `lib/prompts/*.md`
-- Generated files: `lib/prompts/_codegen/*.generated.ts`
-- Regenerate with `npm run generate:prompts`
-- Ordinary agent-facing prompts describe only the deterministic `compress` happy path (`summary`,
-  `topic`, eligible uncompressed history, protected newest execution steps). Range language belongs
-  only in the dedicated squash prompts; do not reintroduce retired workflows elsewhere.
-- `report.md` is injected into manual, automatic, and Goal-overflow compression prompts only for
-  exact agent identity `orchestrator`; the placeholder is removed entirely for every other identity.
-- `post-compression-notice.md` supplies the reread instruction through the transient transform
-  notice, not through a compression prompt.
-
-## Per-Session State Management
-
-Plugin state MUST be per-session. `lib/state/state.ts` implements `SessionStateManager` — a `Map<string, SessionState>` keyed by session ID. All hooks and tools use `stateManager.get(sessionId)` to get the correct state.
-
-**Why**: The transform hook fires for EVERY session on EVERY loop iteration. A single shared state object would get wiped whenever a different session's transform fires, losing compression data. The old `resetSessionState()` approach was the original bug.
-
-Each session state tracks compressed IDs, summaries, manual/automatic/squash management-turn cleanup
-markers, compression stats, persisted auto-compression overrides and cooldown anchor, optional
-`goalOverflowRecovery` owner payload, initialization, and runtime-only threshold
-metadata. Durable fields are persisted at
-`~/.local/share/opencode/storage/plugin/compress/<sessionId>.json` (or under `$XDG_DATA_HOME`).
-The `initialized` flag enables the event fast path after the first lifecycle sync; persisted state is
-still refreshed at synchronization boundaries so concurrent runtime paths observe durable changes.
-
-Durable mutations for one session MUST run through `SessionStateManager.runExclusive(sessionId, ...)`.
-Construct and atomically save a candidate state before committing it to memory. This prevents
-concurrent commands, compression tools, event hooks, and transforms from overwriting newer state;
-different sessions remain independent.
-
-Primary and subagent sessions follow the same compression policy and lifecycle. Exact session IDs
-keep their state, summaries, overrides, cooldowns, Goal recovery owners, and persisted files isolated.
-
-### Maintainer compatibility notes
-
-- Old completed blocks, management markers, cooldown anchors, auto overrides, and Goal recovery
-  state continue to load.
-- Stale `compressionMapSnapshot` values must not fail session load. Ignore/clear them through the
-  existing lifecycle; never execute them and do not add a replacement snapshot system.
-- Historical residue cleanup may still recognize retired tool part names so old completed
-  management machinery stays hidden. That is cleanup-only, not a current public workflow.
-
-## Command Suppression
-
-Plugin commands must prevent OpenCode from also running the default slash-command prompt. `suppressDefaultCommandExecution(output)` clears `output.parts` in place — mutating the same array `SessionPrompt.command()` holds, since reassignment would not clear it — and sets `output.cancelled = true`. This covers current OpenCode (PR #18559+ honors `cancelled`) and stock OpenCode 1.15.x (clearing parts in place suppresses the default prompt without throwing; throwing would surface as a desktop 500).
-
-## SDK Client Adapter
-
-OpenCode plugin hosts still expose the v1 nested SDK client (`{ path, body }`). External callers and tests may use the v2 flat client (`{ sessionID, parts, ... }`). All session/TUI calls go through `lib/sdk/client.ts`, which detects the client generation via runtime `_client` vs `client` markers.
-
-Goal helpers `getSessionGoal` / `resumeSessionGoal` are feature-detected: missing methods return
-`undefined` (recovery unavailable) without breaking ordinary compression. Resume sends optional
-owner CAS `{ goalID, timeUpdated }` on `{ action: "resume", owner }`. The host Goal public shape
-has no token/elapsed fields; `time.updated` is lifecycle versioning only.
-
-## Publishing & Loading
-
-The repo's git origin is `github.com/AidenGeunGeun/opencode-context-compress`. The canonical local install loads the built plugin directly from this checkout via a `file://` path in `~/.config/opencode/opencode.jsonc`, e.g. `"file:///Users/<you>/projects/opencode-context-compress/dist/index.js"`.
-
-**`dist/` is committed to the repo** — so a prebuilt plugin is always present (and `bun add github:...` would not run lifecycle scripts for git deps anyway). Always run `npm run build` and commit `dist/` before pushing.
-
-For local development, switch the config to `file:///path/to/dist/index.js` for fast iteration without pushing to GitHub.
-
-## Naming History
-
-This plugin was originally called "DCP" (Dynamic Context Pruning). It was renamed to "compress" / "context-compress" to match the user-facing `/compress` command. The legacy `"dcp"` storage directory string in `lib/state/persistence.ts` is PRESERVED for backward-compatible migration from older installs.
-
-## Notes
-
-- `compress` remains deterministic for manual, automatic, and authorized normal paths. The separate
-  `squash` tool is authorized only inside `/compress squash` and selects existing blocks only.
-- Management and automatic starts gate on `compress` alone.
-- Completed management turns leave no model-visible machinery marker; future prompts show blocks,
-  inter-compress normal conversation, and the preserved newest execution steps (Goal continuation
-  text stays model-visible).
-- The post-compression notice exists only in the transformed request and is never written to the
-  session transcript. Rebuilt or failed requests recompute it from raw messages, so repeated
-  compression does not accumulate residue or lose a due notice.
-- `[bN]` labels are derived by anchor position in the conversation stream, not by insertion order
-  in `state.compressSummaries`. Existing blocks are append-only and immutable under a new fold.
-- `protectedTurns` defaults to `3`. Prefer the top-level config key; `autoCompression.protectedTurns`
-  remains a fallback alias when the top-level key is absent.
-- Goal continuation recognition is fail-open and limited to the exact synthetic prefix +
-  `Goal reference: goa_* <timestamp>` contract documented in README. Do not mark host Goal
-  continuations `ignored`.
-- Overflow recovery is one-shot, owner-CAS gated on Goal `id` / `status` / `time.updated`, and
-  disabled cleanly when Goal APIs are absent. Do not depend on Goal metrics fields.
-- Newly created task children need host permission construction that exempts only `compress` and
-  `squash` from blanket primary-tool child denies. Existing persisted child permissions are not migrated.
-- Completed `image_generation` tool outputs are represented as short placeholders for preview/token extraction; raw persisted `state.output` stays unchanged.
-- Provider-aware token counting uses Anthropic tokenizer for Anthropic models and `js-tiktoken` for others.
-- Logger flags are split: `debug` gates context snapshots; `dailyLog` gates the one-line activity log
-  (`new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug })` in `index.ts`).
-  When `dailyLog` is unset it follows `debug`. There is no `[DIAG:]` bypass — all activity lines go
-  through the daily gate.
-- Context snapshots land at
-  `~/.config/opencode/logs/compress/context/<sessionId>/<timestamp>.json` (or under `$XDG_CONFIG_HOME`).
-  `saveContext` runs after every successful prompt transform (`lib/hooks.ts`), not only on
-  compression. Each file is the full minimized conversation so far (pretty-printed), so total size
-  grows roughly with the square of the turn count. Leave `debug` off unless actively debugging.
-- Daily activity lines append to
-  `~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log`. Snapshot and daily write failures
-  report via `console.error`.
-- Focused Goal tests: `tests/goal-compatibility.test.ts` and Goal overflow cases in
-  `tests/auto-compression.test.ts`. Joint host tests live in the OpenCode fork `prompt.test.ts`
-  harness.
-- Do not edit live OpenCode install/config or restart hosts during plugin work unless Aiden
-  explicitly asks; both PM and Orchestrator already reference this repo’s `dist/index.js`.
+Only replace active `dist` at an explicitly approved quiet boundary. Verify the live bundle hash is unchanged while preparing the candidate.

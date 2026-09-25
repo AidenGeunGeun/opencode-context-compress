@@ -1,6 +1,5 @@
-import { tool } from "@opencode-ai/plugin/tool"
 import type { SessionState, WithParts } from "../state/index.js"
-import type { CompressToolContext } from "./types.js"
+import type { CompressToolContext, ToolDefinition } from "./types.js"
 import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
 import { loadPrompt } from "../prompts/index.js"
@@ -10,14 +9,13 @@ import { sendCompressNotification } from "../ui/notification.js"
 import { selectDeterministicCompressionSpan } from "../messages/context-map.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import { isIgnoredUserMessage } from "../messages/utils.js"
-import { isGoalContinuationMessage, recoverGoalAfterCompression } from "../goal.js"
 import { listSessionMessages } from "../sdk/client.js"
 import { getPostCompressionCooldownRemaining } from "../auto-policy.js"
 import { orderCompressBlocks } from "../messages/blocks.js"
 
 const COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec")
 
-interface CompressInput {
+export interface CompressInput {
     summary: string
     topic: string
 }
@@ -30,8 +28,8 @@ interface CompressionBoundary {
 function isVisibleUserMessage(message: WithParts): boolean {
     return (
         message.info.role === "user" &&
-        !isIgnoredUserMessage(message) &&
-        !isGoalContinuationMessage(message)
+        (message.info as any).sourceType !== "synthetic" &&
+        !isIgnoredUserMessage(message)
     )
 }
 
@@ -64,7 +62,7 @@ export function resolveCompressionBoundary(
     if (activeTurn) {
         if (activeTurn.turn.source === "squash") {
             throw new Error(
-                "compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.",
+                "compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.",
             )
         }
         return {
@@ -103,7 +101,7 @@ export function resolveCompressionBoundary(
     if (matchingManagementTurn) {
         if (matchingManagementTurn.source === "squash") {
             throw new Error(
-                "compress cannot complete an active `/compress squash` turn. Call squash with one authorized block range instead. Nothing was compressed.",
+                "compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.",
             )
         }
         return {
@@ -132,16 +130,12 @@ function buildCompressReceipt(topic: string, blockId: string, restoreDisposition
         : finish
 }
 
-export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof tool> {
-    return tool({
+export function createCompressTool(ctx: CompressToolContext): ToolDefinition<CompressInput> {
+    return {
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            summary: tool.schema
-                .string()
-                .describe("Truthful durable replacement for all eligible history"),
-            topic: tool.schema
-                .string()
-                .describe("Short block title, usually 3-5 words"),
+            summary: { type: "string", description: "Compact structured continuation handoff described by this tool's instructions" },
+            topic: { type: "string", description: "Short block title, usually 3-5 words" },
         },
         async execute(args, toolCtx) {
             const { client, stateManager, logger } = ctx
@@ -175,12 +169,8 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     )
                 }
 
-                const boundary = resolveCompressionBoundary(
-                    rawMessages,
-                    state,
-                    toolCtx.messageID,
-                    typeof (toolCtx as any).callID === "string" ? (toolCtx as any).callID : undefined,
-                )
+                const callId = toolCtx.id ?? toolCtx.callID
+                const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, callId)
                 if (
                     !boundary.managementTurn &&
                     getPostCompressionCooldownRemaining(state, rawMessages) > 0
@@ -210,13 +200,6 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     collectContentInRange(span.messages, 0, span.messages.length - 1),
                     state.modelContext?.providerId,
                 )
-
-                await toolCtx.ask({
-                    permission: "compress",
-                    patterns: ["*"],
-                    always: ["*"],
-                    metadata: {},
-                })
 
                 const candidateCompressed = {
                     toolIds: new Set(state.compressed.toolIds),
@@ -288,11 +271,6 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                     estimatedCompressedTokens,
                     storedBlockId: storedBlock.label,
                     continueTask: boundary.managementTurn?.source === "automatic",
-                    goalOverflowRecovery:
-                        boundary.managementTurn?.triggeredByMessageId ===
-                        state.goalOverflowRecovery?.overflowMessageId
-                            ? state.goalOverflowRecovery
-                            : undefined,
                     currentParams: {
                         providerId: state.modelContext?.providerId,
                         modelId: state.modelContext?.modelId,
@@ -323,21 +301,12 @@ export function createCompressTool(ctx: CompressToolContext): ReturnType<typeof 
                 outcome.estimatedCompressedTokens,
             )
 
-            const recovery = outcome.goalOverflowRecovery
-                ? await recoverGoalAfterCompression(client, sessionId, outcome.goalOverflowRecovery)
-                : undefined
             const receipt = buildCompressReceipt(
                 outcome.topic,
                 outcome.storedBlockId,
-                recovery ? recovery === "resumed" : outcome.continueTask,
+                outcome.continueTask,
             )
-            if (recovery === "changed") {
-                return `${receipt} The blocked Goal changed, so it was not resumed.`
-            }
-            if (recovery === "unavailable") {
-                return `${receipt} Goal recovery is unavailable on this host, so no Goal was resumed.`
-            }
             return receipt
         },
-    })
+    }
 }

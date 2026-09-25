@@ -62,7 +62,7 @@
                 "tokenThreshold": {
                     "type": "number",
                     "exclusiveMinimum": 0,
-                    "default": 330000,
+                    "default": 432000,
                     "description": "System-wide absolute initiation threshold; the earlier of this and contextWindowRatio wins"
                 },
                 "protectedTurns": {
@@ -74,7 +74,7 @@
             "default": {
                 "enabled": true,
                 "contextWindowRatio": 0.9,
-                "tokenThreshold": 330000
+                "tokenThreshold": 432000
             }
         },
         "commands": {

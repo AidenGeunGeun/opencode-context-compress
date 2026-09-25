@@ -4,47 +4,24 @@ import { AUTOMATIC_SYSTEM as AUTOMATIC_SYSTEM_PROMPT } from "./_codegen/automati
 import { COMPRESS as COMPRESS_TOOL_SPEC } from "./_codegen/compress.generated.js"
 import { SQUASH_SYSTEM as SQUASH_SYSTEM_PROMPT } from "./_codegen/squash-system.generated.js"
 import { SQUASH as SQUASH_TOOL_SPEC } from "./_codegen/squash.generated.js"
-import { REPORT as REPORT_PROMPT } from "./_codegen/report.generated.js"
-import { SQUASH_REPORT as SQUASH_REPORT_PROMPT } from "./_codegen/squash-report.generated.js"
 import { POST_COMPRESSION_NOTICE as POST_COMPRESSION_NOTICE_PROMPT } from "./_codegen/post-compression-notice.generated.js"
 
-/**
- * Only the Orchestrator maintains a handoff report file. Fail closed on a missing or
- * different identity so no other agent is pushed toward a file it does not keep.
- */
-export function isReportMaintainingAgent(agent: string | undefined): boolean {
-    return agent === "orchestrator"
-}
-
-/** The Orchestrator-scoped handoff-report block, or an empty string for every other agent. */
-export function renderReportInstruction(agent: string | undefined): string {
-    return isReportMaintainingAgent(agent) ? REPORT_PROMPT.trim() : ""
-}
-
-function applyReportBlock(prompt: string, agent: string | undefined, block: string): string {
-    if (isReportMaintainingAgent(agent)) {
-        return prompt.replaceAll("{{report_block}}", block.trim())
-    }
-    return prompt.replace(/\n*\{\{report_block\}\}\n*/g, "\n\n")
-}
-
-export function renderSystemPrompt(agent?: string): string {
-    return applyReportBlock(SYSTEM_PROMPT.trim(), agent, REPORT_PROMPT)
+export function renderSystemPrompt(): string {
+    return SYSTEM_PROMPT.trim()
 }
 
 export function renderAutomaticSystemPrompt(
     vars: Record<string, string>,
-    agent?: string,
 ): string {
-    let prompt = applyReportBlock(AUTOMATIC_SYSTEM_PROMPT.trim(), agent, REPORT_PROMPT)
+    let prompt = AUTOMATIC_SYSTEM_PROMPT.trim()
     for (const [key, value] of Object.entries(vars)) {
         prompt = prompt.replaceAll(`{{${key}}}`, value)
     }
     return prompt
 }
 
-export function renderSquashSystemPrompt(agent?: string): string {
-    return applyReportBlock(SQUASH_SYSTEM_PROMPT.trim(), agent, SQUASH_REPORT_PROMPT)
+export function renderSquashSystemPrompt(): string {
+    return SQUASH_SYSTEM_PROMPT.trim()
 }
 
 export function renderPostCompressionNotice(): string {

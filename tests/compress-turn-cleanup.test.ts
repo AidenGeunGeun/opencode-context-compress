@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { createChatMessageTransformHandler } from "../lib/hooks.ts"
+import { createChatMessageTransformHandler } from "./transform-harness.ts"
 import { Logger } from "../lib/logger.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
@@ -854,5 +854,210 @@ describe("atomic compress completion cleanup", () => {
         assert.deepEqual(messages.map((message: WithParts) => message.info.id), ["pre", "compress-keep-input"])
         assert.equal(messages[1].parts[0].state.input.summary, submittedSummary)
         assert.doesNotMatch(messageTexts(messages), /summary content stored|transcript copy omitted|placeholder/i)
+    })
+})
+
+describe("prospective Version 2 cleanup", () => {
+    it("preserves every non-plugin message while rotating to one newest machinery set", () => {
+        const sessionId = "session-cleanup-v2-rotation"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-v2-a",
+                cleanupVersion: 2,
+                completedAt: "2026-08-27T00:00:00.000Z",
+                completedMessageId: "compress-v2-a",
+            },
+            {
+                triggerMessageId: "manage-v2-b",
+                cleanupVersion: 2,
+                completedAt: "2026-08-27T01:00:00.000Z",
+                completedMessageId: "compress-v2-b",
+            },
+        ]
+        const firstCompletion = toolMessage("compress-v2-a", sessionId, "compress", "first receipt") as any
+        firstCompletion.parts.unshift({
+            id: "before-first-tool",
+            sessionID: sessionId,
+            messageID: firstCompletion.info.id,
+            type: "text",
+            text: "assistant text before first compress",
+        })
+        firstCompletion.parts.push({
+            id: "after-first-tool",
+            sessionID: sessionId,
+            messageID: firstCompletion.info.id,
+            type: "text",
+            text: "assistant text after first compress",
+        })
+        const secondCompletion = toolMessage("compress-v2-b", sessionId, "compress", "second receipt") as any
+        const synthetic = textMessage("synthetic-v2-b", sessionId, "synthetic continuation") as any
+        synthetic.info.sourceType = "synthetic"
+        synthetic.parts[0].synthetic = true
+        const system = textMessage("system-v2-b", sessionId, "system update") as any
+        system.info.role = "system"
+
+        const messages = [
+            textMessage("pre-v2", sessionId, "ordinary history"),
+            textMessage("manage-v2-a", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            textMessage("pre-compress-v2-a", sessionId, "agent-authored compression reasoning", "assistant"),
+            firstCompletion,
+            statusNotificationMessage("notification-v2-a", sessionId, "first stats"),
+            textMessage("work-v2-a", sessionId, "work after first compression", "assistant"),
+            textMessage("user-v2-a", sessionId, "first user boundary"),
+            textMessage("reply-v2-a", sessionId, "reply after first boundary", "assistant"),
+            textMessage("manage-v2-b", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            secondCompletion,
+            statusNotificationMessage("notification-v2-b", sessionId, "second stats"),
+            synthetic,
+            system,
+            toolMessage("work-tool-v2-b", sessionId, "read", "tool evidence"),
+            textMessage("user-v2-b", sessionId, "second user boundary"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        const ids = messages.map((message: WithParts) => message.info.id)
+        assert.deepEqual(ids, [
+            "pre-v2",
+            "pre-compress-v2-a",
+            "compress-v2-a",
+            "work-v2-a",
+            "user-v2-a",
+            "reply-v2-a",
+            "compress-v2-b",
+            "synthetic-v2-b",
+            "system-v2-b",
+            "work-tool-v2-b",
+            "user-v2-b",
+        ])
+        const compressionTools = messages
+            .flatMap((message: WithParts) => message.parts)
+            .filter((part: any) => part.type === "tool" && part.tool === "compress")
+        assert.equal(compressionTools.length, 1)
+        assert.equal(compressionTools[0].state.output, "second receipt")
+        assert.match(messageTexts(messages), /assistant text before first compress/)
+        assert.match(messageTexts(messages), /assistant text after first compress/)
+        assert.match(messageTexts(messages), /synthetic continuation|system update|tool evidence/)
+        assert.doesNotMatch(messageTexts(messages), /CONTEXT MANAGEMENT REQUESTED|first stats|second stats|first receipt/)
+    })
+
+    it("lets compressed state override retained Version 2 parts", () => {
+        const sessionId = "session-cleanup-v2-compressed-wins"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-old-v2",
+                cleanupVersion: 2,
+                completedAt: "2026-08-27T00:00:00.000Z",
+                completedMessageId: "compress-old-v2",
+            },
+            {
+                triggerMessageId: "manage-new-v2",
+                cleanupVersion: 2,
+                completedAt: "2026-08-27T01:00:00.000Z",
+                completedMessageId: "compress-new-v2",
+            },
+        ]
+        state.compressed.messageIds = new Set(["compress-old-v2"])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "compress-old-v2",
+                messageIds: ["compress-old-v2"],
+                summary: "Older Version 2 work is represented here.",
+                topic: "Older V2",
+            },
+        ]
+        const older = toolMessage("compress-old-v2", sessionId, "compress", "old receipt") as any
+        older.parts.push({
+            id: "old-retained-text",
+            sessionID: sessionId,
+            messageID: older.info.id,
+            type: "text",
+            text: "raw text that must stay compressed",
+        })
+        const messages = [
+            textMessage("manage-old-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            older,
+            textMessage("user-old-v2", sessionId, "old boundary"),
+            textMessage("manage-new-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage("compress-new-v2", sessionId, "compress", "new receipt"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.equal(messages.some((message: WithParts) => message.info.id === "compress-old-v2" && message.parts.some((part: any) => part.text === "raw text that must stay compressed")), false)
+        assert.match(messageTexts(messages), /Older Version 2 work is represented here/)
+        assert.equal(messages.flatMap((message: WithParts) => message.parts).filter((part: any) => part.tool === "compress").length, 1)
+    })
+
+    it("shows only the active Version 2 machinery while a later compression is in flight", () => {
+        const sessionId = "session-cleanup-v2-active"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-completed-v2",
+                cleanupVersion: 2,
+                completedAt: "2026-08-27T00:00:00.000Z",
+                completedMessageId: "compress-completed-v2",
+            },
+            {
+                triggerMessageId: "manage-active-v2",
+                cleanupVersion: 2,
+            },
+        ]
+        const messages = [
+            textMessage("manage-completed-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage("compress-completed-v2", sessionId, "compress", "previous receipt"),
+            textMessage("user-between-v2", sessionId, "continue"),
+            textMessage("manage-active-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            textMessage("active-work-v2", sessionId, "work performed during compression", "assistant"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "user-between-v2",
+            "manage-active-v2",
+            "active-work-v2",
+        ])
+        assert.equal(messages.flatMap((message: WithParts) => message.parts).some((part: any) => part.tool === "compress"), false)
+        assert.match(messageTexts(messages), /CONTEXT MANAGEMENT REQUESTED|work performed during compression/)
+        assert.doesNotMatch(messageTexts(messages), /previous receipt/)
+    })
+
+    it("removes a bounded failed Version 2 tool attempt without touching sibling work", () => {
+        const sessionId = "session-cleanup-v2-failed"
+        const state = createState(sessionId)
+        state.managementTurns = [
+            {
+                triggerMessageId: "manage-failed-v2",
+                cleanupVersion: 2,
+            },
+        ]
+        const failed = toolMessage("failed-compress-v2", sessionId, "compress", "unused") as any
+        failed.parts[0].state = { status: "error", error: "nothing eligible" }
+        failed.parts.push({
+            id: "failed-sibling-work",
+            sessionID: sessionId,
+            messageID: failed.info.id,
+            type: "text",
+            text: "useful work beside the failed compression",
+        })
+        const messages = [
+            textMessage("manage-failed-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            failed,
+            textMessage("user-after-failed-v2", sessionId, "continue after failure"),
+        ] as any
+
+        applyCompressTransforms(state, logger, messages)
+
+        assert.deepEqual(messages.map((message: WithParts) => message.info.id), [
+            "failed-compress-v2",
+            "user-after-failed-v2",
+        ])
+        assert.equal(messages[0].parts.some((part: any) => part.tool === "compress"), false)
+        assert.match(messageTexts(messages), /useful work beside the failed compression|continue after failure/)
+        assert.doesNotMatch(messageTexts(messages), /CONTEXT MANAGEMENT REQUESTED|nothing eligible/)
     })
 })

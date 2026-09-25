@@ -10,7 +10,7 @@ import {
     createSessionState,
     ensureSessionInitialized,
 } from "../lib/state/state.ts"
-import { getLastUserSessionId } from "../lib/hooks.ts"
+import { getLastUserSessionId } from "./transform-harness.ts"
 import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
 import { resetOnCompaction } from "../lib/state/utils.ts"
 
@@ -576,6 +576,7 @@ describe("saveSessionState", () => {
                     managementTurns: [
                         {
                             triggerMessageId: "manage-trigger",
+                            cleanupVersion: 2,
                             completedAt: new Date().toISOString(),
                             completedMessageId: "compress-message",
                         },
@@ -605,6 +606,7 @@ describe("saveSessionState", () => {
             if (loaded.status !== "loaded") throw new Error("expected valid state")
             assert.equal(loaded.state.compressionMapSnapshot, undefined)
             assert.equal(loaded.state.managementTurns.length, 1)
+            assert.equal(loaded.state.managementTurns[0].cleanupVersion, 2)
             assert.deepEqual(loaded.state.compressSummaries[0], {
                 anchorMessageId: "m1",
                 messageIds: ["m1", "m2"],

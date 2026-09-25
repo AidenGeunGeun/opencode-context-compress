@@ -3,8 +3,7 @@ import type { Logger } from "../logger.js"
 import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js"
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js"
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js"
-import type { UserMessage } from "@opencode-ai/sdk/v2"
-import { isGoalContinuationMessage } from "../goal.js"
+import type { UserMessage } from "../state/types.js"
 import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js"
 
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT =
@@ -34,8 +33,17 @@ interface ManagementTurnSuppressionPlan {
     retainedTextByMessageId: Map<string, string>
 }
 
+interface V2CleanupPlan extends ManagementTurnSuppressionPlan {
+    retainedPartsByMessageId: Map<string, WithParts["parts"]>
+    protectedMessageIds: Set<string>
+}
+
 function isVisibleUserMessage(message: WithParts): boolean {
-    return message.info.role === "user" && !isIgnoredUserMessage(message) && !isGoalContinuationMessage(message)
+    return (
+        message.info.role === "user" &&
+        (message.info as any).sourceType !== "synthetic" &&
+        !isIgnoredUserMessage(message)
+    )
 }
 
 /**
@@ -116,6 +124,7 @@ export function buildManagementTurnSuppressionPlan(
     const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
 
     for (const turn of state.managementTurns) {
+        if (turn.cleanupVersion === 2) continue
         const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
         if (triggerIndex === undefined) {
             continue
@@ -189,6 +198,127 @@ export function buildManagementTurnSuppressionPlan(
     return { suppressedMessageIds, retainedTextByMessageId }
 }
 
+function completionTool(turn: SessionState["managementTurns"][number]): "compress" | "squash" {
+    return turn.source === "squash" ? "squash" : "compress"
+}
+
+function withoutCompletionTool(
+    message: WithParts,
+    turn: SessionState["managementTurns"][number],
+): WithParts["parts"] {
+    return message.parts.filter(
+        (part) => !(part.type === "tool" && part.tool === completionTool(turn)),
+    )
+}
+
+function buildV2CleanupPlan(
+    state: SessionState,
+    rawMessages: WithParts[],
+): V2CleanupPlan {
+    const suppressedMessageIds = new Set<string>()
+    const retainedTextByMessageId = new Map<string, string>()
+    const retainedPartsByMessageId = new Map<string, WithParts["parts"]>()
+    const protectedMessageIds = new Set<string>()
+    const turns = state.managementTurns.filter((turn) => turn.cleanupVersion === 2)
+    const indexByMessageId = new Map(rawMessages.map((message, index) => [message.info.id, index]))
+    const active = [...turns].reverse().find((turn) => {
+        if (turn.completedAt) return false
+        const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
+        if (triggerIndex === undefined) return false
+        return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage)
+    })
+    const newestCompleted = [...turns].reverse().find(
+        (turn) => turn.completedAt && turn.completedMessageId,
+    )
+    const visibleAnchors = turns.flatMap((turn) =>
+        [indexByMessageId.get(turn.triggerMessageId), turn.completedMessageId
+            ? indexByMessageId.get(turn.completedMessageId)
+            : undefined].filter((index): index is number => index !== undefined),
+    )
+    const firstV2Index = visibleAnchors.length > 0 ? Math.min(...visibleAnchors) : undefined
+
+    // Once Version 2 is visible, the legacy content scanner must never reinterpret later
+    // conversation. V2 removes only persisted plugin-owned IDs and metadata below.
+    if (firstV2Index !== undefined) {
+        for (let i = firstV2Index; i < rawMessages.length; i++) {
+            protectedMessageIds.add(rawMessages[i].info.id)
+        }
+    }
+
+    for (const turn of turns) {
+        const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
+        if (triggerIndex !== undefined && turn !== active) {
+            if (turn.retainedText) retainedTextByMessageId.set(turn.triggerMessageId, turn.retainedText)
+            else suppressedMessageIds.add(turn.triggerMessageId)
+        }
+
+        const completedIndex = turn.completedMessageId
+            ? indexByMessageId.get(turn.completedMessageId)
+            : undefined
+        if (completedIndex !== undefined && (active || turn !== newestCompleted)) {
+            const message = rawMessages[completedIndex]
+            const parts = withoutCompletionTool(message, turn)
+            if (parts.length > 0) retainedPartsByMessageId.set(message.info.id, parts)
+            else suppressedMessageIds.add(message.info.id)
+        }
+
+        if (triggerIndex === undefined) continue
+        for (let i = triggerIndex + 1; i < rawMessages.length; i++) {
+            const message = rawMessages[i]
+            if (isVisibleUserMessage(message)) break
+            if (message.info.role === "user" && isIgnoredUserMessage(message)) {
+                suppressedMessageIds.add(message.info.id)
+                continue
+            }
+            if (
+                turn !== active &&
+                !(turn === newestCompleted && message.info.id === turn.completedMessageId)
+            ) {
+                const parts = withoutCompletionTool(message, turn)
+                if (parts.length === message.parts.length) continue
+                if (parts.length > 0) retainedPartsByMessageId.set(message.info.id, parts)
+                else suppressedMessageIds.add(message.info.id)
+            }
+        }
+    }
+
+    for (const messageId of suppressedMessageIds) protectedMessageIds.delete(messageId)
+
+    return {
+        suppressedMessageIds,
+        retainedTextByMessageId,
+        retainedPartsByMessageId,
+        protectedMessageIds,
+    }
+}
+
+/** Remove exact Version 2 machinery from material selected into a future summary. */
+export function stripV2MachineryForCompressionSelection(
+    messages: WithParts[],
+    state: SessionState,
+): WithParts[] {
+    const triggers = new Map(
+        state.managementTurns
+            .filter((turn) => turn.cleanupVersion === 2)
+            .map((turn) => [turn.triggerMessageId, turn]),
+    )
+    const completions = new Map(
+        state.managementTurns
+            .filter((turn) => turn.cleanupVersion === 2 && turn.completedMessageId)
+            .map((turn) => [turn.completedMessageId as string, turn]),
+    )
+
+    return messages.flatMap((message) => {
+        const trigger = triggers.get(message.info.id)
+        if (trigger && !trigger.retainedText) return []
+
+        const completion = completions.get(message.info.id)
+        if (!completion) return [message]
+        const parts = withoutCompletionTool(message, completion)
+        return parts.length > 0 ? [{ ...message, parts }] : []
+    })
+}
+
 function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {
     const parts = Array.isArray(message.parts) ? message.parts : []
     const textPart = parts.find((part) => part.type === "text") as any
@@ -217,13 +347,16 @@ export const transformMessagesForSearch = (
     // `managementTurns`, so it must be checked even when that state is empty, wrong, or
     // incomplete - it is the only thing that can find orphaned artifacts in that case.
     const legacyPlan = buildLegacyResidueSuppressionPlan(rawMessages)
+    const v2Plan = buildV2CleanupPlan(state, rawMessages)
     const hasLegacyFindings = legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0
 
     if (
         !state.compressed.messageIds?.size &&
         !state.compressSummaries.length &&
         !state.managementTurns?.length &&
-        !hasLegacyFindings
+        !hasLegacyFindings &&
+        v2Plan.suppressedMessageIds.size === 0 &&
+        v2Plan.retainedPartsByMessageId.size === 0
     ) {
         return {
             transformed: [...rawMessages],
@@ -238,13 +371,23 @@ export const transformMessagesForSearch = (
         orderedBlocks.map((block) => [block.summary.anchorMessageId, block]),
     )
     const managementSuppression = buildManagementTurnSuppressionPlan(state, rawMessages)
+    for (const [messageId, retainedText] of v2Plan.retainedTextByMessageId) {
+        managementSuppression.retainedTextByMessageId.set(messageId, retainedText)
+    }
+    for (const messageId of v2Plan.suppressedMessageIds) {
+        managementSuppression.suppressedMessageIds.add(messageId)
+    }
     for (const [messageId, retainedText] of legacyPlan.retainedTextByMessageId) {
         if (!managementSuppression.retainedTextByMessageId.has(messageId)) {
             managementSuppression.retainedTextByMessageId.set(messageId, retainedText)
         }
     }
     for (const messageId of legacyPlan.suppressedMessageIds) {
-        if (!managementSuppression.retainedTextByMessageId.has(messageId)) {
+        if (
+            !managementSuppression.retainedTextByMessageId.has(messageId) &&
+            !v2Plan.retainedPartsByMessageId.has(messageId) &&
+            !v2Plan.protectedMessageIds.has(messageId)
+        ) {
             managementSuppression.suppressedMessageIds.add(messageId)
         }
     }
@@ -253,6 +396,12 @@ export const transformMessagesForSearch = (
     // entry (trigger recorded with no `retainedText`) must not pre-suppress a message that
     // legacy signature scanning later determines has real embedded user text to keep.
     for (const messageId of managementSuppression.retainedTextByMessageId.keys()) {
+        managementSuppression.suppressedMessageIds.delete(messageId)
+    }
+    for (const messageId of v2Plan.retainedPartsByMessageId.keys()) {
+        managementSuppression.suppressedMessageIds.delete(messageId)
+    }
+    for (const messageId of v2Plan.protectedMessageIds) {
         managementSuppression.suppressedMessageIds.delete(messageId)
     }
 
@@ -286,6 +435,12 @@ export const transformMessagesForSearch = (
                     anchorMessageId: msgId,
                 })
             }
+        }
+
+        const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId)
+        if (retainedParts && !state.compressed.messageIds.has(msgId)) {
+            transformed.push({ ...msg, parts: retainedParts })
+            continue
         }
 
         if (managementSuppression.suppressedMessageIds.has(msgId)) {
@@ -403,7 +558,7 @@ const stripToolInputs = (state: SessionState, messages: WithParts[]): void => {
                 continue
             }
 
-            if (part.state.input?.questions !== undefined) {
+            if (typeof part.state.input === "object" && part.state.input.questions !== undefined) {
                 part.state.input.questions = COMPRESSED_QUESTION_INPUT_REPLACEMENT
             }
         }

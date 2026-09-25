@@ -44,7 +44,7 @@ import { formatTokenCount } from "../ui/utils.js"
 import { isMessageCompacted } from "../shared-utils.js"
 import { isIgnoredUserMessage } from "../messages/utils.js"
 import { countTokens, getCurrentParams } from "../token-utils.js"
-import type { AssistantMessage, TextPart, ToolPart } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, TextPart, ToolPart } from "../state/types.js"
 
 export interface ContextCommandContext {
     client: any
@@ -83,7 +83,7 @@ function analyzeTokens(state: SessionState, messages: WithParts[], providerId?: 
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info as AssistantMessage
-            if (assistantInfo.tokens?.input > 0 || assistantInfo.tokens?.cache?.read > 0) {
+            if ((assistantInfo.tokens?.input ?? 0) > 0 || (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
                 firstAssistant = assistantInfo
                 break
             }
@@ -95,7 +95,7 @@ function analyzeTokens(state: SessionState, messages: WithParts[], providerId?: 
         const msg = messages[i]
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info as AssistantMessage
-            if (assistantInfo.tokens?.output > 0) {
+            if ((assistantInfo.tokens?.output ?? 0) > 0) {
                 lastAssistant = assistantInfo
                 break
             }

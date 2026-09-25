@@ -5,7 +5,7 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-import { createCommandExecuteHandler } from "../lib/hooks.ts"
+import { handleCompressCommand } from "../lib/commands/route.ts"
 import { DEFAULT_AUTO_COMPRESSION, type PluginConfig } from "../lib/config.ts"
 import { loadSessionState } from "../lib/state/persistence.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
@@ -75,25 +75,23 @@ function createHarness(sessionId: string, messages: any[], configOverride = conf
     const client = {
         session: {
             get: async () => ({ data: {} }),
-            messages: async () => messages,
-            prompt: async (input: any) => {
+            context: async () => messages,
+            wait: async () => undefined,
+            synthetic: async (input: any) => {
                 ignoredPrompts.push(input)
-                return { data: { info: { id: `ignored-${ignoredPrompts.length}` } } }
             },
         },
     }
     const stateManager = new SessionStateManager()
-    const handler = createCommandExecuteHandler(client, stateManager, logger, configOverride)
-
     const run = async (arguments_: string) => {
-        const output = { parts: [{ type: "text", text: "default" }], cancelled: false }
-        await handler({ command: "compress", sessionID: sessionId, arguments: arguments_ }, output)
-        assert.equal(output.cancelled, true)
-        assert.deepEqual(output.parts, [])
+        await handleCompressCommand(
+            { command: "compress", sessionID: sessionId, arguments: arguments_ },
+            { client, stateManager, logger, config: configOverride },
+        )
         const call = ignoredPrompts.at(-1)
-        const part = call?.body?.parts?.[0] ?? call?.parts?.[0]
-        assert.equal(part?.ignored, true)
-        return part?.text as string
+        assert.equal(call?.metadata?.["opencode.context-compress.ignored"], true)
+        assert.equal(call?.resume, false)
+        return call?.text as string
     }
 
     return { stateManager, run }
@@ -165,7 +163,7 @@ describe("session automatic-compression commands", () => {
             assert.equal(loaded.state.compressionCooldownAfterMessageId, "compress-anchor")
 
             const reset = await run("auto reset")
-            assert.equal(reset, "Defaults reset to 330,000 tokens and 90% threshold.")
+            assert.equal(reset, "Defaults reset to 432,000 tokens and 90% threshold.")
             assert.equal(state.autoCompressionEnabledOverride, false)
             assert.equal(state.autoCompressionTokenThresholdOverride, undefined)
             assert.equal(state.autoCompressionContextWindowRatioOverride, undefined)

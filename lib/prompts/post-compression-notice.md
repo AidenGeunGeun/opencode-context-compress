@@ -1,6 +1,8 @@
 <system-reminder>
 CONTEXT WAS COMPRESSED
-Earlier conversation in this session was just replaced by a compressed block, so detail that used to be visible is no longer in context.
-Before doing anything else, re-read the relevant task, spec, report, and project documentation. Do not assume the summary preserved everything the work requires.
-Then continue the original task.
+Earlier detail was replaced by a summary. Use it together with the preserved recent messages; later user guidance and evidence take precedence.
+
+Reload the skills and project instructions required by the active task only when their needed contents are no longer available or may have changed. Do not reread unrelated material or treat the summary as new authority.
+
+Continue the original task if authorized work remains active. Preserve completed or awaiting-user status; do not invent follow-up work, repeat finished actions, or duplicate a final response.
 </system-reminder>

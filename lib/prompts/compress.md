@@ -1,11 +1,11 @@
-Do not call this tool autonomously. Tool availability alone is not authorization. Call it only when the current turn contains either a manual/plugin-initiated compression-management reminder or an explicit user request in the current message to compress context.
+DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED CONTEXT COMPRESSION IN THE CURRENT TURN OR AUTOMATIC COMPRESSION HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization.
 
-Review the current conversation, then call this tool once with:
-- `summary`: A truthful durable replacement for all eligible uncompressed history after the newest existing block. Preserve the objective and WHY, controlling spec or task contract, chronology, decisions, constraints, edits and paths, load-bearing commands and results, failures, fixes, re-validation, completed/pending/blocked work, latest disposition, any delivered final response or handoff, explicit unknowns, and a real next action only when one exists. Later evidence supersedes stale plans or pending lists; never invent missing facts or completion.
+Call once with:
+- `summary`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion.
 - `topic`: A short title for the new compressed block.
 
-The plugin excludes existing compressed blocks and preserves the newest configured execution steps verbatim. Those later steps remain visible after the fold and may correct or supersede the summary.
+Update existing durable documentation only for changed, verified information when authorized; skip edits when already current or the user requested no changes. Read-only agents return findings to the parent instead. Documentation work is not the compression itself, and missing write authority does not block compression.
 
-A success receipt means the save is durable and the fold is already active. Do not call `compress` again that turn. After automatic compression, resume only when the latest evidenced disposition is genuinely active; do not reopen completed work or duplicate a final response.
+Existing blocks are excluded; recent execution steps remain verbatim and may supersede the summary. A success receipt confirms a durable save and an active fold; do not compress again that turn. Continue authorized active work according to the latest user guidance, without reopening completed work or duplicating a final response. Automatic compression is not a reason to stop for review.
 
-A failure means nothing changed. Surface the exact diagnostic and do not retry unless the user gives new authorization.
+A failure means nothing changed. Surface the exact diagnostic; do not retry automatically after an automatic compression failure.

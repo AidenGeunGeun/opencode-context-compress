@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { commitDurableSessionState } from "../state/state.js";
 import { renderSystemPrompt } from "../prompts/index.js";
 import { getCurrentParams } from "../token-utils.js";
 import { saveSessionState } from "../state/persistence.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js";
-import { promptSession, promptSessionAsync, showToast } from "../sdk/client.js";
+import { promptSession, showToast } from "../sdk/client.js";
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i;
 const LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i;
 const LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i;
@@ -33,21 +34,28 @@ export function extractManageCommandResidual(args) {
 const ASCENDING_ID_RANDOM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 let lastGeneratedMessageIdTimestamp = 0;
 let lastGeneratedMessageIdCounter = 0;
-function generateAscendingMessageIdSuffix(timestamp = Date.now()) {
-    if (timestamp !== lastGeneratedMessageIdTimestamp) {
-        lastGeneratedMessageIdTimestamp = timestamp;
-        lastGeneratedMessageIdCounter = 0;
+function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity) {
+    if (!identity) {
+        if (timestamp !== lastGeneratedMessageIdTimestamp) {
+            lastGeneratedMessageIdTimestamp = timestamp;
+            lastGeneratedMessageIdCounter = 0;
+        }
+        lastGeneratedMessageIdCounter++;
     }
-    lastGeneratedMessageIdCounter++;
-    const current = BigInt(timestamp) * 0x1000n + BigInt(lastGeneratedMessageIdCounter);
-    const time = Array.from({ length: 6 }, (_, index) => Number((current >> BigInt(40 - 8 * index)) & 0xffn)
+    const current = BigInt(timestamp) * 0x1000n + BigInt(identity ? 0 : lastGeneratedMessageIdCounter);
+    const value = ~current;
+    const time = Array.from({ length: 6 }, (_, index) => Number((value >> BigInt(40 - 8 * index)) & 0xffn)
         .toString(16)
         .padStart(2, "0")).join("");
-    const random = Array.from({ length: 14 }, () => ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)]).join("");
+    const random = identity ? createHash("sha256").update(identity).digest("hex").slice(0, 14) : Array.from({ length: 14 }, () => ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)]).join("");
     return time + random;
 }
 export function generateManagePromptMessageId() {
-    return `msg_${generateAscendingMessageIdSuffix()}`;
+    return `msg_${generateLiveOrderedMessageIdSuffix()}`;
+}
+export function generateAutomaticPromptMessageId(sessionId, trigger) {
+    // The host deduplicates prompt admission by ID, including across plugin instances.
+    return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
 }
 /**
  * Best-effort sanity check only. The generated trigger ID passed via `messageID` on the
@@ -91,7 +99,7 @@ export async function handleManageCommand(ctx) {
         logger: ctx.logger,
         sessionId: ctx.sessionId,
         messages: ctx.messages,
-        systemPrompt: renderSystemPrompt(getCurrentParams(ctx.state, ctx.messages, ctx.logger).agent),
+        systemPrompt: renderSystemPrompt(),
         retainedText: extractManageCommandResidual(ctx.arguments),
     });
 }
@@ -126,9 +134,18 @@ export async function stageManagementTurnWithinLock(ctx) {
             text: ["<user-message>", ctx.retainedText, "</user-message>"].join("\n"),
         });
     }
-    const triggerMessageId = generateManagePromptMessageId();
+    const trigger = ctx.source === "automatic"
+        ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
+        : undefined;
+    if (ctx.source === "automatic" && !trigger) {
+        throw new Error("Automatic compression trigger is missing from projected history");
+    }
+    const triggerMessageId = trigger
+        ? generateAutomaticPromptMessageId(sessionId, trigger.info)
+        : generateManagePromptMessageId();
     const managementTurn = {
         triggerMessageId,
+        cleanupVersion: 2,
         ...(ctx.retainedText ? { retainedText: ctx.retainedText } : {}),
         ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
@@ -139,7 +156,6 @@ export async function stageManagementTurnWithinLock(ctx) {
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
         compressionMapSnapshot: undefined,
-        ...(ctx.goalOverflowRecovery ? { goalOverflowRecovery: ctx.goalOverflowRecovery } : {}),
     };
     const statePersisted = await saveSessionState(candidateState, logger);
     if (!statePersisted) {
@@ -162,14 +178,14 @@ export async function stageManagementTurnWithinLock(ctx) {
     return async () => {
         let promptResult;
         try {
-            const sendPrompt = ctx.asyncPrompt ? promptSessionAsync : promptSession;
-            promptResult = await sendPrompt(client, {
+            promptResult = await promptSession(client, {
                 sessionId,
                 agent: currentParams.agent,
                 model,
                 variant: currentParams.variant,
                 parts: messageParts,
                 messageId: triggerMessageId,
+                metadata: { "opencode.context-compress.management": true },
             });
         }
         catch (err) {

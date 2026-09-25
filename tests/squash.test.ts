@@ -114,7 +114,7 @@ function compressCallMessage(id: string, sessionID: string, parentID: string, ca
     } as any
 }
 
-function toolContext(sessionID: string, messageID: string, callID: string, ask = async (_input: any) => {}) {
+function toolContext(sessionID: string, messageID: string, callID: string) {
     return {
         sessionID,
         messageID,
@@ -124,7 +124,6 @@ function toolContext(sessionID: string, messageID: string, callID: string, ask =
         worktree: "/tmp",
         abort: new AbortController().signal,
         metadata: () => {},
-        ask,
     } as any
 }
 
@@ -132,7 +131,7 @@ function client(messages: any[]) {
     return {
         session: {
             get: async () => ({ data: {} }),
-            messages: async () => ({ data: messages }),
+            context: async () => messages,
         },
     }
 }
@@ -191,7 +190,7 @@ function seedBlocks(
     return { messages, summaries }
 }
 
-async function executeSquashRange(from: number, to: number, count = 5) {
+async function executeSquashRange(from: number, to: number, count = 5, notification: PluginConfig["notification"] = "off", summary?: string) {
     const sessionId = `squash-range-${from}-${to}-${Date.now()}-${Math.random()}`
     const manager = new SessionStateManager()
     const state = manager.get(sessionId)
@@ -212,14 +211,15 @@ async function executeSquashRange(from: number, to: number, count = 5) {
         "Keep this tool output literal",
     )
     const messages = [...seeded.messages, uncompressed, visibleTool, trigger, call]
-    let permission: string | undefined
+    const notifications: Array<{ text: string; resume: boolean }> = []
+    const toolClient = client(messages)
     const tool = createSquashTool({
-        client: client(messages),
+        client: { session: { ...toolClient.session, synthetic: async (input: { text: string; resume: boolean }) => notifications.push(input) } },
         stateManager: manager,
         logger,
-        config,
+        config: { ...config, notification },
     })
-    const replacementSummary = `Replacement ${from}-${to}`
+    const replacementSummary = summary ?? `Replacement ${from}-${to}`
     const receipt = await tool.execute(
         {
             from: `b${from}`,
@@ -227,9 +227,7 @@ async function executeSquashRange(from: number, to: number, count = 5) {
             summary: replacementSummary,
             topic: "Replacement Topic",
         },
-        toolContext(sessionId, call.info.id, "call-squash", async (input) => {
-            permission = input.permission
-        }),
+        toolContext(sessionId, call.info.id, "call-squash"),
     )
     return {
         sessionId,
@@ -238,10 +236,42 @@ async function executeSquashRange(from: number, to: number, count = 5) {
         messages,
         seeded,
         receipt,
-        permission,
         replacementSummary,
+        notifications,
     }
 }
+
+describe("squash completion notifications", () => {
+    it("reports a persisted partial replacement and total block counts without waking the model", async () => {
+        const result = await executeSquashRange(1, 2, 5, "detailed")
+        try {
+            assert.equal(result.notifications.length, 1)
+            const notice = result.notifications[0]
+            assert.equal(notice.resume, false)
+            assert.match(notice.text, /\[b1\]-\[b2\] → \[b1\] \(2 blocks → 1\)/)
+            assert.match(notice.text, /Total blocks: 5 → 4 \(5 - 2 \+ 1\)/)
+            assert.match(notice.text, /Selected-block context \(estimated\): .*reduced by/)
+            const persisted = await loadSessionState(result.sessionId, logger, result.messages)
+            assert.equal(persisted.status, "loaded")
+            if (persisted.status === "loaded") assert.equal(persisted.state.compressSummaries.length, 4)
+        } finally {
+            await cleanup(result.sessionId)
+        }
+    })
+
+    it("reports context growth honestly and respects notification off", async () => {
+        const grown = await executeSquashRange(0, 1, 2, "detailed", "Long replacement. ".repeat(1000))
+        const silent = await executeSquashRange(0, 1, 2)
+        try {
+            assert.match(grown.notifications[0].text, /increased by/)
+            assert.match(grown.notifications[0].text, /Total blocks: 2 → 1/)
+            assert.deepEqual(silent.notifications, [])
+        } finally {
+            await cleanup(grown.sessionId)
+            await cleanup(silent.sessionId)
+        }
+    })
+})
 
 describe("squash command", () => {
     it("opens a durable squash-owned turn with a separate retained user instruction", async () => {
@@ -252,12 +282,14 @@ describe("squash command", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         const seeded = seedBlocks(state, sessionId, 2)
+        const failedTrigger = textMessage("failed-squash", sessionId, "user", "/compress squash")
+        state.managementTurns = [{ triggerMessageId: failedTrigger.info.id, source: "squash" }]
+        const messages = [...seeded.messages, failedTrigger]
         let promptBody: any
         const commandClient = {
             session: {
                 prompt: async (input: any) => {
-                    promptBody = input.body
-                    return { data: { info: { id: "assistant", parentID: input.body.messageID } } }
+                    promptBody = input
                 },
             },
         }
@@ -270,30 +302,30 @@ describe("squash command", () => {
                 config,
                 logger,
                 sessionId,
-                messages: seeded.messages,
-                arguments: "squash keep the first milestone intact",
+                messages,
+                arguments: "squash (do not update anything, as we've already updated all docs)",
             })
 
-            assert.equal(state.managementTurns.length, 1)
-            assert.equal(state.managementTurns[0].source, "squash")
-            assert.equal(state.managementTurns[0].retainedText, "keep the first milestone intact")
-            assert.match(promptBody.parts[0].text, /CONTEXT SQUASH REQUESTED/)
+            assert.equal(state.managementTurns.length, 2)
+            assert.equal(state.managementTurns[1].source, "squash")
             assert.equal(
-                promptBody.parts[1].text,
-                "<user-message>\nkeep the first milestone intact\n</user-message>",
+                state.managementTurns[1].retainedText,
+                "(do not update anything, as we've already updated all docs)",
             )
+            assert.match(promptBody.text, /CONTEXT SQUASH REQUESTED/)
+            assert.match(promptBody.text, /<user-message>\n\(do not update anything, as we've already updated all docs\)\n<\/user-message>/)
 
-            const reloaded = await loadSessionState(sessionId, logger, seeded.messages)
+            const reloaded = await loadSessionState(sessionId, logger, messages)
             assert.equal(reloaded.status, "loaded")
             if (reloaded.status === "loaded") {
-                assert.equal(reloaded.state.managementTurns[0].source, "squash")
+                assert.equal(reloaded.state.managementTurns[1].source, "squash")
             }
         } finally {
             await cleanup(sessionId)
         }
     })
 
-    it("refuses denied, unsynchronized, too-small, active, and ambiguous command starts", async () => {
+    it("refuses denied, unsynchronized, too-small, non-squash active, and ambiguous command starts", async () => {
         const cases = ["denied", "unsynchronized", "too-small", "active", "ambiguous"] as const
         for (const scenario of cases) {
             const sessionId = `squash-command-${scenario}-${Date.now()}-${Math.random()}`
@@ -311,11 +343,14 @@ describe("squash command", () => {
             if (scenario === "ambiguous") {
                 state.compressSummaries[1].anchorMessageId = state.compressSummaries[0].anchorMessageId
             }
-            const toasts: any[] = []
+            const feedback: any[] = []
             let promptCalls = 0
             const commandClient = {
-                tui: { showToast: async (input: any) => toasts.push(input) },
-                session: { prompt: async () => { promptCalls++ } },
+                session: {
+                    prompt: async () => { promptCalls++ },
+                    wait: async () => undefined,
+                    synthetic: async (input: any) => feedback.push(input),
+                },
             }
             const commandConfig = scenario === "denied"
                 ? {
@@ -340,7 +375,7 @@ describe("squash command", () => {
 
             assert.equal(promptCalls, 0, scenario)
             assert.equal(state.managementTurns.length, scenario === "active" ? 1 : 0, scenario)
-            assert.equal(toasts.length, 1, scenario)
+            assert.equal(feedback.length, 1, scenario)
             await cleanup(sessionId)
         }
     })
@@ -353,13 +388,16 @@ describe("squash command", () => {
         state.persistenceSynchronized = true
         const seeded = seedBlocks(state, sessionId, 2)
         const before = durableSnapshot(state)
-        const toasts: any[] = []
+        const feedback: any[] = []
         let promptCalls = 0
 
         await handleSquashCommand({
             client: {
-                tui: { showToast: async (input: any) => toasts.push(input) },
-                session: { prompt: async () => { promptCalls++ } },
+                session: {
+                    prompt: async () => { promptCalls++ },
+                    wait: async () => undefined,
+                    synthetic: async (input: any) => feedback.push(input),
+                },
             },
             stateManager: manager,
             state,
@@ -371,7 +409,7 @@ describe("squash command", () => {
         })
 
         assert.equal(promptCalls, 0)
-        assert.equal(toasts.length, 1)
+        assert.equal(feedback.length, 1)
         assert.deepEqual(durableSnapshot(state), before)
     })
 
@@ -385,26 +423,9 @@ describe("squash command", () => {
 })
 
 describe("squash tool", () => {
-    it("has a separate four-argument schema while compress remains byte-compatible", () => {
-        const context = {
-            client: client([]),
-            stateManager: new SessionStateManager(),
-            logger,
-            config,
-        }
-        assert.deepEqual(Object.keys((createCompressTool(context) as any).args), ["summary", "topic"])
-        assert.deepEqual(Object.keys((createSquashTool(context) as any).args), [
-            "from",
-            "to",
-            "summary",
-            "topic",
-        ])
-    })
-
     it("replaces b1 through b12 in a 20-block session and relabels canonically", async () => {
         const result = await executeSquashRange(1, 12, 20)
         try {
-            assert.equal(result.permission, "compress")
             assert.match(result.receipt, /Replaced \[b1\]-\[b12\] with \[b1\]/)
             assert.match(result.receipt, /Uncompressed history was untouched/)
             assert.equal(result.state.compressSummaries.length, 9)
@@ -543,10 +564,8 @@ describe("squash tool", () => {
         }
     })
 
-    it("rejects unauthorized, stale, malformed, reversed, one-block, missing, and ambiguous calls without state changes", async () => {
+    it("rejects malformed, reversed, one-block, missing, and ambiguous calls without state changes", async () => {
         const scenarios = [
-            { name: "unauthorized", from: "b0", to: "b1" },
-            { name: "stale", from: "b0", to: "b1" },
             { name: "malformed", from: "0", to: "b1" },
             { name: "reversed", from: "b1", to: "b0" },
             { name: "one-block", from: "b0", to: "b0" },
@@ -562,9 +581,7 @@ describe("squash tool", () => {
             state.initialized = true
             const seeded = seedBlocks(state, sessionId, 2)
             const trigger = textMessage("trigger", sessionId, "user")
-            if (scenario.name !== "unauthorized") {
-                state.managementTurns = [{ triggerMessageId: "trigger", source: "squash" }]
-            }
+            state.managementTurns = [{ triggerMessageId: "trigger", source: "squash" }]
             if (scenario.name === "ambiguous") {
                 state.compressSummaries[1].anchorMessageId = state.compressSummaries[0].anchorMessageId
             }
@@ -573,10 +590,8 @@ describe("squash tool", () => {
             }
             const call = squashCallMessage("call-message", sessionId, "trigger", "call")
             const messages = [...seeded.messages, trigger]
-            if (scenario.name === "stale") messages.push(textMessage("later-user", sessionId, "user"))
             messages.push(call)
             const before = durableSnapshot(state)
-            let asked = false
             const tool = createSquashTool({ client: client(messages), stateManager: manager, logger, config })
 
             await assert.rejects(
@@ -587,16 +602,15 @@ describe("squash tool", () => {
                         summary: "Unused",
                         topic: "Unused",
                     },
-                    toolContext(sessionId, "call-message", "call", async () => { asked = true }),
+                    toolContext(sessionId, "call-message", "call"),
                 ),
             )
-            assert.equal(asked, false, scenario.name)
             assert.deepEqual(durableSnapshot(state), before, scenario.name)
             assert.equal(existsSync(sessionFile(sessionId)), false, scenario.name)
         }
     })
 
-    it("rejects absent or blank required values before permission or persistence", async () => {
+    it("rejects absent or blank required values before persistence", async () => {
         const manager = new SessionStateManager()
         const tool = createSquashTool({
             client: client([]),
@@ -641,34 +655,7 @@ describe("squash tool", () => {
         assert.deepEqual(durableSnapshot(state), before)
     })
 
-    it("keeps state unchanged when permission is rejected or transcript fetch fails", async () => {
-        const permissionSession = `squash-permission-${Date.now()}-${Math.random()}`
-        const permissionManager = new SessionStateManager()
-        const permissionState = permissionManager.get(permissionSession)
-        permissionState.initialized = true
-        const seeded = seedBlocks(permissionState, permissionSession, 2)
-        const trigger = textMessage("trigger", permissionSession, "user")
-        permissionState.managementTurns = [{ triggerMessageId: "trigger", source: "squash" }]
-        const call = squashCallMessage("call-message", permissionSession, "trigger", "call")
-        const beforePermission = durableSnapshot(permissionState)
-        const permissionTool = createSquashTool({
-            client: client([...seeded.messages, trigger, call]),
-            stateManager: permissionManager,
-            logger,
-            config,
-        })
-        await assert.rejects(
-            permissionTool.execute(
-                { from: "b0", to: "b1", summary: "Replacement", topic: "Replacement" },
-                toolContext(permissionSession, "call-message", "call", async () => {
-                    throw new Error("denied")
-                }),
-            ),
-            /denied/,
-        )
-        assert.deepEqual(durableSnapshot(permissionState), beforePermission)
-        assert.equal(existsSync(sessionFile(permissionSession)), false)
-
+    it("keeps state unchanged when transcript fetch fails", async () => {
         const fetchSession = `squash-fetch-${Date.now()}-${Math.random()}`
         const fetchManager = new SessionStateManager()
         const fetchState = fetchManager.get(fetchSession)
@@ -678,7 +665,7 @@ describe("squash tool", () => {
             client: {
                 session: {
                     get: async () => ({ data: {} }),
-                    messages: async () => { throw new Error("offline") },
+                    context: async () => { throw new Error("offline") },
                 },
             },
             stateManager: fetchManager,

@@ -142,7 +142,7 @@ export class Logger {
     private minimizeForDebug(messages: any[]): any[] {
         return messages.map((msg) => {
             const minimized: any = {
-                role: msg.info?.role,
+                role: msg.info?.role ?? msg.role,
             }
 
             if (msg.info?.time?.created) {
@@ -158,8 +158,9 @@ export class Logger {
                 }
             }
 
-            if (msg.parts) {
-                minimized.parts = msg.parts
+            const parts = msg.parts ?? msg.content
+            if (parts) {
+                minimized.parts = parts
                     .map((part: any) => {
                         if (part.type === "step-start" || part.type === "step-finish") {
                             return null
@@ -198,6 +199,24 @@ export class Logger {
                             }
 
                             return toolPart
+                        }
+
+                        if (part.type === "tool-call") {
+                            return {
+                                type: "tool-call",
+                                tool: part.name,
+                                callID: part.id,
+                                input: part.input,
+                            }
+                        }
+
+                        if (part.type === "tool-result") {
+                            return {
+                                type: "tool-result",
+                                tool: part.name,
+                                callID: part.id,
+                                output: part.result,
+                            }
                         }
 
                         return null

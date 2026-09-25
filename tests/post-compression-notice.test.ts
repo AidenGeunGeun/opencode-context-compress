@@ -5,8 +5,9 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { createChatMessageTransformHandler } from "../lib/hooks.ts"
+import { createChatMessageTransformHandler } from "./transform-harness.ts"
 import { Logger } from "../lib/logger.ts"
+import { renderPostCompressionNotice } from "../lib/prompts/index.ts"
 import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
@@ -33,11 +34,11 @@ const ignoredUserMessage = (id: string, sessionID: string, text: string): any =>
     return message
 }
 
-const goalContinuationMessage = (id: string, sessionID: string): any => {
+const syntheticContinuationMessage = (id: string, sessionID: string): any => {
     const message = userMessage(
         id,
         sessionID,
-        "Continue pursuing the active session goal.\nGoal reference: goa_abc 1800000000000",
+        "Continue the current task from the latest durable state.",
     )
     message.parts[0].synthetic = true
     return message
@@ -165,8 +166,7 @@ describe("post-compression notice", () => {
             const notice = messages[messages.length - 1]
             assert.equal(notice.info.role, "user")
             assert.match(noticeText(notice), NOTICE)
-            assert.match(noticeText(notice), /re-read the relevant task, spec, report, and project documentation/i)
-            assert.match(noticeText(notice), /continue the original task/i)
+            assert.equal(noticeText(notice), renderPostCompressionNotice())
             assert.equal(
                 messages.filter((message) => NOTICE.test(noticeText(message))).length,
                 1,
@@ -230,7 +230,7 @@ describe("post-compression notice", () => {
         }
     })
 
-    it("survives plugin status notifications, Goal continuations, and ordinary user messages", async () => {
+    it("survives plugin status notifications, synthetic continuations, and ordinary user messages", async () => {
         const harness = await createHarness("artifacts")
         try {
             harness.manager.get(harness.sessionId).compressionCooldownAfterMessageId = "a-compress"
@@ -238,7 +238,7 @@ describe("post-compression notice", () => {
                 userMessage("u1", harness.sessionId, "Do the work"),
                 assistantMessage("a-compress", harness.sessionId, [compressPart()]),
                 ignoredUserMessage("n1", harness.sessionId, "▣ Context Compress | ~12k saved total"),
-                goalContinuationMessage("g1", harness.sessionId),
+                syntheticContinuationMessage("g1", harness.sessionId),
                 userMessage("u2", harness.sessionId, "Also check the logs"),
             ]
 

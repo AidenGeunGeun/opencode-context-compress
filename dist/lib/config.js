@@ -2,11 +2,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { parse } from "jsonc-parser";
-import { showToast } from "./sdk/client.js";
 export const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
-    tokenThreshold: 330_000,
+    tokenThreshold: 432_000,
 };
 export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
     if (layer.protectedTurns !== undefined)
@@ -193,7 +192,7 @@ function validateConfigTypes(config) {
     return errors;
 }
 // Show validation warnings for a config file
-function showConfigValidationWarnings(ctx, configPath, configData, isProject) {
+function showConfigValidationWarnings(configPath, configData, isProject) {
     const invalidKeys = getInvalidConfigKeys(configData);
     const typeErrors = validateConfigTypes(configData);
     if (invalidKeys.length === 0 && typeErrors.length === 0) {
@@ -214,14 +213,7 @@ function showConfigValidationWarnings(ctx, configPath, configData, isProject) {
             messages.push(`(+${typeErrors.length - 2} more type errors)`);
         }
     }
-    setTimeout(() => {
-        void showToast(ctx.client, {
-            title: `Context Compress: Invalid ${configType}`,
-            message: `${configPath}\n${messages.join("\n")}`,
-            variant: "warning",
-            duration: 7000,
-        });
-    }, 7000);
+    console.warn(`Context Compress: Invalid ${configType}\n${configPath}\n${messages.join("\n")}`);
 }
 const defaultConfig = {
     enabled: true,
@@ -372,18 +364,11 @@ export function getConfig(ctx) {
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global);
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid config",
-                    message: `${configPaths.global}\n${result.parseError}\nUsing default values`,
-                    variant: "warning",
-                    duration: 7000,
-                });
-            }, 7000);
+            console.warn(`Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`);
         }
         else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.global, result.data, false);
+            showConfigValidationWarnings(configPaths.global, result.data, false);
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
@@ -406,18 +391,11 @@ export function getConfig(ctx) {
     if (configPaths.configDir) {
         const result = loadConfigFile(configPaths.configDir);
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid configDir config",
-                    message: `${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
-                    variant: "warning",
-                    duration: 7000,
-                });
-            }, 7000);
+            console.warn(`Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`);
         }
         else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.configDir, result.data, true);
+            showConfigValidationWarnings(configPaths.configDir, result.data, true);
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,
@@ -437,18 +415,11 @@ export function getConfig(ctx) {
     if (configPaths.project) {
         const result = loadConfigFile(configPaths.project);
         if (result.parseError) {
-            setTimeout(async () => {
-                await showToast(ctx.client, {
-                    title: "Context Compress: Invalid project config",
-                    message: `${configPaths.project}\n${result.parseError}\nUsing global/default values`,
-                    variant: "warning",
-                    duration: 7000,
-                });
-            }, 7000);
+            console.warn(`Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`);
         }
         else if (result.data) {
             // Validate config keys and types
-            showConfigValidationWarnings(ctx, configPaths.project, result.data, true);
+            showConfigValidationWarnings(configPaths.project, result.data, true);
             config = {
                 enabled: result.data.enabled ?? config.enabled,
                 debug: result.data.debug ?? config.debug,

@@ -2,17 +2,11 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
-    DEFAULT_AUTO_COMPRESSION,
     getInvalidConfigKeys,
     resolveProtectedTurnsSetting,
 } from "../lib/config.ts"
 
 describe("automatic compression defaults", () => {
-    it("initiates at 330,000 tokens or 90% of the context window", () => {
-        assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 330_000)
-        assert.equal(DEFAULT_AUTO_COMPRESSION.contextWindowRatio, 0.9)
-    })
-
     it("rejects keys outside the documented surface", () => {
         assert.deepEqual(
             getInvalidConfigKeys({

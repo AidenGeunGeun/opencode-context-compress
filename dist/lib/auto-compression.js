@@ -2,10 +2,9 @@ import { stageManagementTurnWithinLock, } from "./commands/manage.js";
 import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { renderAutomaticSystemPrompt } from "./prompts/index.js";
 import { listSessionMessages, showToast } from "./sdk/client.js";
-import { getSessionGoal } from "./sdk/client.js";
 import { reconcileSessionLifecycle } from "./state/index.js";
+import { sendIgnoredMessage } from "./ui/notification.js";
 import { isMessageWithinPostCompressionCooldown, messageContainsCompressCall, resolveEffectiveAutoCompressionPolicy, } from "./auto-policy.js";
-import { isContextOverflowError, renderGoalOverflowRecoveryPrompt } from "./goal.js";
 function positiveFinite(value) {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
@@ -68,25 +67,76 @@ function formatThresholdReason(result, ratio) {
         ? `${Math.round(ratio * 100)}% of the model-reported context window`
         : "the system-wide absolute token limit";
 }
-export function createAutomaticCompressionEventHandler(client, stateManager, logger, config) {
+export function createAutomaticCompressionEventHandler(client, stateManager, logger, config, acceptsSession = async () => true) {
+    const started = new Map();
     return async (input) => {
+        const outer = isRecord(input) && isRecord(input.event) ? input.event : input;
+        const event = isRecord(outer) ? outer : {};
+        const data = isRecord(event.data) ? event.data : {};
+        if (event.type === "session.step.started") {
+            const model = isRecord(data.model) ? data.model : {};
+            if (typeof data.assistantMessageID === "string" && typeof data.sessionID === "string") {
+                started.set(data.assistantMessageID, {
+                    sessionID: data.sessionID,
+                    agent: typeof data.agent === "string" ? data.agent : undefined,
+                    providerID: typeof model.providerID === "string" ? model.providerID : undefined,
+                    modelID: typeof model.id === "string" ? model.id : undefined,
+                });
+            }
+            return;
+        }
+        const projected = event.type === "session.step.ended" && typeof data.assistantMessageID === "string"
+            ? started.get(data.assistantMessageID)
+            : undefined;
+        if (event.type === "session.step.failed") {
+            if (typeof data.assistantMessageID === "string")
+                started.delete(data.assistantMessageID);
+            return;
+        }
+        if (event.type === "session.step.ended" && typeof data.assistantMessageID === "string") {
+            started.delete(data.assistantMessageID);
+        }
+        const info = projected
+            ? {
+                id: data.assistantMessageID,
+                sessionID: projected.sessionID,
+                role: "assistant",
+                agent: projected.agent,
+                providerID: projected.providerID,
+                modelID: projected.modelID,
+                time: { completed: Date.now() },
+                tokens: isRecord(data.tokens) ? data.tokens : undefined,
+            }
+            : event.type === "session.step.ended" &&
+                typeof data.assistantMessageID === "string" &&
+                typeof data.sessionID === "string"
+                ? {
+                    id: data.assistantMessageID,
+                    sessionID: data.sessionID,
+                    role: "assistant",
+                    time: { completed: Date.now() },
+                    tokens: isRecord(data.tokens) ? data.tokens : undefined,
+                }
+                : isRecord(event.properties) && isRecord(event.properties.info)
+                    ? event.properties.info
+                    : undefined;
         if (!config.autoCompression.enabled ||
             config.tools.compress.permission === "deny")
             return;
-        if (input.event?.type !== "message.updated")
+        if (event.type !== "message.updated" && event.type !== "session.step.ended")
             return;
-        const info = input.event.properties?.info;
-        const overflow = isContextOverflowError(info?.error);
         if (!info ||
             info.role !== "assistant" ||
             info.summary === true ||
-            (info.error && !overflow) ||
+            info.error ||
             !info.time?.completed) {
             return;
         }
+        if (!(await acceptsSession(info.sessionID, outer)))
+            return;
         const state = stateManager.get(info.sessionID);
         const contextTokens = getAssistantContextTokens(info.tokens);
-        if (!overflow && state.initialized && state.persistenceSynchronized) {
+        if (state.initialized && state.persistenceSynchronized) {
             const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
             const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
             // Cooldown progress is derived from the transcript when it is next needed, so
@@ -124,42 +174,6 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                     cooldownApplies) {
                     return undefined;
                 }
-                if (overflow) {
-                    if (state.goalOverflowRecovery?.overflowMessageId === info.id ||
-                        state.autoCompressionStarting ||
-                        state.lastAutoTriggeredMessageId === info.id ||
-                        findActiveManagementTurn(state, messages)) {
-                        return undefined;
-                    }
-                    const goal = await getSessionGoal(client, info.sessionID);
-                    if (goal === undefined || !goal || goal.status !== "blocked")
-                        return undefined;
-                    state.autoCompressionStarting = true;
-                    state.lastAutoTriggeredMessageId = info.id;
-                    attemptedStart = true;
-                    const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
-                    const staged = await stageManagementTurnWithinLock({
-                        client,
-                        stateManager,
-                        state,
-                        logger,
-                        sessionId: info.sessionID,
-                        messages,
-                        systemPrompt: renderGoalOverflowRecoveryPrompt(info.agent),
-                        source: "automatic",
-                        triggeredByMessageId: info.id,
-                        contextTokens,
-                        thresholdTokens: threshold.thresholdTokens,
-                        protectedTurns: config.protectedTurns,
-                        asyncPrompt: true,
-                        goalOverflowRecovery: {
-                            overflowMessageId: info.id,
-                            goalID: goal.id,
-                            timeUpdated: goal.time.updated,
-                        },
-                    });
-                    return staged ? { staged, threshold, contextTokens } : undefined;
-                }
                 const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
                 if (contextTokens < threshold.thresholdTokens)
                     return undefined;
@@ -185,7 +199,7 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                         context_tokens: contextTokens.toLocaleString("en-US"),
                         threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
                         threshold_reason: formatThresholdReason(threshold, policy.contextWindowRatio),
-                    }, info.agent),
+                    }),
                     source: "automatic",
                     triggeredByMessageId: info.id,
                     contextTokens,
@@ -215,12 +229,20 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
                 messageId: info.id,
                 error: message,
             });
-            await showToast(client, {
+            const shown = await showToast(client, {
                 title: "Automatic Compression",
                 message: `Could not start automatic compression: ${message}`,
                 variant: "error",
                 duration: 8000,
             });
+            if (!shown) {
+                await sendIgnoredMessage(client, info.sessionID, `Could not start automatic compression: ${message}`, {
+                    agent: info.agent,
+                    providerId: info.providerID,
+                    modelId: info.modelID,
+                    variant: state.variant,
+                }, logger);
+            }
         }
         finally {
             if (attemptedStart) {
@@ -228,5 +250,8 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
             }
         }
     };
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 //# sourceMappingURL=auto-compression.js.map

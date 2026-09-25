@@ -1,156 +1,45 @@
-function unwrapClientData(response) {
-    if (response && typeof response === "object" && "data" in response) {
-        return response.data;
-    }
-    return response;
+import { adaptProjectedMessages } from "../messages/v2-adapter.js";
+export function pluginClient(session) {
+    return { kind: "promise-plugin", selections: new Map(), session };
 }
-function usesFlatRequestShape(client) {
-    if (!client || typeof client !== "object") {
-        return false;
-    }
-    const record = client;
-    return "client" in record && !("_client" in record);
+export function setSessionSelection(client, sessionID, selection) {
+    client.selections.set(sessionID, selection);
 }
-function unwrapGoalResponse(response) {
-    if (response && typeof response === "object" && "error" in response && response.error) {
-        throw new Error(`Goal request failed: ${JSON.stringify(response.error)}`);
-    }
-    return unwrapClientData(response) ?? null;
-}
-export async function getSessionGoal(client, sessionId) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.goal !== "function")
-        return undefined;
-    return unwrapGoalResponse(usesFlatRequestShape(client)
-        ? await sessionClient.goal({ sessionID: sessionId })
-        : await sessionClient.goal({ path: { id: sessionId } }));
-}
-export async function resumeSessionGoal(client, sessionId, owner) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.goalUpdate !== "function")
-        return undefined;
-    return unwrapGoalResponse(usesFlatRequestShape(client)
-        ? await sessionClient.goalUpdate({ sessionID: sessionId, body: { action: "resume", owner } })
-        : await sessionClient.goalUpdate({ path: { id: sessionId }, body: { action: "resume", owner } })) ?? undefined;
-}
-export async function listSessionMessages(client, sessionId, options) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.messages !== "function") {
-        return [];
-    }
-    const response = usesFlatRequestShape(client)
-        ? await sessionClient.messages({
-            sessionID: sessionId,
-            ...(options?.limit !== undefined ? { limit: options.limit } : {}),
-        })
-        : await sessionClient.messages({
-            path: { id: sessionId },
-            ...(options?.limit !== undefined ? { query: { limit: options.limit } } : {}),
-        });
-    const data = unwrapClientData(response);
-    return Array.isArray(data) ? data : [];
+export async function listSessionMessages(client, sessionId) {
+    const values = await client.session.context({ sessionID: sessionId });
+    if (values.every((value) => typeof value === "object" &&
+        value !== null &&
+        "info" in value &&
+        "parts" in value))
+        return values;
+    return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId));
 }
 export async function promptSession(client, input) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.prompt !== "function") {
-        throw new Error("Session prompt API is unavailable");
-    }
-    const model = input.model
-        ? {
-            providerID: input.model.providerID,
-            modelID: input.model.modelID,
-        }
-        : undefined;
-    if (usesFlatRequestShape(client)) {
-        return sessionClient.prompt({
+    const text = input.parts
+        .filter((part) => part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("\n\n");
+    if (!text)
+        throw new Error("Session prompt requires text");
+    if (input.noReply) {
+        return client.session.synthetic({
             sessionID: input.sessionId,
-            parts: input.parts,
-            agent: input.agent,
-            model,
-            variant: input.variant,
-            noReply: input.noReply,
-            messageID: input.messageId,
+            text,
+            description: text,
+            metadata: { "opencode.context-compress.ignored": true },
+            resume: false,
         });
     }
-    return sessionClient.prompt({
-        path: {
-            id: input.sessionId,
-        },
-        body: {
-            parts: input.parts,
-            agent: input.agent,
-            model,
-            variant: input.variant,
-            noReply: input.noReply,
-            messageID: input.messageId,
-        },
+    return client.session.prompt({
+        sessionID: input.sessionId,
+        text,
+        id: input.messageId,
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+        delivery: "steer",
+        resume: true,
     });
 }
-export async function promptSessionAsync(client, input) {
-    const sessionClient = client?.session;
-    if (typeof sessionClient?.promptAsync !== "function") {
-        return promptSession(client, input);
-    }
-    const model = input.model
-        ? {
-            providerID: input.model.providerID,
-            modelID: input.model.modelID,
-        }
-        : undefined;
-    if (usesFlatRequestShape(client)) {
-        return sessionClient.promptAsync({
-            sessionID: input.sessionId,
-            parts: input.parts,
-            agent: input.agent,
-            model,
-            variant: input.variant,
-            noReply: input.noReply,
-            messageID: input.messageId,
-        });
-    }
-    return sessionClient.promptAsync({
-        path: {
-            id: input.sessionId,
-        },
-        body: {
-            parts: input.parts,
-            agent: input.agent,
-            model,
-            variant: input.variant,
-            noReply: input.noReply,
-            messageID: input.messageId,
-        },
-    });
-}
-export async function showToast(client, input) {
-    const tuiClient = client?.tui;
-    if (typeof tuiClient?.showToast !== "function") {
-        return false;
-    }
-    try {
-        if (usesFlatRequestShape(client)) {
-            await tuiClient.showToast({
-                title: input.title,
-                message: input.message,
-                variant: input.variant,
-                duration: input.duration,
-                directory: input.directory,
-            });
-            return true;
-        }
-        await tuiClient.showToast({
-            body: {
-                title: input.title,
-                message: input.message,
-                variant: input.variant,
-                duration: input.duration,
-            },
-            ...(input.directory ? { query: { directory: input.directory } } : {}),
-        });
-        return true;
-    }
-    catch {
-        return false;
-    }
+export async function showToast(..._args) {
+    return false;
 }
 //# sourceMappingURL=client.js.map

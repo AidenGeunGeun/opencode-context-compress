@@ -12,7 +12,6 @@ export function commitDurableSessionState(state, candidate) {
     state.autoCompressionContextWindowRatioOverride =
         candidate.autoCompressionContextWindowRatioOverride;
     state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId;
-    state.goalOverflowRecovery = candidate.goalOverflowRecovery;
     state.lastCompaction = candidate.lastCompaction;
     state.hasPersistedState = candidate.hasPersistedState;
     state.persistedLastUpdated = candidate.persistedLastUpdated;
@@ -39,7 +38,6 @@ function applyPersistedState(state, persisted) {
     state.autoCompressionContextWindowRatioOverride =
         persistedState.autoCompressionContextWindowRatioOverride;
     state.compressionCooldownAfterMessageId = persistedState.compressionCooldownAfterMessageId;
-    state.goalOverflowRecovery = persistedState.goalOverflowRecovery;
     state.lastCompaction = persistedState.lastCompaction ?? 0;
     state.hasPersistedState = true;
     state.persistedLastUpdated = persistedState.lastUpdated || null;
@@ -60,7 +58,6 @@ function clearPersistedCompressionState(state) {
     state.autoCompressionTokenThresholdOverride = undefined;
     state.autoCompressionContextWindowRatioOverride = undefined;
     state.compressionCooldownAfterMessageId = undefined;
-    state.goalOverflowRecovery = undefined;
     state.lastCompaction = 0;
     state.hasPersistedState = false;
     state.persistedLastUpdated = null;
@@ -284,9 +281,9 @@ export function createSessionState() {
         autoCompressionTokenThresholdOverride: undefined,
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
-        goalOverflowRecovery: undefined,
         lastCompaction: 0,
         variant: undefined,
+        currentAgent: undefined,
         autoCompressionStarting: false,
         lastAutoTriggeredMessageId: undefined,
     };

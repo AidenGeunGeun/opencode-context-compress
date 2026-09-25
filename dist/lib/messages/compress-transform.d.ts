@@ -21,6 +21,8 @@ export declare function findActiveManagementTurn(state: SessionState, rawMessage
     triggerIndex: number;
 } | undefined;
 export declare function buildManagementTurnSuppressionPlan(state: SessionState, rawMessages: WithParts[]): ManagementTurnSuppressionPlan;
+/** Remove exact Version 2 machinery from material selected into a future summary. */
+export declare function stripV2MachineryForCompressionSelection(messages: WithParts[], state: SessionState): WithParts[];
 export declare const transformMessagesForSearch: (rawMessages: WithParts[], state: SessionState, logger: Logger) => TransformMessagesForSearchResult;
 export {};
 //# sourceMappingURL=compress-transform.d.ts.map

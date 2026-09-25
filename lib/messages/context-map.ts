@@ -1,6 +1,9 @@
 import type { Logger } from "../logger.js"
 import type { SessionState, WithParts } from "../state/index.js"
-import { transformMessagesForSearch } from "./compress-transform.js"
+import {
+    stripV2MachineryForCompressionSelection,
+    transformMessagesForSearch,
+} from "./compress-transform.js"
 
 export interface DeterministicCompressionSpan {
     messages: WithParts[]
@@ -37,7 +40,9 @@ export function selectDeterministicCompressionSpan(
     logger: Logger,
     protectedTurns: number,
 ): DeterministicCompressionSpan {
-    const { transformed, syntheticMap } = transformMessagesForSearch(rawHistory, state, logger)
+    const search = transformMessagesForSearch(rawHistory, state, logger)
+    const transformed = stripV2MachineryForCompressionSelection(search.transformed, state)
+    const syntheticMap = search.syntheticMap
     const representedBlockAnchors = new Set(
         [...syntheticMap.values()].map((summary) => summary.anchorMessageId),
     )

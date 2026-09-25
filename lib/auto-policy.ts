@@ -1,7 +1,6 @@
 import type { PluginConfig } from "./config.js"
 import { isIgnoredUserMessage } from "./messages/utils.js"
 import type { SessionState, WithParts } from "./state/index.js"
-import { isGoalContinuationMessage } from "./goal.js"
 
 export const POST_COMPRESSION_COOLDOWN_RESPONSES = 3
 
@@ -42,7 +41,11 @@ export function messageContainsCompressCall(message: WithParts | undefined): boo
 }
 
 function isVisibleUserMessage(message: WithParts): boolean {
-    return message.info.role === "user" && !isIgnoredUserMessage(message) && !isGoalContinuationMessage(message)
+    return (
+        message.info.role === "user" &&
+        (message.info as any).sourceType !== "synthetic" &&
+        !isIgnoredUserMessage(message)
+    )
 }
 
 function collectManagementTurnMessageIds(

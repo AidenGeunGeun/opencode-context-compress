@@ -2,7 +2,6 @@ import type { Logger } from "../logger.js";
 import type { SessionState, WithParts } from "../state/index.js";
 import type { SessionStateManager } from "../state/state.js";
 import type { PluginConfig } from "../config.js";
-import type { GoalOverflowRecovery } from "../goal.js";
 export interface ManageCommandContext {
     client: any;
     stateManager: SessionStateManager;
@@ -28,11 +27,11 @@ export interface ManagementTurnStartContext {
     thresholdTokens?: number;
     protectedTurns?: number;
     asyncPrompt?: boolean;
-    goalOverflowRecovery?: GoalOverflowRecovery;
 }
 export type StagedManagementTurn = () => Promise<boolean>;
 export declare function extractManageCommandResidual(args: string | undefined): string | undefined;
 export declare function generateManagePromptMessageId(): string;
+export declare function generateAutomaticPromptMessageId(sessionId: string, trigger: WithParts["info"]): string;
 export declare function sendManageFailureFeedback(client: any, logger: Logger, sessionId: string, message: string, params: any): Promise<void>;
 export declare function handleManageCommand(ctx: ManageCommandContext): Promise<void>;
 /** Persists the turn marker; the caller must hold this session's mutation lock. */
