@@ -4138,7 +4138,7 @@ async function setup(context) {
       });
     }));
   }
-  registrations.push(await context.session.hook("context", async (event) => {
+  const applyCompression = async (event, kind) => {
     setSessionSelection(client, event.sessionID, {
       agent: event.agent,
       model: {
@@ -4172,9 +4172,8 @@ async function setup(context) {
         if (!state.persistenceSynchronized)
           throw new Error("Cannot load inherited fork compression state");
       }
-      const notice = isPostCompressionNoticeDue(state, messages);
       transformed = transformV2Messages(messages, state, logger, event.messages);
-      if (notice) {
+      if (kind === "context" && isPostCompressionNoticeDue(state, messages)) {
         transformed.push({
           role: "user",
           content: [{ type: "text", text: renderPostCompressionNotice() }]
@@ -4182,9 +4181,10 @@ async function setup(context) {
       }
       event.messages.splice(0, event.messages.length, ...transformed);
     });
-    if (transformed)
+    if (kind === "context" && transformed)
       await logger.saveContext(event.sessionID, transformed);
-  }));
+  };
+  registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
   const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, async (sessionID, event) => {
     const ref = isRecord3(event) && isRecord3(event.location) ? event.location : undefined;
     if (ref && typeof ref.directory === "string") {
@@ -4257,13 +4257,13 @@ function isRecord3(value) {
 }
 
 // index.ts
-var opencode_compress_fork_stage_default = Plugin.define({
+var context_compress_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  opencode_compress_fork_stage_default as default
+  context_compress_default as default
 };
 
-//# debugId=166E2FE85CE36A5D64756E2164756E21
+//# debugId=FFD19C948382203A64756E2164756E21
 //# sourceMappingURL=index.js.map

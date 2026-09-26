@@ -66,7 +66,7 @@ export async function setup(context) {
             });
         }));
     }
-    registrations.push(await context.session.hook("context", async (event) => {
+    const applyCompression = async (event, kind) => {
         setSessionSelection(client, event.sessionID, {
             agent: event.agent,
             model: {
@@ -100,9 +100,8 @@ export async function setup(context) {
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state");
             }
-            const notice = isPostCompressionNoticeDue(state, messages);
             transformed = transformV2Messages(messages, state, logger, event.messages);
-            if (notice) {
+            if (kind === "context" && isPostCompressionNoticeDue(state, messages)) {
                 transformed.push({
                     role: "user",
                     content: [{ type: "text", text: renderPostCompressionNotice() }],
@@ -110,9 +109,10 @@ export async function setup(context) {
             }
             event.messages.splice(0, event.messages.length, ...transformed);
         });
-        if (transformed)
+        if (kind === "context" && transformed)
             await logger.saveContext(event.sessionID, transformed);
-    }));
+    };
+    registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
     const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, async (sessionID, event) => {
         const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined;
         if (ref && typeof ref.directory === "string") {
