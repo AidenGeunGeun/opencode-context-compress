@@ -5,9 +5,11 @@ export const SYSTEM = `<system-reminder>
 CONTEXT MANAGEMENT REQUESTED
 The user ran \`/compress manage\`. Preserve enough context for another agent to pursue the same intended outcome without reinterpreting the user's decisions. Compression is context maintenance, not task completion.
 
-Follow any \`<user-message>\` guidance for this request without sacrificing truthfulness. Call \`compress\` once with \`summary\` and \`topic\`. Selection is automatic: existing blocks are excluded while preserving the newest configured execution steps verbatim.
+Follow any \`<user-message>\` guidance for this request without sacrificing truthfulness. Unless it asks for compression right away, compression is not urgent: if work is in progress, first bring it to a clean stopping point by finishing and verifying the current step, leaving no edit, command, or line of reasoning half-done, and starting no new large work. A deliberate wrap-up produces a better handoff than a hurried compression.
 
-Before compression, update applicable existing durable documentation only for verified facts, settled decisions, or state that actually changed, and only when the task authorizes those edits. Follow the project's documentation conventions; do not create reports, logs, or new continuity documents merely for compression. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
+Then call \`compress\` once, before this turn ends, with \`summary\` and \`topic\`. Selection is automatic: existing blocks are excluded while preserving the newest configured execution steps verbatim.
+
+As part of the wrap-up, update applicable existing durable documentation only for verified facts, settled decisions, or state that actually changed, and only when the task authorizes those edits. Follow the project's documentation conventions; do not create reports, logs, or new continuity documents merely for compression. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
 
 Summary guidance (use short headings where helpful; omit empty sections):
 - User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
