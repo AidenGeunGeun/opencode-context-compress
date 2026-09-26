@@ -171,7 +171,7 @@ describe("handleManageCommand", () => {
             const reminderText = promptBody.text
             const fullPayload = promptBody.text
             assert.match(reminderText, /<system-reminder>/)
-            assert.match(reminderText, /Call `compress` once with `summary` and `topic`/)
+            assert.match(reminderText, /call `compress` once, before this turn ends, with `summary` and `topic`/)
             assert.match(reminderText, /A failure means nothing was compressed/)
             assert.doesNotMatch(reminderText, /compress_map|context-map/i)
             assert.doesNotMatch(fullPayload, /compress_map|context-map/i)

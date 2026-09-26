@@ -568,7 +568,7 @@ describe("automatic compression lifecycle", () => {
 
             assert.equal(promptCalls.length, 1)
             const payload = promptCalls[0].text
-            assert.match(payload, /AUTOMATIC CONTEXT COMPRESSION REQUIRED/)
+            assert.match(payload, /AUTOMATIC CONTEXT COMPRESSION DUE/)
             assert.match(payload, /450,000 tokens/)
             assert.match(payload, /432,000 tokens/)
             assert.match(payload, /the newest configured execution steps remain verbatim/)
@@ -753,7 +753,7 @@ describe("automatic compression lifecycle", () => {
             assert.equal(promptCalls.length, 1)
             assert.match(
                 promptCalls[0].text,
-                /AUTOMATIC CONTEXT COMPRESSION REQUIRED/,
+                /AUTOMATIC CONTEXT COMPRESSION DUE/,
             )
         } finally {
             await cleanupSessionFile(sessionId)

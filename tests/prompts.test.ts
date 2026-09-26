@@ -28,7 +28,10 @@ describe("compression prompts", () => {
             threshold_reason: "the absolute token threshold",
         })
 
-        assert.match(manual, /Call `compress` once with `summary` and `topic`/)
+        assert.match(manual, /call `compress` once, before this turn ends, with `summary` and `topic`/)
+        assert.match(manual, /clean stopping point/)
+        assert.match(automatic, /clean stopping point/)
+        assert.match(automatic, /before this turn ends/)
         assert.match(manual, /newest configured execution steps verbatim/)
         assert.match(automatic, /355,000/)
         assert.match(automatic, /350,000/)
