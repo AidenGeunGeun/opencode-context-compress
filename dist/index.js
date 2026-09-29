@@ -3532,8 +3532,7 @@ function transformV2Messages(raw, state, logger, modelMessages) {
   const passthrough = [];
   const system = raw.filter((message) => message.info.sourceType === "system");
   const usedSystem = new Set;
-  for (const value of modelMessages) {
-    const message = structuredClone(value);
+  for (const message of modelMessages) {
     if (message.id === undefined && message.role === "assistant" && message.content.every((part) => part.type === "text" || part.type === "reasoning")) {
       passthrough.push(message);
       continue;
@@ -4269,5 +4268,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=2F1364DEA0ABD18564756E2164756E21
+//# debugId=C9D6F0303881A17264756E2164756E21
 //# sourceMappingURL=index.js.map
