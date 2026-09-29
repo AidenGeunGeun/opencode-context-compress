@@ -129,6 +129,21 @@ describe("beta projected message compatibility", () => {
         assert.equal(transformed.some((message) => message.id === "feedback"), false)
     })
 
+    it("keeps attached media objects intact", () => {
+        const raw = adaptProjectedMessages("session", projected("session").slice(0, 2))
+        const state = new SessionStateManager().get("session")
+        class Asset {
+            source = { type: "base64", data: "iVBORw0KGgo=" }
+        }
+        const media = new Asset()
+        const transformed = transformV2Messages(raw, state, logger, [
+            { id: "old-user", role: "user", content: [{ type: "text", text: "older" }, { type: "media", media }] },
+            { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "older result" }] },
+        ])
+
+        assert.equal(transformed[0].content[1].media, media)
+    })
+
     it("preserves idless user and system inputs added by transient generation", () => {
         const raw = adaptProjectedMessages("session", projected("session").slice(0, 2))
         const state = new SessionStateManager().get("session")

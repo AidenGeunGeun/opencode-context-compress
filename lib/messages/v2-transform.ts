@@ -33,8 +33,9 @@ export function transformV2Messages(
     const passthrough: ModelMessage[] = []
     const system = raw.filter((message) => (message.info as any).sourceType === "system")
     const usedSystem = new Set<string>()
-    for (const value of modelMessages) {
-        const message = structuredClone(value)
+    // Model messages are rebuilt with spreads, never mutated. Deep-cloning them would turn attached media
+    // (class instances such as Media.Asset) into plain objects that the host rejects.
+    for (const message of modelMessages) {
         if (
             message.id === undefined &&
             message.role === "assistant" &&
