@@ -58,6 +58,7 @@ export async function promptSession(
     if (input.noReply) {
         return client.session.synthetic({
             sessionID: input.sessionId,
+            id: input.messageId,
             text,
             description: text,
             metadata: { "opencode.context-compress.ignored": true },

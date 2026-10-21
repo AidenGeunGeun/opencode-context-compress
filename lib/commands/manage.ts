@@ -113,6 +113,17 @@ export function generateManagePromptMessageId(): string {
     return `msg_${generateLiveOrderedMessageIdSuffix()}`
 }
 
+export function generateNativeCompactionNoticeId(
+    sessionId: string,
+    event: Record<string, unknown>,
+): string | undefined {
+    if (typeof event.id !== "string" || typeof event.created !== "number") return undefined
+    return `msg_${generateLiveOrderedMessageIdSuffix(
+        event.created,
+        JSON.stringify(["native-auto-compaction", sessionId, event.id]),
+    )}`
+}
+
 export function generateAutomaticPromptMessageId(
     sessionId: string,
     trigger: WithParts["info"],

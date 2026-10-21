@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { it } from "node:test"
 
+import { generateNativeCompactionNoticeId } from "../lib/commands/manage.ts"
 import { setup } from "../lib/plugin.ts"
 import { fakeSession, hostContext, type SyntheticInput, sessionInfo } from "./helpers.ts"
 
@@ -17,10 +18,13 @@ it("warns the owning session about native auto-compaction but not a manual reset
     const synthetic: SyntheticInput[] = []
     const registration = { dispose: async () => undefined }
     const compactionStarted = (sessionID: string, reason: string, directory = root) => ({
+        id: `evt-${sessionID}`,
+        created: 1_000,
         type: "session.compaction.started",
         data: { sessionID, reason },
         location: { directory },
     })
+    const ownedEvent = compactionStarted("owned", "auto")
     let processed!: () => void
     const allProcessed = new Promise<void>((resolve) => {
         processed = resolve
@@ -29,7 +33,7 @@ it("warns the owning session about native auto-compaction but not a manual reset
         async *[Symbol.asyncIterator]() {
             yield compactionStarted("elsewhere", "auto", join(root, "other"))
             yield compactionStarted("manual-reset", "manual")
-            yield compactionStarted("owned", "auto")
+            yield ownedEvent
             processed()
         },
     }
@@ -58,6 +62,8 @@ it("warns the owning session about native auto-compaction but not a manual reset
         )
         assert.match(synthetic[0].text, /"compaction": \{ "auto": false \}/)
         assert.equal(synthetic[0].resume, false)
+        // Every plugin instance derives the same ID, so the host admits the notice once.
+        assert.equal(synthetic[0].id, generateNativeCompactionNoticeId("owned", ownedEvent))
     } finally {
         if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME
         else process.env.XDG_CONFIG_HOME = previousConfig

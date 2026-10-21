@@ -3,6 +3,7 @@ import type { SessionContext } from "@opencode/plugin/promise/session"
 import { z } from "zod"
 import { createAutomaticCompressionEventHandler } from "./auto-compression.js"
 import { getConfig } from "./config.js"
+import { generateNativeCompactionNoticeId } from "./commands/manage.js"
 import { handleCompressCommand } from "./commands/route.js"
 import { Logger } from "./logger.js"
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js"
@@ -31,8 +32,8 @@ type Registration = Awaited<ReturnType<Plugin.Context["session"]["hook"]>>
 // Manual /compact is a deliberate reset and gets no notice.
 const NATIVE_AUTO_COMPACTION_NOTICE =
     "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
-    'this compaction clears every compression block. Set `"compaction": { "auto": false }` ' +
-    "in opencode.jsonc."
+    'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' +
+    "in your OpenCode config."
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -233,6 +234,7 @@ async function runEvents(
                     sessionId: data.sessionID,
                     parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
                     noReply: true,
+                    messageId: generateNativeCompactionNoticeId(data.sessionID, event),
                 })
                 continue
             }
