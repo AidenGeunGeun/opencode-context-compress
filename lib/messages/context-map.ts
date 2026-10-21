@@ -73,8 +73,7 @@ export function selectDeterministicCompressionSpan(
         .slice(newestBlockIndex + 1)
         .filter(
             (message) =>
-                !syntheticMap.has(message.info.id) &&
-                !existingBlockMessageIds.has(message.info.id),
+                !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id),
         )
     const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns)
     const protectedIds = new Set(protectedMessageIds)
