@@ -8,13 +8,23 @@ export const DEFAULT_AUTO_COMPRESSION = {
     contextWindowRatio: 0.9,
     tokenThreshold: 432_000,
 };
+// One rule per numeric field, shared by validation warnings and layer merging.
+function isProtectedTurns(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+function isContextWindowRatio(value) {
+    return typeof value === "number" && value > 0 && value <= 1;
+}
+function isTokenThreshold(value) {
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-    if (typeof layer.protectedTurns === "number")
+    if (isProtectedTurns(layer.protectedTurns))
         return layer.protectedTurns;
     if (hasExplicitTopLevel)
         return fallback;
     const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
-    return typeof autoCompression.protectedTurns === "number"
+    return isProtectedTurns(autoCompression.protectedTurns)
         ? autoCompression.protectedTurns
         : fallback;
 }
@@ -63,22 +73,24 @@ export function getInvalidConfigKeys(userConfig) {
     const userKeys = getConfigKeyPaths(userConfig);
     return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
 }
+function typeName(value) {
+    if (value === null)
+        return "null";
+    return Array.isArray(value) ? "array" : typeof value;
+}
 function validateConfigTypes(config) {
     const errors = [];
     // Top-level validators
     if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-        errors.push({ key: "enabled", expected: "boolean", actual: typeof config.enabled });
+        errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) });
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
-        errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug });
+        errors.push({ key: "debug", expected: "boolean", actual: typeName(config.debug) });
     }
     if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
-        errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog });
+        errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) });
     }
-    if (config.protectedTurns !== undefined &&
-        (typeof config.protectedTurns !== "number" ||
-            !Number.isInteger(config.protectedTurns) ||
-            config.protectedTurns < 0)) {
+    if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
         errors.push({
             key: "protectedTurns",
             expected: "non-negative integer",
@@ -100,7 +112,7 @@ function validateConfigTypes(config) {
             errors.push({
                 key: "autoCompression",
                 expected: "object",
-                actual: Array.isArray(autoCompression) ? "array" : typeof autoCompression,
+                actual: typeName(autoCompression),
             });
         }
         else {
@@ -109,13 +121,11 @@ function validateConfigTypes(config) {
                 errors.push({
                     key: "autoCompression.enabled",
                     expected: "boolean",
-                    actual: typeof autoCompression.enabled,
+                    actual: typeName(autoCompression.enabled),
                 });
             }
             if (autoCompression.contextWindowRatio !== undefined &&
-                (typeof autoCompression.contextWindowRatio !== "number" ||
-                    autoCompression.contextWindowRatio <= 0 ||
-                    autoCompression.contextWindowRatio > 1)) {
+                !isContextWindowRatio(autoCompression.contextWindowRatio)) {
                 errors.push({
                     key: "autoCompression.contextWindowRatio",
                     expected: "number greater than 0 and at most 1",
@@ -123,9 +133,7 @@ function validateConfigTypes(config) {
                 });
             }
             if (autoCompression.tokenThreshold !== undefined &&
-                (typeof autoCompression.tokenThreshold !== "number" ||
-                    !Number.isFinite(autoCompression.tokenThreshold) ||
-                    autoCompression.tokenThreshold <= 0)) {
+                !isTokenThreshold(autoCompression.tokenThreshold)) {
                 errors.push({
                     key: "autoCompression.tokenThreshold",
                     expected: "positive finite number",
@@ -133,9 +141,7 @@ function validateConfigTypes(config) {
                 });
             }
             if (autoCompression.protectedTurns !== undefined &&
-                (typeof autoCompression.protectedTurns !== "number" ||
-                    !Number.isInteger(autoCompression.protectedTurns) ||
-                    autoCompression.protectedTurns < 0)) {
+                !isProtectedTurns(autoCompression.protectedTurns)) {
                 errors.push({
                     key: "autoCompression.protectedTurns",
                     expected: "non-negative integer",
@@ -152,7 +158,7 @@ function validateConfigTypes(config) {
                 errors.push({
                     key: "commands.enabled",
                     expected: "boolean",
-                    actual: typeof commands.enabled,
+                    actual: typeName(commands.enabled),
                 });
             }
         }
@@ -160,7 +166,7 @@ function validateConfigTypes(config) {
             errors.push({
                 key: "commands",
                 expected: "{ enabled: boolean }",
-                actual: typeof commands,
+                actual: typeName(commands),
             });
         }
     }
@@ -182,7 +188,7 @@ function validateConfigTypes(config) {
             errors.push({
                 key: "tools.compress.showCompression",
                 expected: "boolean",
-                actual: typeof compress.showCompression,
+                actual: typeName(compress.showCompression),
             });
         }
     }
@@ -291,7 +297,7 @@ function createDefaultConfig() {
         mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
     }
     const configContent = `{
-  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json"
+  "$schema": "https://unpkg.com/@skybluejacket/opencode-context-compress@1/compress.schema.json"
 }
 `;
     writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
@@ -346,10 +352,10 @@ function mergeAutoCompression(base, override) {
         return base;
     return {
         enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
-        contextWindowRatio: typeof override.contextWindowRatio === "number"
+        contextWindowRatio: isContextWindowRatio(override.contextWindowRatio)
             ? override.contextWindowRatio
             : base.contextWindowRatio,
-        tokenThreshold: typeof override.tokenThreshold === "number"
+        tokenThreshold: isTokenThreshold(override.tokenThreshold)
             ? override.tokenThreshold
             : base.tokenThreshold,
     };
@@ -392,7 +398,7 @@ export function getConfig(ctx) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false);
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-            hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number";
+            hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns);
         }
     }
     else {
@@ -410,7 +416,7 @@ export function getConfig(ctx) {
             showConfigValidationWarnings(configPaths.configDir, result.data, true);
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
+                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
         }
     }
     // Load and merge project config (overrides global)
@@ -424,7 +430,7 @@ export function getConfig(ctx) {
             showConfigValidationWarnings(configPaths.project, result.data, true);
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
+                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
         }
     }
     return config;

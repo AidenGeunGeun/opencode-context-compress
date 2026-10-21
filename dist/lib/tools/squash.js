@@ -119,7 +119,6 @@ export function createSquashTool(ctx) {
                         compressTokenCounter: 0,
                         totalCompressTokens: state.stats.totalCompressTokens + estimatedSavedTokens,
                     },
-                    compressionMapSnapshot: undefined,
                 };
                 const persisted = await saveSessionState(candidateState, logger);
                 if (!persisted) {

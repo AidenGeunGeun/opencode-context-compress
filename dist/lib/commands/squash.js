@@ -15,7 +15,7 @@ export async function handleSquashCommand(ctx) {
         await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.", ctx.logger);
         return;
     }
-    const staged = (await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const staged = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
         if (!ctx.state.persistenceSynchronized) {
             return async () => {
                 await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash could not start because saved session state could not be loaded.", ctx.logger);
@@ -52,7 +52,7 @@ export async function handleSquashCommand(ctx) {
             retainedText: extractSquashCommandResidual(ctx.arguments),
             source: "squash",
         });
-    }));
+    });
     if (staged)
         await staged();
 }

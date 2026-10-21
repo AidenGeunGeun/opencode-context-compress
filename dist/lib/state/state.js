@@ -4,7 +4,6 @@ export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
     state.compressSummaries = candidate.compressSummaries;
     state.managementTurns = candidate.managementTurns;
-    state.compressionMapSnapshot = candidate.compressionMapSnapshot;
     state.stats = candidate.stats;
     state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
     state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
@@ -26,7 +25,6 @@ function applyPersistedState(state, persisted) {
     };
     state.compressSummaries = persistedState.compressSummaries || [];
     state.managementTurns = persistedState.managementTurns || [];
-    state.compressionMapSnapshot = undefined;
     state.stats = {
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
@@ -48,7 +46,6 @@ function clearPersistedCompressionState(state) {
     };
     state.compressSummaries = [];
     state.managementTurns = [];
-    state.compressionMapSnapshot = undefined;
     state.stats = {
         compressTokenCounter: 0,
         totalCompressTokens: 0,
@@ -162,8 +159,7 @@ export async function reconcileSessionLifecycle(state, sessionId, logger, messag
     const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction;
     const requiresCompactionReset = compactionIndex !== -1 &&
         (compactionOrder === "before" || (compactionOrder === "unknown" && unresolvedNewCompaction));
-    const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined;
-    if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
+    if (requiresCompactionReset || unresolvedNewCompaction) {
         const candidate = {
             ...state,
             ...(requiresCompactionReset
@@ -176,7 +172,6 @@ export async function reconcileSessionLifecycle(state, sessionId, logger, messag
                     managementTurns: [],
                 }
                 : {}),
-            ...(hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {}),
             ...(unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}),
         };
         const persisted = await saveSessionState(candidate, logger);
@@ -270,7 +265,6 @@ export function createSessionState() {
         },
         compressSummaries: [],
         managementTurns: [],
-        compressionMapSnapshot: undefined,
         stats: {
             compressTokenCounter: 0,
             totalCompressTokens: 0,

@@ -65,8 +65,9 @@ function resolveOwner(message, projected, tools, system, usedSystem) {
     if (message.id && projected.has(message.id))
         return message.id;
     const resultOwners = new Set(message.content
-        .filter((part) => part.type === "tool-result" && typeof part.id === "string")
-        .map((part) => tools.get(part.id))
+        .flatMap((part) => part.type === "tool-result" && typeof part.id === "string"
+        ? [tools.get(part.id)]
+        : [])
         .filter((owner) => owner !== undefined));
     if (resultOwners.size === 1 && message.content.every((part) => part.type === "tool-result")) {
         return [...resultOwners][0];
@@ -125,8 +126,7 @@ function text(message) {
 }
 function textFromModel(message) {
     return message.content
-        .filter((part) => part.type === "text" && typeof part.text === "string")
-        .map((part) => part.text)
+        .flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : [])
         .join("\n");
 }
 //# sourceMappingURL=v2-transform.js.map

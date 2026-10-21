@@ -354,7 +354,6 @@ function resetOnCompaction(state) {
   state.compressed.messageIds = new Set;
   state.compressSummaries = [];
   state.managementTurns = [];
-  state.compressionMapSnapshot = undefined;
   state.autoCompressionStarting = false;
   state.lastAutoTriggeredMessageId = undefined;
 }
@@ -364,7 +363,6 @@ function commitDurableSessionState(state, candidate) {
   state.compressed = candidate.compressed;
   state.compressSummaries = candidate.compressSummaries;
   state.managementTurns = candidate.managementTurns;
-  state.compressionMapSnapshot = candidate.compressionMapSnapshot;
   state.stats = candidate.stats;
   state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
   state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
@@ -385,7 +383,6 @@ function applyPersistedState(state, persisted) {
   };
   state.compressSummaries = persistedState.compressSummaries || [];
   state.managementTurns = persistedState.managementTurns || [];
-  state.compressionMapSnapshot = undefined;
   state.stats = {
     compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
     totalCompressTokens: persistedState.stats?.totalCompressTokens || 0
@@ -405,7 +402,6 @@ function clearPersistedCompressionState(state) {
   };
   state.compressSummaries = [];
   state.managementTurns = [];
-  state.compressionMapSnapshot = undefined;
   state.stats = {
     compressTokenCounter: 0,
     totalCompressTokens: 0
@@ -508,8 +504,7 @@ async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
   const compactionOrder = compactionIndex === -1 ? "after" : getCompressionStateCompactionOrder(state, messages, compactionIndex);
   const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction;
   const requiresCompactionReset = compactionIndex !== -1 && (compactionOrder === "before" || compactionOrder === "unknown" && unresolvedNewCompaction);
-  const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined;
-  if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
+  if (requiresCompactionReset || unresolvedNewCompaction) {
     const candidate = {
       ...state,
       ...requiresCompactionReset ? {
@@ -520,7 +515,6 @@ async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
         compressSummaries: [],
         managementTurns: []
       } : {},
-      ...hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {},
       ...unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}
     };
     const persisted = await saveSessionState(candidate, logger);
@@ -615,7 +609,6 @@ function createSessionState() {
     },
     compressSummaries: [],
     managementTurns: [],
-    compressionMapSnapshot: undefined,
     stats: {
       compressTokenCounter: 0,
       totalCompressTokens: 0
@@ -1116,7 +1109,7 @@ async function listSessionMessages(client, sessionId) {
   return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId));
 }
 async function promptSession(client, input) {
-  const text = input.parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join(`
+  const text = input.parts.flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join(`
 
 `);
   if (!text)
@@ -1870,7 +1863,7 @@ function generateManagePromptMessageId() {
 function generateNativeCompactionNoticeId(sessionId, event) {
   if (typeof event.id !== "string" || typeof event.created !== "number")
     return;
-  return `msg_${generateLiveOrderedMessageIdSuffix(event.created, JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
+  return `msg_${generateLiveOrderedMessageIdSuffix(Math.floor(event.created), JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
 }
 function generateAutomaticPromptMessageId(sessionId, trigger) {
   return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
@@ -1934,8 +1927,7 @@ async function stageManagementTurnWithinLock(ctx) {
   };
   const candidateState = {
     ...state,
-    managementTurns: [...state.managementTurns, managementTurn],
-    compressionMapSnapshot: undefined
+    managementTurns: [...state.managementTurns, managementTurn]
   };
   const statePersisted = await saveSessionState(candidateState, logger);
   if (!statePersisted) {
@@ -2266,13 +2258,22 @@ var DEFAULT_AUTO_COMPRESSION = {
   contextWindowRatio: 0.9,
   tokenThreshold: 432000
 };
+function isProtectedTurns(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+function isContextWindowRatio(value) {
+  return typeof value === "number" && value > 0 && value <= 1;
+}
+function isTokenThreshold(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-  if (typeof layer.protectedTurns === "number")
+  if (isProtectedTurns(layer.protectedTurns))
     return layer.protectedTurns;
   if (hasExplicitTopLevel)
     return fallback;
   const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
-  return typeof autoCompression.protectedTurns === "number" ? autoCompression.protectedTurns : fallback;
+  return isProtectedTurns(autoCompression.protectedTurns) ? autoCompression.protectedTurns : fallback;
 }
 var NOTIFICATIONS = ["off", "minimal", "detailed"];
 var PERMISSIONS = ["ask", "allow", "deny"];
@@ -2314,18 +2315,23 @@ function getInvalidConfigKeys(userConfig) {
   const userKeys = getConfigKeyPaths(userConfig);
   return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
 }
+function typeName(value) {
+  if (value === null)
+    return "null";
+  return Array.isArray(value) ? "array" : typeof value;
+}
 function validateConfigTypes(config) {
   const errors = [];
   if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-    errors.push({ key: "enabled", expected: "boolean", actual: typeof config.enabled });
+    errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) });
   }
   if (config.debug !== undefined && typeof config.debug !== "boolean") {
-    errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug });
+    errors.push({ key: "debug", expected: "boolean", actual: typeName(config.debug) });
   }
   if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
-    errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog });
+    errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) });
   }
-  if (config.protectedTurns !== undefined && (typeof config.protectedTurns !== "number" || !Number.isInteger(config.protectedTurns) || config.protectedTurns < 0)) {
+  if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
     errors.push({
       key: "protectedTurns",
       expected: "non-negative integer",
@@ -2347,31 +2353,31 @@ function validateConfigTypes(config) {
       errors.push({
         key: "autoCompression",
         expected: "object",
-        actual: Array.isArray(autoCompression) ? "array" : typeof autoCompression
+        actual: typeName(autoCompression)
       });
     } else {
       if (autoCompression.enabled !== undefined && typeof autoCompression.enabled !== "boolean") {
         errors.push({
           key: "autoCompression.enabled",
           expected: "boolean",
-          actual: typeof autoCompression.enabled
+          actual: typeName(autoCompression.enabled)
         });
       }
-      if (autoCompression.contextWindowRatio !== undefined && (typeof autoCompression.contextWindowRatio !== "number" || autoCompression.contextWindowRatio <= 0 || autoCompression.contextWindowRatio > 1)) {
+      if (autoCompression.contextWindowRatio !== undefined && !isContextWindowRatio(autoCompression.contextWindowRatio)) {
         errors.push({
           key: "autoCompression.contextWindowRatio",
           expected: "number greater than 0 and at most 1",
           actual: JSON.stringify(autoCompression.contextWindowRatio)
         });
       }
-      if (autoCompression.tokenThreshold !== undefined && (typeof autoCompression.tokenThreshold !== "number" || !Number.isFinite(autoCompression.tokenThreshold) || autoCompression.tokenThreshold <= 0)) {
+      if (autoCompression.tokenThreshold !== undefined && !isTokenThreshold(autoCompression.tokenThreshold)) {
         errors.push({
           key: "autoCompression.tokenThreshold",
           expected: "positive finite number",
           actual: JSON.stringify(autoCompression.tokenThreshold)
         });
       }
-      if (autoCompression.protectedTurns !== undefined && (typeof autoCompression.protectedTurns !== "number" || !Number.isInteger(autoCompression.protectedTurns) || autoCompression.protectedTurns < 0)) {
+      if (autoCompression.protectedTurns !== undefined && !isProtectedTurns(autoCompression.protectedTurns)) {
         errors.push({
           key: "autoCompression.protectedTurns",
           expected: "non-negative integer",
@@ -2387,14 +2393,14 @@ function validateConfigTypes(config) {
         errors.push({
           key: "commands.enabled",
           expected: "boolean",
-          actual: typeof commands.enabled
+          actual: typeName(commands.enabled)
         });
       }
     } else {
       errors.push({
         key: "commands",
         expected: "{ enabled: boolean }",
-        actual: typeof commands
+        actual: typeName(commands)
       });
     }
   }
@@ -2414,7 +2420,7 @@ function validateConfigTypes(config) {
       errors.push({
         key: "tools.compress.showCompression",
         expected: "boolean",
-        actual: typeof compress.showCompression
+        actual: typeName(compress.showCompression)
       });
     }
   }
@@ -2517,7 +2523,7 @@ function createDefaultConfig() {
     mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
   }
   const configContent = `{
-  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json"
+  "$schema": "https://unpkg.com/@skybluejacket/opencode-context-compress@1/compress.schema.json"
 }
 `;
   writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
@@ -2565,8 +2571,8 @@ function mergeAutoCompression(base, override) {
     return base;
   return {
     enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
-    contextWindowRatio: typeof override.contextWindowRatio === "number" ? override.contextWindowRatio : base.contextWindowRatio,
-    tokenThreshold: typeof override.tokenThreshold === "number" ? override.tokenThreshold : base.tokenThreshold
+    contextWindowRatio: isContextWindowRatio(override.contextWindowRatio) ? override.contextWindowRatio : base.contextWindowRatio,
+    tokenThreshold: isTokenThreshold(override.tokenThreshold) ? override.tokenThreshold : base.tokenThreshold
   };
 }
 function mergeConfigLayer(config, data, hasExplicitProtectedTurns) {
@@ -2605,7 +2611,7 @@ Using default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.global, result.data, false);
       config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number";
+      hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns);
     }
   } else {
     createDefaultConfig();
@@ -2620,7 +2626,7 @@ Using global/default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.configDir, result.data, true);
       config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
+      hasExplicitProtectedTurns = hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
     }
   }
   if (configPaths.project) {
@@ -2633,7 +2639,7 @@ Using global/default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.project, result.data, true);
       config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
+      hasExplicitProtectedTurns = hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
     }
   }
   return config;
@@ -2800,9 +2806,8 @@ function analyzeTokens(state, messages, providerId) {
   let firstAssistant;
   for (const msg of messages) {
     if (msg.info.role === "assistant") {
-      const assistantInfo = msg.info;
-      if ((assistantInfo.tokens?.input ?? 0) > 0 || (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
-        firstAssistant = assistantInfo;
+      if ((msg.info.tokens?.input ?? 0) > 0 || (msg.info.tokens?.cache?.read ?? 0) > 0) {
+        firstAssistant = msg.info;
         break;
       }
     }
@@ -2811,9 +2816,8 @@ function analyzeTokens(state, messages, providerId) {
   for (let i = messages.length - 1;i >= 0; i--) {
     const msg = messages[i];
     if (msg.info.role === "assistant") {
-      const assistantInfo = msg.info;
-      if ((assistantInfo.tokens?.output ?? 0) > 0) {
-        lastAssistant = assistantInfo;
+      if ((msg.info.tokens?.output ?? 0) > 0) {
+        lastAssistant = msg.info;
         break;
       }
     }
@@ -3419,7 +3423,7 @@ function transformV2Messages(raw, state, logger, modelMessages) {
 function resolveOwner(message, projected, tools, system, usedSystem) {
   if (message.id && projected.has(message.id))
     return message.id;
-  const resultOwners = new Set(message.content.filter((part) => part.type === "tool-result" && typeof part.id === "string").map((part) => tools.get(part.id)).filter((owner) => owner !== undefined));
+  const resultOwners = new Set(message.content.flatMap((part) => part.type === "tool-result" && typeof part.id === "string" ? [tools.get(part.id)] : []).filter((owner) => owner !== undefined));
   if (resultOwners.size === 1 && message.content.every((part) => part.type === "tool-result")) {
     return [...resultOwners][0];
   }
@@ -3471,7 +3475,7 @@ function text(message) {
 `);
 }
 function textFromModel(message) {
-  return message.content.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join(`
+  return message.content.flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : []).join(`
 `);
 }
 
@@ -3772,8 +3776,7 @@ function createCompressTool(ctx) {
             compressTokenCounter: 0,
             totalCompressTokens: state.stats.totalCompressTokens + estimatedCompressedTokens
           },
-          compressionCooldownAfterMessageId: toolCtx.messageID,
-          compressionMapSnapshot: undefined
+          compressionCooldownAfterMessageId: toolCtx.messageID
         };
         const persisted = await saveSessionState(candidateState, logger);
         if (!persisted) {
@@ -3909,8 +3912,7 @@ function createSquashTool(ctx) {
           stats: {
             compressTokenCounter: 0,
             totalCompressTokens: state.stats.totalCompressTokens + estimatedSavedTokens
-          },
-          compressionMapSnapshot: undefined
+          }
         };
         const persisted = await saveSessionState(candidateState, logger);
         if (!persisted) {
@@ -4068,12 +4070,15 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
       await automatic(item.value);
       const event = isRecord(item.value) ? item.value : {};
       const data = isRecord(event.data) ? event.data : {};
-      if (event.type === "session.forked" && typeof data.sessionID === "string") {
-        if (!await ownsSession(context, data.sessionID, event))
+      const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;
+      if (sessionID === undefined)
+        continue;
+      if (event.type === "session.forked") {
+        if (!await ownsSession(context, sessionID, event))
           continue;
-        const messages = await listSessionMessages(client, data.sessionID);
-        await stateManager.runExclusive(data.sessionID, async () => {
-          const state = stateManager.get(data.sessionID);
+        const messages = await listSessionMessages(client, sessionID);
+        await stateManager.runExclusive(sessionID, async () => {
+          const state = stateManager.get(sessionID);
           await checkSession(state, logger, messages);
           if (!state.persistenceSynchronized || state.hasPersistedState)
             return;
@@ -4081,23 +4086,23 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
         });
         continue;
       }
-      if (event.type === "session.compaction.started" && data.reason === "auto" && typeof data.sessionID === "string") {
-        if (!await ownsSession(context, data.sessionID, event))
+      if (event.type === "session.compaction.started" && data.reason === "auto") {
+        if (!await ownsSession(context, sessionID, event))
           continue;
         await promptSession(client, {
-          sessionId: data.sessionID,
+          sessionId: sessionID,
           parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
           noReply: true,
-          messageId: generateNativeCompactionNoticeId(data.sessionID, event)
+          messageId: generateNativeCompactionNoticeId(sessionID, event)
         });
         continue;
       }
-      if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
+      if (event.type !== "session.compaction.ended")
         continue;
-      if (!await ownsSession(context, data.sessionID, event))
+      if (!await ownsSession(context, sessionID, event))
         continue;
-      const messages = await listSessionMessages(client, data.sessionID);
-      await stateManager.runExclusive(data.sessionID, () => reconcileSessionLifecycle(stateManager.get(data.sessionID), data.sessionID, logger, messages));
+      const messages = await listSessionMessages(client, sessionID);
+      await stateManager.runExclusive(sessionID, () => reconcileSessionLifecycle(stateManager.get(sessionID), sessionID, logger, messages));
     } catch (error) {
       logger.error("Context Compress event handling failed", {
         error: error instanceof Error ? error.message : String(error)
@@ -4123,5 +4128,5 @@ export {
   wt_default as default
 };
 
-//# debugId=A81397AACB11810064756E2164756E21
+//# debugId=76A3A45B41E3B13064756E2164756E21
 //# sourceMappingURL=index.js.map

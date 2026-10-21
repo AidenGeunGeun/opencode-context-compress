@@ -170,7 +170,6 @@ export function createCompressTool(ctx) {
                         totalCompressTokens: state.stats.totalCompressTokens + estimatedCompressedTokens,
                     },
                     compressionCooldownAfterMessageId: toolCtx.messageID,
-                    compressionMapSnapshot: undefined,
                 };
                 const persisted = await saveSessionState(candidateState, logger);
                 if (!persisted) {

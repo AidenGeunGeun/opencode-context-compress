@@ -12,10 +12,4 @@ import type { SessionState, WithParts } from "../state/index.js";
  * share one assistant message.
  */
 export declare function isPostCompressionNoticeDue(state: SessionState, rawMessages: WithParts[]): boolean;
-/**
- * Appends the notice as the final element. It must run after the compression transforms,
- * which rebuild the array and would otherwise discard it, and it must stay a plain
- * (non-`ignored`) user message or OpenCode strips it before the model sees it.
- */
-export declare function appendPostCompressionNotice(messages: WithParts[], baseUserMessage: WithParts): void;
 //# sourceMappingURL=post-compression-notice.d.ts.map

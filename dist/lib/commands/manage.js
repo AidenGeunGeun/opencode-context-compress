@@ -58,7 +58,7 @@ export function generateManagePromptMessageId() {
 export function generateNativeCompactionNoticeId(sessionId, event) {
     if (typeof event.id !== "string" || typeof event.created !== "number")
         return undefined;
-    return `msg_${generateLiveOrderedMessageIdSuffix(event.created, JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
+    return `msg_${generateLiveOrderedMessageIdSuffix(Math.floor(event.created), JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
 }
 export function generateAutomaticPromptMessageId(sessionId, trigger) {
     // The host deduplicates prompt admission by ID, including across plugin instances.
@@ -132,7 +132,6 @@ export async function stageManagementTurnWithinLock(ctx) {
     const candidateState = {
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
-        compressionMapSnapshot: undefined,
     };
     const statePersisted = await saveSessionState(candidateState, logger);
     if (!statePersisted) {

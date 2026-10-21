@@ -16,8 +16,7 @@ export async function listSessionMessages(client, sessionId) {
 }
 export async function promptSession(client, input) {
     const text = input.parts
-        .filter((part) => part.type === "text" && typeof part.text === "string")
-        .map((part) => part.text)
+        .flatMap((part) => part.type === "text" && typeof part.text === "string" ? [part.text] : [])
         .join("\n\n");
     if (!text)
         throw new Error("Session prompt requires text");
