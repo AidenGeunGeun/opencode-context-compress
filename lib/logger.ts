@@ -1,8 +1,9 @@
-import { writeFile, mkdir } from "fs/promises"
-import { join } from "path"
-import { existsSync } from "fs"
-import { homedir } from "os"
+import { writeFile, mkdir } from "node:fs/promises"
+import { join } from "node:path"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
 import { inspect } from "node:util"
+import { isRecord } from "./shared-utils.js"
 
 /**
  * Errors have to reach `formatData` already flattened into one line: it drops any object
@@ -32,7 +33,7 @@ export class Logger {
         }
     }
 
-    private formatData(data?: any): string {
+    private formatData(data?: Record<string, unknown>): string {
         if (!data) return ""
 
         const parts: string[] = []
@@ -80,7 +81,12 @@ export class Logger {
         }
     }
 
-    private async write(level: string, component: string, message: string, data?: any) {
+    private async write(
+        level: string,
+        component: string,
+        message: string,
+        data?: Record<string, unknown>,
+    ) {
         if (!this.dailyEnabled) return
 
         try {
@@ -89,7 +95,7 @@ export class Logger {
             const timestamp = new Date().toISOString()
             const dataStr = this.formatData(data)
 
-            const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? " | " + dataStr : ""}\n`
+            const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? ` | ${dataStr}` : ""}\n`
 
             const dailyLogDir = join(this.logDir, "daily")
             if (!existsSync(dailyLogDir)) {
@@ -104,22 +110,22 @@ export class Logger {
         }
     }
 
-    info(message: string, data?: any) {
+    info(message: string, data?: Record<string, unknown>) {
         const component = this.getCallerFile(2)
         return this.write("INFO", component, message, data)
     }
 
-    debug(message: string, data?: any) {
+    debug(message: string, data?: Record<string, unknown>) {
         const component = this.getCallerFile(2)
         return this.write("DEBUG", component, message, data)
     }
 
-    warn(message: string, data?: any) {
+    warn(message: string, data?: Record<string, unknown>) {
         const component = this.getCallerFile(2)
         return this.write("WARN", component, message, data)
     }
 
-    error(message: string, data?: any) {
+    error(message: string, data?: Record<string, unknown>) {
         const component = this.getCallerFile(2)
         return this.write("ERROR", component, message, data)
     }
@@ -139,29 +145,34 @@ export class Logger {
      * - text, reasoning, tool parts with content
      * - tool calls with: tool, callID, input, output
      */
-    private minimizeForDebug(messages: any[]): any[] {
-        return messages.map((msg) => {
-            const minimized: any = {
-                role: msg.info?.role ?? msg.role,
+    private minimizeForDebug(messages: readonly unknown[]): Record<string, unknown>[] {
+        return messages.map((message) => {
+            const msg = isRecord(message) ? message : {}
+            const info = isRecord(msg.info) ? msg.info : {}
+            const time = isRecord(info.time) ? info.time : {}
+            const minimized: Record<string, unknown> = {
+                role: info.role ?? msg.role,
             }
 
-            if (msg.info?.time?.created) {
-                minimized.time = msg.info.time.created
+            if (time.created) {
+                minimized.time = time.created
             }
 
-            if (msg.info?.tokens) {
+            if (isRecord(info.tokens)) {
                 minimized.tokens = {
-                    input: msg.info.tokens.input,
-                    output: msg.info.tokens.output,
-                    reasoning: msg.info.tokens.reasoning,
-                    cache: msg.info.tokens.cache,
+                    input: info.tokens.input,
+                    output: info.tokens.output,
+                    reasoning: info.tokens.reasoning,
+                    cache: info.tokens.cache,
                 }
             }
 
             const parts = msg.parts ?? msg.content
-            if (parts) {
+            if (Array.isArray(parts)) {
                 minimized.parts = parts
-                    .map((part: any) => {
+                    .map((item: unknown) => {
+                        const part = isRecord(item) ? item : {}
+
                         if (part.type === "step-start" || part.type === "step-finish") {
                             return null
                         }
@@ -179,23 +190,24 @@ export class Logger {
                         }
 
                         if (part.type === "tool") {
-                            const toolPart: any = {
+                            const state = isRecord(part.state) ? part.state : {}
+                            const toolPart: Record<string, unknown> = {
                                 type: "tool",
                                 tool: part.tool,
                                 callID: part.callID,
                             }
 
-                            if (part.state?.status) {
-                                toolPart.status = part.state.status
+                            if (state.status) {
+                                toolPart.status = state.status
                             }
-                            if (part.state?.input) {
-                                toolPart.input = part.state.input
+                            if (state.input) {
+                                toolPart.input = state.input
                             }
-                            if (part.state?.output) {
-                                toolPart.output = part.state.output
+                            if (state.output) {
+                                toolPart.output = state.output
                             }
-                            if (part.state?.error) {
-                                toolPart.error = part.state.error
+                            if (state.error) {
+                                toolPart.error = state.error
                             }
 
                             return toolPart
@@ -228,7 +240,7 @@ export class Logger {
         })
     }
 
-    async saveContext(sessionId: string, messages: any[]) {
+    async saveContext(sessionId: string, messages: readonly unknown[]) {
         if (!this.contextEnabled) return
 
         try {

@@ -4,10 +4,10 @@
  * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
  */
 
-import * as fs from "fs/promises"
-import { existsSync } from "fs"
-import { homedir } from "os"
-import { join } from "path"
+import * as fs from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type {
     SessionState,
     SessionStats,
@@ -108,7 +108,7 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
 async function readJsonFile<T>(
     filePath: string,
 ): Promise<
-    { status: "missing" } | { status: "loaded"; data: T } | { status: "error"; error: any }
+    { status: "missing" } | { status: "loaded"; data: T } | { status: "error"; error: string }
 > {
     try {
         const content = await fs.readFile(filePath, "utf-8")
@@ -116,14 +116,14 @@ async function readJsonFile<T>(
             status: "loaded",
             data: JSON.parse(content) as T,
         }
-    } catch (error: any) {
-        if (error?.code === "ENOENT") {
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
             return { status: "missing" }
         }
 
         return {
             status: "error",
-            error,
+            error: error instanceof Error ? error.message : String(error),
         }
     }
 }
@@ -342,10 +342,10 @@ export async function saveSessionState(
             totalTokensSaved: state.stats.totalCompressTokens,
         })
         return true
-    } catch (error: any) {
+    } catch (error) {
         logger.error("Failed to save session state", {
             sessionId: sessionState.sessionId,
-            error: error?.message,
+            error: error instanceof Error ? error.message : String(error),
         })
         return false
     }
@@ -368,7 +368,7 @@ export async function loadSessionState(
         logger.warn("Failed to load session state", {
             sessionId,
             path: filePath,
-            error: primaryResult.error?.message,
+            error: primaryResult.error,
         })
         return { status: "error" }
     } else {
@@ -383,7 +383,7 @@ export async function loadSessionState(
             logger.warn("Failed to load legacy session state", {
                 sessionId,
                 path: legacyPath,
-                error: legacyResult.error?.message,
+                error: legacyResult.error,
             })
             return { status: "error" }
         }
@@ -393,7 +393,7 @@ export async function loadSessionState(
         migrated = true
     }
 
-    if (!state || !state.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+    if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
         logger.warn("Invalid session state file, preserving in-memory state", {
             sessionId,
             path: migrated ? getLegacySessionFilePath(sessionId) : filePath,
@@ -495,10 +495,10 @@ export async function loadSessionState(
             const newFilePath = getSessionFilePath(sessionId)
             await writeFileAtomic(newFilePath, JSON.stringify(result, null, 2))
             logger.info("Migrated legacy state to compress path", { sessionId })
-        } catch (saveError: any) {
+        } catch (saveError) {
             logger.warn("Failed to save migrated state (will retry next load)", {
                 sessionId,
-                error: saveError?.message,
+                error: saveError instanceof Error ? saveError.message : String(saveError),
             })
         }
     }
@@ -549,9 +549,11 @@ export async function loadAllSessionStats(logger: Logger): Promise<AggregatedSta
             }
         }
 
-        logger.debug("Loaded all-time stats", result)
-    } catch (error: any) {
-        logger.warn("Failed to load all-time stats", { error: error?.message })
+        logger.debug("Loaded all-time stats", { ...result })
+    } catch (error) {
+        logger.warn("Failed to load all-time stats", {
+            error: error instanceof Error ? error.message : String(error),
+        })
     }
 
     return result

@@ -32,7 +32,7 @@ function applyPersistedState(
     state: SessionState,
     persisted: Awaited<ReturnType<typeof loadSessionState>>,
 ) {
-    if (!persisted || persisted.status !== "loaded") {
+    if (persisted?.status !== "loaded") {
         return
     }
 
@@ -311,8 +311,10 @@ export const checkSession = async (
 
     try {
         return await reconcileSessionLifecycle(state, state.sessionId, logger, messages)
-    } catch (err: any) {
-        logger.error("Failed to initialize session state", { error: err.message })
+    } catch (err) {
+        logger.error("Failed to initialize session state", {
+            error: err instanceof Error ? err.message : String(err),
+        })
         return unreconciled
     }
 }

@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs"
-import { join, dirname } from "path"
-import { homedir } from "os"
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs"
+import { join, dirname } from "node:path"
+import { homedir } from "node:os"
 import { parse } from "jsonc-parser"
+import { isRecord } from "./shared-utils.js"
 
 export interface ConfigContext {
     directory: string
@@ -33,13 +34,24 @@ export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
 }
 
 export function resolveProtectedTurnsSetting(
-    layer: Record<string, any>,
+    layer: Record<string, unknown>,
     fallback = 3,
     hasExplicitTopLevel = false,
 ): number {
-    if (layer.protectedTurns !== undefined) return layer.protectedTurns
+    if (typeof layer.protectedTurns === "number") return layer.protectedTurns
     if (hasExplicitTopLevel) return fallback
-    return layer.autoCompression?.protectedTurns ?? fallback
+    const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {}
+    return typeof autoCompression.protectedTurns === "number"
+        ? autoCompression.protectedTurns
+        : fallback
+}
+
+const NOTIFICATIONS = ["off", "minimal", "detailed"] as const
+const NOTIFICATION_TYPES = ["chat", "toast"] as const
+const PERMISSIONS = ["ask", "allow", "deny"] as const
+
+function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
+    return values.some((candidate) => candidate === value)
 }
 
 export interface PluginConfig {
@@ -79,20 +91,20 @@ export const VALID_CONFIG_KEYS = new Set([
 ])
 
 // Extract all key paths from a config object for validation
-function getConfigKeyPaths(obj: Record<string, any>, prefix = ""): string[] {
+function getConfigKeyPaths(obj: Record<string, unknown>, prefix = ""): string[] {
     const keys: string[] = []
-    for (const key of Object.keys(obj)) {
+    for (const [key, value] of Object.entries(obj)) {
         const fullKey = prefix ? `${prefix}.${key}` : key
         keys.push(fullKey)
-        if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
-            keys.push(...getConfigKeyPaths(obj[key], fullKey))
+        if (isRecord(value)) {
+            keys.push(...getConfigKeyPaths(value, fullKey))
         }
     }
     return keys
 }
 
 // Returns invalid keys found in user config
-export function getInvalidConfigKeys(userConfig: Record<string, any>): string[] {
+export function getInvalidConfigKeys(userConfig: Record<string, unknown>): string[] {
     const userKeys = getConfigKeyPaths(userConfig)
     return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key))
 }
@@ -104,7 +116,7 @@ interface ValidationError {
     actual: string
 }
 
-function validateConfigTypes(config: Record<string, any>): ValidationError[] {
+function validateConfigTypes(config: Record<string, unknown>): ValidationError[] {
     const errors: ValidationError[] = []
 
     // Top-level validators
@@ -130,8 +142,7 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
         })
     }
     if (config.notification !== undefined) {
-        const validValues = ["off", "minimal", "detailed"]
-        if (!validValues.includes(config.notification)) {
+        if (!isOneOf(NOTIFICATIONS, config.notification)) {
             errors.push({
                 key: "notification",
                 expected: '"off" | "minimal" | "detailed"',
@@ -141,8 +152,7 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
     }
 
     if (config.notificationType !== undefined) {
-        const validValues = ["chat", "toast"]
-        if (!validValues.includes(config.notificationType)) {
+        if (!isOneOf(NOTIFICATION_TYPES, config.notificationType)) {
             errors.push({
                 key: "notificationType",
                 expected: '"chat" | "toast"',
@@ -153,11 +163,7 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
 
     const autoCompression = config.autoCompression
     if (autoCompression !== undefined) {
-        if (
-            !autoCompression ||
-            typeof autoCompression !== "object" ||
-            Array.isArray(autoCompression)
-        ) {
+        if (!isRecord(autoCompression)) {
             errors.push({
                 key: "autoCompression",
                 expected: "object",
@@ -216,7 +222,7 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
     // Commands validator
     const commands = config.commands
     if (commands !== undefined) {
-        if (typeof commands === "object") {
+        if (isRecord(commands)) {
             if (commands.enabled !== undefined && typeof commands.enabled !== "boolean") {
                 errors.push({
                     key: "commands.enabled",
@@ -235,28 +241,26 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
 
     // Tools validators
     const tools = config.tools
-    if (tools) {
-        if (tools.compress) {
-            if (tools.compress.permission !== undefined) {
-                const validValues = ["ask", "allow", "deny"]
-                if (!validValues.includes(tools.compress.permission)) {
-                    errors.push({
-                        key: "tools.compress.permission",
-                        expected: '"ask" | "allow" | "deny"',
-                        actual: JSON.stringify(tools.compress.permission),
-                    })
-                }
-            }
-            if (
-                tools.compress.showCompression !== undefined &&
-                typeof tools.compress.showCompression !== "boolean"
-            ) {
+    if (isRecord(tools) && isRecord(tools.compress)) {
+        const compress = tools.compress
+        if (compress.permission !== undefined) {
+            if (!isOneOf(PERMISSIONS, compress.permission)) {
                 errors.push({
-                    key: "tools.compress.showCompression",
-                    expected: "boolean",
-                    actual: typeof tools.compress.showCompression,
+                    key: "tools.compress.permission",
+                    expected: '"ask" | "allow" | "deny"',
+                    actual: JSON.stringify(compress.permission),
                 })
             }
+        }
+        if (
+            compress.showCompression !== undefined &&
+            typeof compress.showCompression !== "boolean"
+        ) {
+            errors.push({
+                key: "tools.compress.showCompression",
+                expected: "boolean",
+                actual: typeof compress.showCompression,
+            })
         }
     }
 
@@ -266,7 +270,7 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
 // Show validation warnings for a config file
 function showConfigValidationWarnings(
     configPath: string,
-    configData: Record<string, any>,
+    configData: Record<string, unknown>,
     isProject: boolean,
 ): void {
     const invalidKeys = getInvalidConfigKeys(configData)
@@ -392,7 +396,7 @@ function createDefaultConfig(): void {
 }
 
 interface ConfigLoadResult {
-    data: Record<string, any> | null
+    data: Record<string, unknown> | null
     parseError?: string
 }
 
@@ -406,51 +410,90 @@ function loadConfigFile(configPath: string): ConfigLoadResult {
     }
 
     try {
-        const parsed = parse(fileContent)
-        if (parsed === undefined || parsed === null) {
+        const parsed: unknown = parse(fileContent)
+        if (!isRecord(parsed)) {
             return { data: null, parseError: "Config file is empty or invalid" }
         }
         return { data: parsed }
-    } catch (error: any) {
-        return { data: null, parseError: error.message || "Failed to parse config" }
+    } catch (error) {
+        return {
+            data: null,
+            parseError:
+                error instanceof Error && error.message ? error.message : "Failed to parse config",
+        }
     }
 }
 
-function mergeTools(
-    base: PluginConfig["tools"],
-    override?: Partial<PluginConfig["tools"]>,
-): PluginConfig["tools"] {
-    if (!override) return base
+function mergeTools(base: PluginConfig["tools"], override: unknown): PluginConfig["tools"] {
+    if (!isRecord(override)) return base
 
+    const compress = isRecord(override.compress) ? override.compress : {}
     return {
         compress: {
-            permission: override.compress?.permission ?? base.compress.permission,
-            showCompression: override.compress?.showCompression ?? base.compress.showCompression,
+            permission: isOneOf(PERMISSIONS, compress.permission)
+                ? compress.permission
+                : base.compress.permission,
+            showCompression:
+                typeof compress.showCompression === "boolean"
+                    ? compress.showCompression
+                    : base.compress.showCompression,
         },
     }
 }
 
 function mergeCommands(
     base: PluginConfig["commands"],
-    override?: Partial<PluginConfig["commands"]>,
+    override: unknown,
 ): PluginConfig["commands"] {
-    if (override === undefined) return base
+    if (!isRecord(override)) return base
 
     return {
-        enabled: override.enabled ?? base.enabled,
+        enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
     }
 }
 
 function mergeAutoCompression(
     base: PluginConfig["autoCompression"],
-    override?: Partial<PluginConfig["autoCompression"]>,
+    override: unknown,
 ): PluginConfig["autoCompression"] {
-    if (override === undefined) return base
+    if (!isRecord(override)) return base
 
     return {
-        enabled: override.enabled ?? base.enabled,
-        contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
-        tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
+        enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
+        contextWindowRatio:
+            typeof override.contextWindowRatio === "number"
+                ? override.contextWindowRatio
+                : base.contextWindowRatio,
+        tokenThreshold:
+            typeof override.tokenThreshold === "number"
+                ? override.tokenThreshold
+                : base.tokenThreshold,
+    }
+}
+
+function mergeConfigLayer(
+    config: PluginConfig,
+    data: Record<string, unknown>,
+    hasExplicitProtectedTurns: boolean,
+): PluginConfig {
+    return {
+        enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
+        debug: typeof data.debug === "boolean" ? data.debug : config.debug,
+        dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
+        notification: isOneOf(NOTIFICATIONS, data.notification)
+            ? data.notification
+            : config.notification,
+        notificationType: isOneOf(NOTIFICATION_TYPES, data.notificationType)
+            ? data.notificationType
+            : config.notificationType,
+        protectedTurns: resolveProtectedTurnsSetting(
+            data,
+            config.protectedTurns,
+            hasExplicitProtectedTurns,
+        ),
+        commands: mergeCommands(config.commands, data.commands),
+        autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
+        tools: mergeTools(config.tools, data.tools),
     }
 }
 
@@ -480,25 +523,8 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false)
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(
-                    result.data,
-                    config.protectedTurns,
-                    hasExplicitProtectedTurns,
-                ),
-                commands: mergeCommands(config.commands, result.data.commands as any),
-                autoCompression: mergeAutoCompression(
-                    config.autoCompression,
-                    result.data.autoCompression as any,
-                ),
-                tools: mergeTools(config.tools, result.data.tools as any),
-            }
-            hasExplicitProtectedTurns = result.data.protectedTurns !== undefined
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
+            hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number"
         }
     } else {
         // No config exists, create default
@@ -515,26 +541,9 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true)
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(
-                    result.data,
-                    config.protectedTurns,
-                    hasExplicitProtectedTurns,
-                ),
-                commands: mergeCommands(config.commands, result.data.commands as any),
-                autoCompression: mergeAutoCompression(
-                    config.autoCompression,
-                    result.data.autoCompression as any,
-                ),
-                tools: mergeTools(config.tools, result.data.tools as any),
-            }
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined
+                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number"
         }
     }
 
@@ -548,26 +557,9 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true)
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(
-                    result.data,
-                    config.protectedTurns,
-                    hasExplicitProtectedTurns,
-                ),
-                commands: mergeCommands(config.commands, result.data.commands as any),
-                autoCompression: mergeAutoCompression(
-                    config.autoCompression,
-                    result.data.autoCompression as any,
-                ),
-                tools: mergeTools(config.tools, result.data.tools as any),
-            }
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined
+                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number"
         }
     }
 
