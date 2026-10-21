@@ -77,6 +77,14 @@ const assistantMessage = (id: string, sessionID: string, text: string): WithPart
     parts: [{ type: "step-start" }, { type: "text", text }],
 })
 
+const usage = (input: number) => ({ input, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
+
+const stepEnded = (
+    sessionID: string,
+    assistantMessageID: string,
+    tokens: ReturnType<typeof usage>,
+) => ({ type: "session.step.ended", data: { sessionID, assistantMessageID, tokens } })
+
 describe("automatic compression thresholds", () => {
     it("defaults the absolute initiation threshold to 432,000 tokens", () => {
         assert.equal(DEFAULT_AUTO_COMPRESSION.tokenThreshold, 432_000)
@@ -102,8 +110,7 @@ describe("automatic compression thresholds", () => {
         assert.equal(large.reason, "absolute-token-threshold")
     })
 
-    it("uses provider totals when available and otherwise sums cache and generated tokens", () => {
-        assert.equal(getAssistantContextTokens({ total: 123_456, input: 1 }), 123_456)
+    it("sums input, generated, and cache tokens", () => {
         assert.equal(
             getAssistantContextTokens({
                 input: 100,
@@ -227,17 +234,7 @@ describe("post-compression cooldown", () => {
         const complete = async (id: string) => {
             const message = assistantMessage(id, sessionId, id)
             messages.push(userMessage(`user-${id}`, sessionId, `Request ${id}`), message)
-            await handler({
-                event: {
-                    type: "message.updated",
-                    properties: {
-                        info: {
-                            ...message.info,
-                            tokens: { total: 1_000 },
-                        },
-                    },
-                },
-            })
+            await handler(stepEnded(sessionId, message.info.id, usage(1_000)))
         }
 
         try {
@@ -286,12 +283,7 @@ describe("post-compression cooldown", () => {
             logger,
             cooldownConfig,
         )
-        const eventFor = (message: WithParts) => ({
-            event: {
-                type: "message.updated",
-                properties: { info: { ...message.info, tokens: { total: 1_000 } } },
-            },
-        })
+        const eventFor = (message: WithParts) => stepEnded(sessionId, message.info.id, usage(1_000))
 
         try {
             const first = assistantMessage("response-1", sessionId, "One")
@@ -330,19 +322,12 @@ describe("automatic compression lifecycle", () => {
             },
             synthetic: (input) => notifications.push(input),
         })
-        const latest = {
-            ...assistantMessage("v2-failed-start", sessionId, "Large completed turn").info,
-            tokens: { total: 400_000 },
-        }
-
         await createAutomaticCompressionEventHandler(
             client,
             new SessionStateManager(),
             logger,
             config,
-        )({
-            event: { type: "message.updated", properties: { info: latest } },
-        })
+        )(stepEnded(sessionId, "v2-failed-start", usage(400_000)))
 
         assert.deepEqual(notifications, [
             {
@@ -376,20 +361,7 @@ describe("automatic compression lifecycle", () => {
                 },
             },
         }
-        const event = {
-            event: {
-                type: "message.updated",
-                properties: {
-                    info: {
-                        id: "fast-path-response",
-                        sessionID: sessionId,
-                        role: "assistant",
-                        time: { completed: Date.now() },
-                        tokens: { total: 499 },
-                    },
-                },
-            },
-        }
+        const event = stepEnded(sessionId, "fast-path-response", usage(499))
 
         const globallyDisabled = {
             ...config,
@@ -452,17 +424,7 @@ describe("automatic compression lifecycle", () => {
             ...config,
             autoCompression: { ...config.autoCompression, tokenThreshold: 100 },
         })
-        const event = {
-            event: {
-                type: "message.updated",
-                properties: {
-                    info: {
-                        ...messages[1].info,
-                        tokens: { total: 1_000 },
-                    },
-                },
-            },
-        }
+        const event = stepEnded(sessionId, messages[1].info.id, usage(1_000))
 
         try {
             await handler(event)
@@ -531,23 +493,22 @@ describe("automatic compression lifecycle", () => {
                 logger,
                 config,
             )
-            const event = {
-                event: {
-                    type: "message.updated",
-                    properties: {
-                        info: {
-                            ...messages[7].info,
-                            tokens: {
-                                input: 10_000,
-                                output: 1_000,
-                                reasoning: 0,
-                                cache: { read: 439_000, write: 0 },
-                            },
-                        },
-                    },
-                },
-            }
+            const event = stepEnded(sessionId, messages[7].info.id, {
+                input: 10_000,
+                output: 1_000,
+                reasoning: 0,
+                cache: { read: 439_000, write: 0 },
+            })
 
+            await handler({
+                type: "session.step.started",
+                data: {
+                    sessionID: sessionId,
+                    assistantMessageID: messages[7].info.id,
+                    agent: "build",
+                    model: { providerID: "openai", id: "gpt-test" },
+                },
+            })
             await handler(event)
             await handler(event)
 
@@ -582,7 +543,6 @@ describe("automatic compression lifecycle", () => {
         const sessionId = `session-auto-subagent-active-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const latest = assistantMessage("latest", sessionId, "Large completed turn")
-        const latestInfo = { ...latest.info, tokens: { total: 450_000 } }
         const messages = [
             userMessage("user", sessionId, "Continue child work"),
             latest,
@@ -613,18 +573,13 @@ describe("automatic compression lifecycle", () => {
                 logger,
                 config,
             )
-            const event = { event: { type: "message.updated", properties: { info: latestInfo } } }
+            const event = stepEnded(sessionId, latest.info.id, usage(450_000))
             await handler(event)
             await handler(event)
 
             const later = assistantMessage("later", sessionId, "Finished the current logical block")
             messages.push(later)
-            await handler({
-                event: {
-                    type: "message.updated",
-                    properties: { info: { ...later.info, tokens: { total: 410_000 } } },
-                },
-            })
+            await handler(stepEnded(sessionId, later.info.id, usage(410_000)))
 
             assert.equal(promptCalls, 0)
             assert.equal(stateManager.get(sessionId).managementTurns.length, 1)
@@ -637,7 +592,6 @@ describe("automatic compression lifecycle", () => {
         const sessionId = `session-auto-subagent-protected-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const latest = assistantMessage("latest", sessionId, "Only child turn")
-        const latestInfo = { ...latest.info, tokens: { total: 400_000 } }
         const messages = [userMessage("user", sessionId, "One child request"), latest]
         let promptCalls = 0
         const client = fakeClient({
@@ -655,9 +609,7 @@ describe("automatic compression lifecycle", () => {
                 logger,
                 config,
             )
-            await handler({
-                event: { type: "message.updated", properties: { info: latestInfo } },
-            })
+            await handler(stepEnded(sessionId, latest.info.id, usage(400_000)))
 
             assert.equal(promptCalls, 0)
             assert.equal(stateManager.get(sessionId).managementTurns.length, 0)
@@ -677,24 +629,14 @@ describe("automatic compression lifecycle", () => {
         })
         const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
 
-        await handler({
-            event: {
-                type: "message.updated",
-                properties: {
-                    info: {
-                        id: "m1",
-                        sessionID: sessionId,
-                        role: "assistant",
-                        time: { completed: Date.now() },
-                        tokens: {
-                            input: 20_000,
-                            output: 1_000,
-                            cache: { read: 100_000, write: 0 },
-                        },
-                    },
-                },
-            },
-        })
+        await handler(
+            stepEnded(sessionId, "m1", {
+                input: 20_000,
+                output: 1_000,
+                reasoning: 0,
+                cache: { read: 100_000, write: 0 },
+            }),
+        )
 
         assert.equal(promptCalls, 0)
     })
@@ -702,7 +644,6 @@ describe("automatic compression lifecycle", () => {
     it("keeps ordinary subagent compression working", async () => {
         const sessionId = `session-subagent-auto-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const latest = assistantMessage("latest", sessionId, "Large ordinary turn")
-        const latestInfo = { ...latest.info, tokens: { total: 450_000 } }
         const messages = [userMessage("user", sessionId, "Ordinary work"), latest]
         const promptCalls: PromptInput[] = []
         const client = fakeClient({
@@ -720,9 +661,7 @@ describe("automatic compression lifecycle", () => {
                     protectedTurns: 0,
                 },
             )
-            await handler({
-                event: { type: "message.updated", properties: { info: latestInfo } },
-            })
+            await handler(stepEnded(sessionId, latest.info.id, usage(450_000)))
             assert.equal(promptCalls.length, 1)
             assert.match(promptCalls[0].text, /AUTOMATIC CONTEXT COMPRESSION DUE/)
         } finally {

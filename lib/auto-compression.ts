@@ -14,7 +14,6 @@ import {
 } from "./auto-policy.js"
 
 export interface AssistantUsage {
-    total?: number
     input?: number
     output?: number
     reasoning?: number
@@ -24,15 +23,11 @@ export interface AssistantUsage {
     }
 }
 
-export interface AssistantMessageInfo {
+interface AssistantMessageInfo {
     id: string
     sessionID: string
-    role: "assistant"
     providerID?: string
     modelID?: string
-    summary?: boolean
-    error?: unknown
-    time?: { completed?: number }
     tokens?: AssistantUsage
 }
 
@@ -50,9 +45,6 @@ function positiveFinite(value: unknown): number {
 
 export function getAssistantContextTokens(tokens: AssistantUsage | undefined): number {
     if (!tokens) return 0
-    const reportedTotal = positiveFinite(tokens.total)
-    if (reportedTotal > 0) return reportedTotal
-
     return (
         positiveFinite(tokens.input) +
         positiveFinite(tokens.output) +
@@ -137,8 +129,7 @@ export function createAutomaticCompressionEventHandler(
 ) {
     const started = new Map<string, { sessionID: string; providerID?: string; modelID?: string }>()
     return async (input: unknown) => {
-        const outer = isRecord(input) && isRecord(input.event) ? input.event : input
-        const event = isRecord(outer) ? outer : {}
+        const event = isRecord(input) ? input : {}
         const data = isRecord(event.data) ? event.data : {}
         if (event.type === "session.step.started") {
             const model = isRecord(data.model) ? data.model : {}
@@ -151,52 +142,28 @@ export function createAutomaticCompressionEventHandler(
             }
             return
         }
-        const projected =
-            event.type === "session.step.ended" && typeof data.assistantMessageID === "string"
-                ? started.get(data.assistantMessageID)
-                : undefined
         if (event.type === "session.step.failed") {
             if (typeof data.assistantMessageID === "string") started.delete(data.assistantMessageID)
             return
         }
-        if (event.type === "session.step.ended" && typeof data.assistantMessageID === "string") {
-            started.delete(data.assistantMessageID)
-        }
-        const info: AssistantMessageInfo | undefined = projected
-            ? {
-                  id: data.assistantMessageID as string,
-                  sessionID: projected.sessionID,
-                  role: "assistant",
-                  providerID: projected.providerID,
-                  modelID: projected.modelID,
-                  time: { completed: Date.now() },
-                  tokens: isRecord(data.tokens) ? (data.tokens as AssistantUsage) : undefined,
-              }
-            : event.type === "session.step.ended" &&
-                typeof data.assistantMessageID === "string" &&
-                typeof data.sessionID === "string"
-              ? {
-                    id: data.assistantMessageID,
-                    sessionID: data.sessionID,
-                    role: "assistant",
-                    time: { completed: Date.now() },
-                    tokens: isRecord(data.tokens) ? (data.tokens as AssistantUsage) : undefined,
-                }
-              : isRecord(event.properties) && isRecord(event.properties.info)
-                ? (event.properties.info as unknown as AssistantMessageInfo)
-                : undefined
-        if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
-        if (event.type !== "message.updated" && event.type !== "session.step.ended") return
-        if (
-            info?.role !== "assistant" ||
-            info.summary === true ||
-            info.error ||
-            !info.time?.completed
-        ) {
+        if (event.type !== "session.step.ended" || typeof data.assistantMessageID !== "string")
             return
-        }
+        const projected = started.get(data.assistantMessageID)
+        started.delete(data.assistantMessageID)
+        const sessionID =
+            projected?.sessionID ??
+            (typeof data.sessionID === "string" ? data.sessionID : undefined)
+        if (!sessionID) return
+        if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
 
-        if (!(await acceptsSession(info.sessionID, outer))) return
+        const info: AssistantMessageInfo = {
+            id: data.assistantMessageID,
+            sessionID,
+            providerID: projected?.providerID,
+            modelID: projected?.modelID,
+            tokens: isRecord(data.tokens) ? (data.tokens as AssistantUsage) : undefined,
+        }
+        if (!(await acceptsSession(info.sessionID, event))) return
 
         const state = stateManager.get(info.sessionID)
         const contextTokens = getAssistantContextTokens(info.tokens)

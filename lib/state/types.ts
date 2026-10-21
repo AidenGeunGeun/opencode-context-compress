@@ -129,6 +129,6 @@ export interface SessionState {
     }
     /** Runtime-only lock preventing duplicate threshold events from starting two turns. */
     autoCompressionStarting?: boolean
-    /** Runtime-only deduplication marker for repeated message.updated events. */
+    /** Runtime-only deduplication marker for repeated step ends of the last triggering message. */
     lastAutoTriggeredMessageId?: string
 }
