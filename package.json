@@ -36,9 +36,6 @@
         "compression",
         "compress"
     ],
-    "peerDependencies": {
-        "@opencode/plugin": "2.0.13"
-    },
     "dependencies": {
         "@anthropic-ai/tokenizer": "^0.0.4",
         "@opencode/plugin": "2.0.13",
