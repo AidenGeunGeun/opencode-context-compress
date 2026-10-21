@@ -47,7 +47,6 @@ interface PersistedSessionStateFile {
     compressed: PersistedCompressed
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
-    compressionMapSnapshot?: unknown
     stats: SessionStats
     autoCompressionEnabledOverride?: unknown
     autoCompressionTokenThresholdOverride?: unknown

@@ -16,7 +16,6 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.compressed = candidate.compressed
     state.compressSummaries = candidate.compressSummaries
     state.managementTurns = candidate.managementTurns
-    state.compressionMapSnapshot = candidate.compressionMapSnapshot
     state.stats = candidate.stats
     state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride
     state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride
@@ -44,7 +43,6 @@ function applyPersistedState(
     }
     state.compressSummaries = persistedState.compressSummaries || []
     state.managementTurns = persistedState.managementTurns || []
-    state.compressionMapSnapshot = undefined
     state.stats = {
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
@@ -67,7 +65,6 @@ function clearPersistedCompressionState(state: SessionState): void {
     }
     state.compressSummaries = []
     state.managementTurns = []
-    state.compressionMapSnapshot = undefined
     state.stats = {
         compressTokenCounter: 0,
         totalCompressTokens: 0,
@@ -207,8 +204,7 @@ export async function reconcileSessionLifecycle(
         compactionIndex !== -1 &&
         (compactionOrder === "before" || (compactionOrder === "unknown" && unresolvedNewCompaction))
 
-    const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined
-    if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
+    if (requiresCompactionReset || unresolvedNewCompaction) {
         const candidate: SessionState = {
             ...state,
             ...(requiresCompactionReset
@@ -221,7 +217,6 @@ export async function reconcileSessionLifecycle(
                       managementTurns: [],
                   }
                 : {}),
-            ...(hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {}),
             ...(unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}),
         }
         const persisted = await saveSessionState(candidate, logger)
@@ -332,7 +327,6 @@ export function createSessionState(): SessionState {
         },
         compressSummaries: [],
         managementTurns: [],
-        compressionMapSnapshot: undefined,
         stats: {
             compressTokenCounter: 0,
             totalCompressTokens: 0,

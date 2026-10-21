@@ -160,7 +160,6 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
                         compressTokenCounter: 0,
                         totalCompressTokens: state.stats.totalCompressTokens + estimatedSavedTokens,
                     },
-                    compressionMapSnapshot: undefined,
                 }
                 const persisted = await saveSessionState(candidateState, logger)
                 if (!persisted) {

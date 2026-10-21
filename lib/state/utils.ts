@@ -20,7 +20,6 @@ export function resetOnCompaction(state: SessionState): void {
     state.compressed.messageIds = new Set<string>()
     state.compressSummaries = []
     state.managementTurns = []
-    state.compressionMapSnapshot = undefined
     state.autoCompressionStarting = false
     state.lastAutoTriggeredMessageId = undefined
 }

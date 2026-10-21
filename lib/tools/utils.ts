@@ -32,66 +32,6 @@ export function getCompletedToolOutputText(
     return undefined
 }
 
-export function extractMessageContent(msg: WithParts): string {
-    const parts = Array.isArray(msg.parts) ? msg.parts : []
-    let content = ""
-
-    for (const part of parts) {
-        const p = part as Record<string, unknown>
-
-        switch (part.type) {
-            case "text":
-            case "reasoning":
-                if (typeof p.text === "string") {
-                    content += ` ${p.text}`
-                }
-                break
-
-            case "tool": {
-                const state = p.state as Record<string, unknown> | undefined
-                if (!state) break
-
-                // Include tool output (completed or error)
-                if (state.status === "completed") {
-                    const output = getCompletedToolOutputText(part, state.output)
-                    if (typeof output === "string") {
-                        content += ` ${output}`
-                    }
-                } else if (state.status === "error" && typeof state.error === "string") {
-                    content += ` ${state.error}`
-                }
-
-                // Include tool input
-                if (state.input) {
-                    content +=
-                        " " +
-                        (typeof state.input === "string"
-                            ? state.input
-                            : JSON.stringify(state.input))
-                }
-                break
-            }
-
-            case "compaction":
-                if (typeof p.summary === "string") {
-                    content += ` ${p.summary}`
-                }
-                break
-
-            case "subtask":
-                if (typeof p.summary === "string") {
-                    content += ` ${p.summary}`
-                }
-                if (typeof p.result === "string") {
-                    content += ` ${p.result}`
-                }
-                break
-        }
-    }
-
-    return content
-}
-
 export function collectToolIdsInRange(
     messages: WithParts[],
     startIndex: number,

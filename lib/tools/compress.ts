@@ -259,7 +259,6 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                             state.stats.totalCompressTokens + estimatedCompressedTokens,
                     },
                     compressionCooldownAfterMessageId: toolCtx.messageID,
-                    compressionMapSnapshot: undefined,
                 }
                 const persisted = await saveSessionState(candidateState, logger)
                 if (!persisted) {

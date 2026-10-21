@@ -196,19 +196,6 @@ describe("native compaction reset", () => {
         state.autoCompressionContextWindowRatioOverride = 0.8
         state.compressionCooldownAfterMessageId = "compress-anchor"
         state.compressed.messageIds.add("old-message")
-        state.compressionMapSnapshot = {
-            source: "management",
-            triggerMessageId: "manage-trigger",
-            entries: [
-                {
-                    key: 1,
-                    kind: "message",
-                    rawMessageIds: ["old-message"],
-                    toolIds: [],
-                    tokenEstimate: 3,
-                },
-            ],
-        }
 
         resetOnCompaction(state)
 
@@ -217,7 +204,6 @@ describe("native compaction reset", () => {
         assert.equal(state.autoCompressionContextWindowRatioOverride, 0.8)
         assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
         assert.equal(state.compressed.messageIds.size, 0)
-        assert.equal(state.compressionMapSnapshot, undefined)
     })
 })
 
@@ -422,20 +408,6 @@ describe("saveSessionState", () => {
             state.autoCompressionContextWindowRatioOverride = 0.82
             state.compressionCooldownAfterMessageId = "m-compress"
             state.lastCompaction = 123_456
-            state.compressionMapSnapshot = {
-                source: "management",
-                triggerMessageId: "m4",
-                entries: [
-                    {
-                        key: 1,
-                        kind: "message",
-                        rawMessageIds: ["m2"],
-                        protected: true,
-                        toolIds: ["tool-1"],
-                        tokenEstimate: 8,
-                    },
-                ],
-            }
 
             await saveSessionState(state, logger, "session-name")
 
@@ -487,12 +459,6 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(loadResult.state.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(loadResult.state.lastCompaction, 123_456)
-            assert.equal(
-                "compressionMapSnapshot" in loadResult.state
-                    ? loadResult.state.compressionMapSnapshot
-                    : undefined,
-                undefined,
-            )
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
 
@@ -505,7 +471,6 @@ describe("saveSessionState", () => {
             assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(reloadedState.lastCompaction, 123_456)
-            assert.equal(reloadedState.compressionMapSnapshot, undefined)
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -609,12 +574,7 @@ describe("saveSessionState", () => {
             const loaded = await loadSessionState(sessionId, logger)
             assert.equal(loaded.status, "loaded")
             if (loaded.status !== "loaded") throw new Error("expected valid state")
-            assert.equal(
-                "compressionMapSnapshot" in loaded.state
-                    ? loaded.state.compressionMapSnapshot
-                    : undefined,
-                undefined,
-            )
+            assert.equal("compressionMapSnapshot" in loaded.state, false)
             assert.equal(loaded.state.managementTurns.length, 1)
             assert.equal(loaded.state.managementTurns[0].cleanupVersion, 2)
             assert.deepEqual(loaded.state.compressSummaries[0], {

@@ -50,7 +50,6 @@ export interface MarkerPart {
 }
 
 export type Message = MessageBase
-export type UserMessage = MessageBase
 export type AssistantMessage = MessageBase
 export type Part = TextPart | ToolPart | MarkerPart
 
@@ -105,8 +104,6 @@ export interface SessionState {
     compressed: Compressed
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    /** Legacy persisted field: read from older state files and cleared on the next save. */
-    compressionMapSnapshot?: unknown
     stats: SessionStats
     /** Session-local override. Missing inherits the process-level auto setting. */
     autoCompressionEnabledOverride?: boolean

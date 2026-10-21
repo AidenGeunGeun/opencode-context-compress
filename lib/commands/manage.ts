@@ -227,7 +227,6 @@ export async function stageManagementTurnWithinLock(
     const candidateState: SessionState = {
         ...state,
         managementTurns: [...state.managementTurns, managementTurn],
-        compressionMapSnapshot: undefined,
     }
     const statePersisted = await saveSessionState(candidateState, logger)
     if (!statePersisted) {
