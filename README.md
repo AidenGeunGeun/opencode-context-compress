@@ -4,9 +4,11 @@ Context compression for OpenCode 2 that replaces native compaction. The working 
 history into durable compressed blocks, with no hidden summarizer, while a configurable recent
 execution tail stays verbatim.
 
-**Native compaction must never run alongside this plugin.** Disable `compaction.auto` and use
-`/compress manage` instead of `/compact`. A native compaction retires every existing compression
-block, and the plugin API cannot veto it, so the plugin posts a warning in the session when one runs.
+**Native auto-compaction must stay off.** Set `compaction.auto` to `false`. The plugin API cannot
+veto native compaction, so the plugin posts a warning in the session if auto-compaction runs anyway.
+
+Manual `/compact` is a deliberate reset: OpenCode replaces the history with its own summary, and the
+plugin clears every compression block. To merge blocks without a reset, use `/compress squash`.
 
 ## Install
 

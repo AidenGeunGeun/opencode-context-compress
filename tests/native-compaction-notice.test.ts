@@ -6,7 +6,7 @@ import { it } from "node:test"
 
 import { setup } from "../lib/plugin.ts"
 
-it("tells the owning session that native compaction should stay disabled", async () => {
+it("warns the owning session about native auto-compaction but not a manual reset", async () => {
     const root = await mkdtemp(join(tmpdir(), "context-compress-native-"))
     const previousConfig = process.env.XDG_CONFIG_HOME
     const previousData = process.env.XDG_DATA_HOME
@@ -15,14 +15,15 @@ it("tells the owning session that native compaction should stay disabled", async
     await mkdir(join(root, "config", "opencode"), { recursive: true })
     const synthetic: any[] = []
     const registration = { dispose: async () => undefined }
-    const compactionEnded = (sessionID: string, directory: string) =>
-        ({ type: "session.compaction.ended", data: { sessionID }, location: { directory } })
+    const compactionStarted = (sessionID: string, reason: string, directory = root) =>
+        ({ type: "session.compaction.started", data: { sessionID, reason }, location: { directory } })
     let processed!: () => void
     const allProcessed = new Promise<void>((resolve) => { processed = resolve })
     const events = {
         async *[Symbol.asyncIterator]() {
-            yield compactionEnded("elsewhere", join(root, "other"))
-            yield compactionEnded("owned", root)
+            yield compactionStarted("elsewhere", "auto", join(root, "other"))
+            yield compactionStarted("manual-reset", "manual")
+            yield compactionStarted("owned", "auto")
             processed()
         },
     }

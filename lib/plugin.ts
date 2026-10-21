@@ -21,11 +21,12 @@ import { createCompressTool, createSquashTool } from "./tools/index.js"
 
 type Registration = Awaited<ReturnType<Plugin.Context["session"]["hook"]>>
 
-// The plugin API has no way to veto native compaction, so say so when it runs.
-const NATIVE_COMPACTION_NOTICE =
-    "Native OpenCode compaction ran in this session. Context Compress replaces native compaction, " +
-    "and native compaction retires earlier compression blocks. Set `\"compaction\": { \"auto\": false }` " +
-    "in opencode.jsonc and use `/compress manage` instead of `/compact`."
+// The plugin API cannot veto native auto-compaction, so flag the misconfiguration when it runs.
+// Manual /compact is a deliberate reset and gets no notice.
+const NATIVE_AUTO_COMPACTION_NOTICE =
+    "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
+    "this compaction clears every compression block. Set `\"compaction\": { \"auto\": false }` " +
+    "in opencode.jsonc."
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -202,17 +203,25 @@ async function runEvents(
                 })
                 continue
             }
+            if (
+                event.type === "session.compaction.started" &&
+                data.reason === "auto" &&
+                typeof data.sessionID === "string"
+            ) {
+                if (!(await ownsSession(context, data.sessionID, event))) continue
+                await promptSession(client, {
+                    sessionId: data.sessionID,
+                    parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
+                    noReply: true,
+                })
+                continue
+            }
             if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string") continue
             if (!(await ownsSession(context, data.sessionID, event))) continue
             const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
             await stateManager.runExclusive(data.sessionID, () =>
                 reconcileSessionLifecycle(stateManager.get(data.sessionID as string), data.sessionID as string, logger, messages),
             )
-            await promptSession(client, {
-                sessionId: data.sessionID,
-                parts: [{ type: "text", text: NATIVE_COMPACTION_NOTICE }],
-                noReply: true,
-            })
         } catch (error) {
             logger.error("Context Compress event handling failed", {
                 error: error instanceof Error ? error.message : String(error),

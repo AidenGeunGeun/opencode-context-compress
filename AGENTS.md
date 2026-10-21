@@ -32,7 +32,8 @@ Requires `bun` (build runtime) and `tsc` (TypeScript compiler, resolved via `nod
   inherited compression references to copied message IDs before a fork's first model request;
   the context hook also recovers when its fork event was missed.
 - Require `compaction.auto: false` in OpenCode configuration. The API cannot veto native compaction,
-  so post a synthetic warning to the owning session when one ends.
+  so post a synthetic warning to the owning session when auto-compaction starts. Manual `/compact`
+  is a deliberate reset that clears every block; it gets no warning.
 
 Compression selection is deterministic: exclude existing blocks, select eligible uncompressed
 history after the newest block, and preserve the newest `protectedTurns` execution steps. `squash`
