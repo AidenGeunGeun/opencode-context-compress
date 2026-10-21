@@ -21,25 +21,25 @@ export const createSyntheticUserMessage = (
     variant?: string,
     stableSeed?: string,
 ): WithParts => {
-    const userInfo = baseMessage.info as UserMessage
-    const now = stableSeed ? userInfo.time.created : Date.now()
+    const info = baseMessage.info
+    const now = stableSeed ? info.time.created : Date.now()
     const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg")
     const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt")
 
     return {
         info: {
             id: messageId,
-            sessionID: userInfo.sessionID,
+            sessionID: info.sessionID,
             role: "user" as const,
-            agent: userInfo.agent,
-            model: userInfo.model,
+            agent: info.agent,
+            model: info.model,
             time: { created: now },
             ...(variant !== undefined && { variant }),
         },
         parts: [
             {
                 id: partId,
-                sessionID: userInfo.sessionID,
+                sessionID: info.sessionID,
                 messageID: messageId,
                 type: "text" as const,
                 text: content,

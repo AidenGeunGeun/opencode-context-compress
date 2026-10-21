@@ -9,6 +9,7 @@ import { createAutomaticCompressionEventHandler } from "../lib/auto-compression.
 import type { PluginConfig } from "../lib/config.ts"
 import { adaptProjectedMessages } from "../lib/messages/v2-adapter.ts"
 import { transformV2Messages } from "../lib/messages/v2-transform.ts"
+import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { pluginClient } from "../lib/sdk/client.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import { createCompressTool } from "../lib/tools/compress.ts"
@@ -127,6 +128,47 @@ describe("beta projected message compatibility", () => {
         assert.match(String(transformed[0].content[0].text), /\[b0\].*Earlier work/s)
         assert.equal(transformed.some((message) => message.id === "old-user"), false)
         assert.equal(transformed.some((message) => message.id === "feedback"), false)
+    })
+
+    it("restores non-user block anchors and allows subsequent compression", () => {
+        const anchors = [
+            { id: "model-change", type: "model-switched", time: { created: 0 } },
+            { id: "system-entry", type: "system", text: "Earlier instructions", time: { created: 0 } },
+            projected("session")[1],
+        ]
+
+        for (const anchor of anchors) {
+            const raw = adaptProjectedMessages("session", [
+                anchor,
+                projected("session")[0],
+                { id: "later-model-change", type: "model-switched", time: { created: 3 } },
+                projected("session")[2],
+            ])
+            const state = new SessionStateManager().get("session")
+            state.compressed.messageIds = new Set([anchor.id, "old-user"])
+            state.compressSummaries = [{
+                anchorMessageId: anchor.id,
+                messageIds: [anchor.id, "old-user"],
+                summary: "Earlier work was completed.",
+            }]
+            const modelMessages = [
+                { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
+                { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
+            ]
+
+            const transformed = transformV2Messages(raw, state, logger, modelMessages)
+
+            assert.equal(transformed.length, 2, anchor.type)
+            assert.equal(transformed[0].role, "user")
+            assert.match(String(transformed[0].content[0].text), /\[b0\].*Earlier work was completed/s)
+            assert.deepEqual(transformed[1], modelMessages[1])
+            assert.deepEqual(transformV2Messages(raw, state, logger, modelMessages), transformed)
+            assert.deepEqual(
+                selectDeterministicCompressionSpan(raw, state, logger, 0).messageIds,
+                ["later-model-change", "owner"],
+            )
+            assert.equal(state.compressSummaries[0].anchorMessageId, anchor.id)
+        }
     })
 
     it("keeps attached media objects intact", () => {

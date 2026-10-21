@@ -1,9 +1,8 @@
 import type { SessionState, WithParts } from "../state/index.js"
 import type { Logger } from "../logger.js"
-import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js"
+import { isMessageCompacted } from "../shared-utils.js"
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js"
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js"
-import type { UserMessage } from "../state/types.js"
 import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js"
 
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT =
@@ -412,29 +411,20 @@ export const transformMessagesForSearch = (
         const block = blocksByAnchorId.get(msgId)
         if (block) {
             const summary = block.summary
-            const userMessage = getLastUserMessage(rawMessages, i)
+            // Anchors identify transcript positions, including system events before any user.
+            const syntheticMessage = createSyntheticUserMessage(
+                msg,
+                formatCompressBlockContent(block),
+                msg.info.variant,
+                summary.anchorMessageId,
+            )
+            transformed.push(syntheticMessage)
+            syntheticMap.set(syntheticMessage.info.id, summary)
 
-            if (userMessage) {
-                const userInfo = userMessage.info as UserMessage
-                const summaryContent = formatCompressBlockContent(block)
-                const syntheticMessage = createSyntheticUserMessage(
-                    userMessage,
-                    summaryContent,
-                    userInfo.variant,
-                    summary.anchorMessageId,
-                )
-                transformed.push(syntheticMessage)
-                syntheticMap.set(syntheticMessage.info.id, summary)
-
-                logger.info("Injected compress summary", {
-                    anchorMessageId: msgId,
-                    summaryLength: summary.summary.length,
-                })
-            } else {
-                logger.warn("No user message found for compress summary", {
-                    anchorMessageId: msgId,
-                })
-            }
+            logger.info("Injected compress summary", {
+                anchorMessageId: msgId,
+                summaryLength: summary.summary.length,
+            })
         }
 
         const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId)
