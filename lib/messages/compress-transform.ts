@@ -411,7 +411,8 @@ export const transformMessagesForSearch = (
         const block = blocksByAnchorId.get(msgId)
         if (block) {
             const summary = block.summary
-            // Anchors identify transcript positions, including system events before any user.
+            // An anchor can precede every user message (e.g. the compaction entry that starts
+            // OpenCode 2's `session.context`), so build the block message from the anchor itself.
             const syntheticMessage = createSyntheticUserMessage(
                 msg,
                 formatCompressBlockContent(block),
