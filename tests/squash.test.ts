@@ -1,23 +1,36 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
-import { extractSquashCommandResidual, handleSquashCommand } from "../lib/commands/squash.ts"
-import { Logger } from "../lib/logger.ts"
-import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
-import { formatCompressBlockContent, orderCompressBlocks } from "../lib/messages/blocks.ts"
-import { loadSessionState } from "../lib/state/persistence.ts"
-import { SessionStateManager } from "../lib/state/state.ts"
-import type { CompressSummary, WithParts } from "../lib/state/types.ts"
-import { estimateTokensBatch } from "../lib/token-utils.ts"
-import { createCompressTool } from "../lib/tools/compress.ts"
-import { createSquashTool, type SquashInput } from "../lib/tools/squash.ts"
+import type { CompressSummary, SessionState, WithParts } from "../lib/state/types.ts"
+import type { SquashInput } from "../lib/tools/squash.ts"
 import type { ToolExecutionContext } from "../lib/tools/types.ts"
-import { fakeClient, type PromptInput, partText, type SyntheticInput } from "./helpers.ts"
+import {
+    fakeClient,
+    isolateHostDirs,
+    type PromptInput,
+    partText,
+    type SyntheticInput,
+} from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { extractSquashCommandResidual, handleSquashCommand } = await import(
+    "../lib/commands/squash.ts"
+)
+const { Logger } = await import("../lib/logger.ts")
+const { applyCompressTransforms } = await import("../lib/messages/compress-transform.ts")
+const { formatCompressBlockContent, orderCompressBlocks } = await import(
+    "../lib/messages/blocks.ts"
+)
+const { loadSessionState } = await import("../lib/state/persistence.ts")
+const { SessionStateManager } = await import("../lib/state/state.ts")
+const { estimateTokensBatch } = await import("../lib/token-utils.ts")
+const { createCompressTool } = await import("../lib/tools/compress.ts")
+const { createSquashTool } = await import("../lib/tools/squash.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -135,14 +148,7 @@ function client(messages: WithParts[]) {
 }
 
 function sessionFile(sessionId: string) {
-    return join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionId}.json`,
-    )
+    return join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionId}.json`)
 }
 
 async function cleanup(sessionId: string) {
@@ -150,7 +156,7 @@ async function cleanup(sessionId: string) {
     if (existsSync(path)) await rm(path)
 }
 
-function durableSnapshot(state: ReturnType<SessionStateManager["get"]>) {
+function durableSnapshot(state: SessionState) {
     return {
         compressed: {
             messageIds: [...state.compressed.messageIds],
@@ -163,11 +169,7 @@ function durableSnapshot(state: ReturnType<SessionStateManager["get"]>) {
     }
 }
 
-function seedBlocks(
-    state: ReturnType<SessionStateManager["get"]>,
-    sessionId: string,
-    count: number,
-) {
+function seedBlocks(state: SessionState, sessionId: string, count: number) {
     const messages: WithParts[] = []
     const summaries: CompressSummary[] = []
     for (let index = 0; index < count; index++) {

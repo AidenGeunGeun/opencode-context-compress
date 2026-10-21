@@ -1,18 +1,20 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
-import { Logger } from "../lib/logger.ts"
-import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
-import { SessionStateManager } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
-import { createCompressTool, resolveCompressionBoundary } from "../lib/tools/compress.ts"
 import type { ToolExecutionContext } from "../lib/tools/types.ts"
-import { fakeClient } from "./helpers.ts"
+import { fakeClient, isolateHostDirs } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { Logger } = await import("../lib/logger.ts")
+const { applyCompressTransforms } = await import("../lib/messages/compress-transform.ts")
+const { SessionStateManager } = await import("../lib/state/state.ts")
+const { createCompressTool, resolveCompressionBoundary } = await import("../lib/tools/compress.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -90,14 +92,7 @@ function client(messages: WithParts[]) {
 }
 
 function sessionFile(sessionId: string) {
-    return join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionId}.json`,
-    )
+    return join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionId}.json`)
 }
 
 async function cleanup(sessionId: string) {

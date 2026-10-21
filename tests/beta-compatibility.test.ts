@@ -1,20 +1,22 @@
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 
-import { createAutomaticCompressionEventHandler } from "../lib/auto-compression.ts"
 import type { PluginConfig } from "../lib/config.ts"
-import { Logger } from "../lib/logger.ts"
-import { adaptProjectedMessages } from "../lib/messages/v2-adapter.ts"
-import { transformV2Messages } from "../lib/messages/v2-transform.ts"
-import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
-import { SessionStateManager } from "../lib/state/state.ts"
-import { createCompressTool } from "../lib/tools/compress.ts"
-import { createSquashTool } from "../lib/tools/squash.ts"
-import { type ContextMessage, fakeClient } from "./helpers.ts"
+import { type ContextMessage, fakeClient, isolateHostDirs } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { createAutomaticCompressionEventHandler } = await import("../lib/auto-compression.ts")
+const { Logger } = await import("../lib/logger.ts")
+const { adaptProjectedMessages } = await import("../lib/messages/v2-adapter.ts")
+const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
+const { selectDeterministicCompressionSpan } = await import("../lib/messages/context-map.ts")
+const { SessionStateManager } = await import("../lib/state/state.ts")
+const { createCompressTool } = await import("../lib/tools/compress.ts")
+const { createSquashTool } = await import("../lib/tools/squash.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -453,14 +455,7 @@ describe("beta tool and automatic lifecycle compatibility", () => {
 })
 
 function sessionFile(sessionID: string) {
-    return join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionID}.json`,
-    )
+    return join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionID}.json`)
 }
 
 async function cleanup(sessionID: string) {

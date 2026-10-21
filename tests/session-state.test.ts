@@ -1,29 +1,24 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { Logger } from "../lib/logger.ts"
-import {
-    SessionStateManager,
-    createSessionState,
-    ensureSessionInitialized,
-} from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
-import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
-import { resetOnCompaction } from "../lib/state/utils.ts"
+import { isolateHostDirs } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { Logger } = await import("../lib/logger.ts")
+const { SessionStateManager, createSessionState, ensureSessionInitialized } = await import(
+    "../lib/state/state.ts"
+)
+const { loadSessionState, saveSessionState } = await import("../lib/state/persistence.ts")
+const { resetOnCompaction } = await import("../lib/state/utils.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
-const storageDir = join(
-    process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-    "opencode",
-    "storage",
-    "plugin",
-    "compress",
-)
+const storageDir = join(root, "data", "opencode", "storage", "plugin", "compress")
 
 const getSessionFilePath = (sessionId: string) => join(storageDir, `${sessionId}.json`)
 

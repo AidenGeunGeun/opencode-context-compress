@@ -1,25 +1,27 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { mkdir, rm, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-import {
+import type { PluginConfig } from "../lib/config.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { fakeClient, isolateHostDirs, type PromptInput } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const {
     createAutomaticCompressionEventHandler,
     getAssistantContextTokens,
     resolveAutomaticCompressionThreshold,
-} from "../lib/auto-compression.ts"
-import { DEFAULT_AUTO_COMPRESSION, type PluginConfig } from "../lib/config.ts"
-import { Logger } from "../lib/logger.ts"
-import { SessionStateManager } from "../lib/state/state.ts"
-import { saveSessionState } from "../lib/state/persistence.ts"
-import type { WithParts } from "../lib/state/types.ts"
-import {
-    getPostCompressionCooldownRemaining,
-    resolveEffectiveAutoCompressionPolicy,
-} from "../lib/auto-policy.ts"
-import { fakeClient, type PromptInput } from "./helpers.ts"
+} = await import("../lib/auto-compression.ts")
+const { DEFAULT_AUTO_COMPRESSION } = await import("../lib/config.ts")
+const { Logger } = await import("../lib/logger.ts")
+const { SessionStateManager } = await import("../lib/state/state.ts")
+const { saveSessionState } = await import("../lib/state/persistence.ts")
+const { getPostCompressionCooldownRemaining, resolveEffectiveAutoCompressionPolicy } = await import(
+    "../lib/auto-policy.ts"
+)
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -36,14 +38,7 @@ const config: PluginConfig = {
 }
 
 const getSessionFilePath = (sessionId: string) =>
-    join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionId}.json`,
-    )
+    join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionId}.json`)
 
 const cleanupSessionFile = async (sessionId: string) => {
     const filePath = getSessionFilePath(sessionId)

@@ -1,21 +1,23 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
 
-import {
+import type { PluginConfig } from "../lib/config.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { fakeClient, isolateHostDirs, type PromptInput, type SyntheticInput } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const {
     extractManageCommandResidual,
     generateAutomaticPromptMessageId,
     generateManagePromptMessageId,
     handleManageCommand,
-} from "../lib/commands/manage.ts"
-import type { PluginConfig } from "../lib/config.ts"
-import { Logger } from "../lib/logger.ts"
-import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
-import type { WithParts } from "../lib/state/types.ts"
-import { fakeClient, type PromptInput, type SyntheticInput } from "./helpers.ts"
+} = await import("../lib/commands/manage.ts")
+const { Logger } = await import("../lib/logger.ts")
+const { createSessionState, SessionStateManager } = await import("../lib/state/state.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -59,14 +61,7 @@ const config: PluginConfig = {
 }
 
 const getSessionFilePath = (sessionId: string) =>
-    join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionId}.json`,
-    )
+    join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionId}.json`)
 
 const cleanupSessionFile = async (sessionId: string) => {
     const filePath = getSessionFilePath(sessionId)
