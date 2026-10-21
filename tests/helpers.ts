@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import type { ModelMessage } from "../lib/messages/v2-transform.ts"
 import { type PluginClient, pluginClient } from "../lib/sdk/client.ts"
@@ -8,6 +11,18 @@ type ContextInput = Parameters<Session["context"]>[0]
 export type ContextMessage = Awaited<ReturnType<Session["context"]>>[number]
 export type PromptInput = Parameters<Session["prompt"]>[0]
 export type SyntheticInput = Parameters<Session["synthetic"]>[0]
+
+/**
+ * Points plugin config and storage at a fresh scratch root. Call it before importing modules that
+ * resolve those paths at load (`lib/config.ts`, `lib/state/persistence.ts`).
+ */
+export async function isolateHostDirs(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "context-compress-test-"))
+    process.env.XDG_CONFIG_HOME = join(root, "config")
+    process.env.XDG_DATA_HOME = join(root, "data")
+    delete process.env.OPENCODE_CONFIG_DIR
+    return root
+}
 
 export interface SessionFake {
     context?: (input: ContextInput) => Promise<ContextMessage[] | WithParts[]>

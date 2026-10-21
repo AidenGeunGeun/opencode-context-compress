@@ -118,7 +118,7 @@ export function generateNativeCompactionNoticeId(
 ): string | undefined {
     if (typeof event.id !== "string" || typeof event.created !== "number") return undefined
     return `msg_${generateLiveOrderedMessageIdSuffix(
-        event.created,
+        Math.floor(event.created),
         JSON.stringify(["native-auto-compaction", sessionId, event.id]),
     )}`
 }
