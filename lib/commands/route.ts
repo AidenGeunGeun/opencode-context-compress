@@ -1,6 +1,6 @@
 import type { PluginConfig } from "../config.js"
 import type { Logger } from "../logger.js"
-import { listSessionMessages } from "../sdk/client.js"
+import { listSessionMessages, type PluginClient } from "../sdk/client.js"
 import {
     reconcileSessionLifecycle,
     type SessionStateManager,
@@ -16,7 +16,7 @@ import { handleStatsCommand } from "./stats.js"
 export async function handleCompressCommand(
     input: { command: string; sessionID: string; arguments: string },
     dependencies: {
-        client: any
+        client: PluginClient
         stateManager: SessionStateManager
         logger: Logger
         config: PluginConfig

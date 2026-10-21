@@ -19,16 +19,18 @@ export function isAnthropicProvider(providerId: string | undefined): boolean {
     return providerId.toLowerCase().includes("anthropic")
 }
 
-export function getCurrentParams(
-    state: SessionState,
-    messages: WithParts[],
-    logger: Logger,
-): {
+export interface CurrentParams {
     providerId: string | undefined
     modelId: string | undefined
     agent: string | undefined
     variant: string | undefined
-} {
+}
+
+export function getCurrentParams(
+    state: SessionState,
+    messages: WithParts[],
+    logger: Logger,
+): CurrentParams {
     const userMsg = getLastUserMessage(messages)
     if (!userMsg) {
         logger.debug("No user message found when determining current params")

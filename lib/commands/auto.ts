@@ -13,10 +13,10 @@ import {
 import { saveSessionState } from "../state/persistence.js"
 import { getCurrentParams } from "../token-utils.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
-import { listSessionMessages } from "../sdk/client.js"
+import { listSessionMessages, type PluginClient } from "../sdk/client.js"
 
 export interface AutoCommandContext {
-    client: any
+    client: PluginClient
     stateManager: SessionStateManager
     state: SessionState
     config: PluginConfig

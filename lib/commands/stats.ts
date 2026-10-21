@@ -4,6 +4,7 @@
  */
 
 import type { Logger } from "../logger.js"
+import type { PluginClient } from "../sdk/client.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { formatTokenCount } from "../ui/utils.js"
@@ -11,7 +12,7 @@ import { loadAllSessionStats, type AggregatedStats } from "../state/persistence.
 import { getCurrentParams } from "../token-utils.js"
 
 export interface StatsCommandContext {
-    client: any
+    client: PluginClient
     state: SessionState
     logger: Logger
     sessionId: string

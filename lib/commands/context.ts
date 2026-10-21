@@ -38,6 +38,7 @@
  */
 
 import type { Logger } from "../logger.js"
+import type { PluginClient } from "../sdk/client.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { formatTokenCount } from "../ui/utils.js"
@@ -47,7 +48,7 @@ import { countTokens, getCurrentParams } from "../token-utils.js"
 import type { AssistantMessage, TextPart, ToolPart } from "../state/types.js"
 
 export interface ContextCommandContext {
-    client: any
+    client: PluginClient
     state: SessionState
     logger: Logger
     sessionId: string

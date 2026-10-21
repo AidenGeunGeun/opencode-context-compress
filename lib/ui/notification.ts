@@ -2,7 +2,8 @@ import type { Logger } from "../logger.js"
 import type { SessionState } from "../state/index.js"
 import { formatStatsHeader, formatTokenCount, formatProgressBar } from "./utils.js"
 import type { PluginConfig } from "../config.js"
-import { promptSession, showToast } from "../sdk/client.js"
+import { type PluginClient, promptSession, showToast } from "../sdk/client.js"
+import type { CurrentParams } from "../token-utils.js"
 import type { CompressToolContext } from "../tools/types.js"
 
 export async function sendSquashNotification(
@@ -54,14 +55,14 @@ function truncateToastBody(body: string, maxLines: number = TOAST_BODY_MAX_LINES
     }
     const kept = lines.slice(0, maxLines - 1)
     const remaining = lines.length - maxLines + 1
-    return kept.join("\n") + `\n... and ${remaining} more`
+    return `${kept.join("\n")}\n... and ${remaining} more`
 }
 
 function truncateToastSummary(summary: string, maxChars: number = TOAST_SUMMARY_MAX_CHARS): string {
     if (summary.length <= maxChars) {
         return summary
     }
-    return summary.slice(0, maxChars - 3) + "..."
+    return `${summary.slice(0, maxChars - 3)}...`
 }
 
 function buildMinimalMessage(state: SessionState): string {
@@ -74,8 +75,8 @@ function buildDetailedMessage(args: {
     itemCount: number
     topic: string
     summary: string
-    startResult: any
-    endResult: any
+    startResult: { messageIndex: number }
+    endResult: { messageIndex: number }
     totalMessages: number
     rangeTokenEstimate?: number
     showCompression: boolean
@@ -119,7 +120,7 @@ function buildDetailedMessage(args: {
 }
 
 export async function sendCompressNotification(
-    client: any,
+    client: PluginClient,
     logger: Logger,
     config: PluginConfig,
     state: SessionState,
@@ -128,10 +129,10 @@ export async function sendCompressNotification(
     itemCount: number,
     topic: string,
     summary: string,
-    startResult: any,
-    endResult: any,
+    startResult: { messageIndex: number },
+    endResult: { messageIndex: number },
     totalMessages: number,
-    params: any,
+    params: Partial<CurrentParams>,
     rangeTokenEstimate?: number,
 ): Promise<boolean> {
     if (config.notification === "off") {
@@ -184,10 +185,10 @@ export async function sendCompressNotification(
 }
 
 export async function sendIgnoredMessage(
-    client: any,
+    client: PluginClient,
     sessionID: string,
     text: string,
-    params: any,
+    params: Partial<CurrentParams>,
     logger: Logger,
 ): Promise<void> {
     const agent = params.agent || undefined
@@ -215,7 +216,9 @@ export async function sendIgnoredMessage(
                 },
             ],
         })
-    } catch (error: any) {
-        logger.error("Failed to send notification", { error: error.message })
+    } catch (error) {
+        logger.error("Failed to send notification", {
+            error: error instanceof Error ? error.message : String(error),
+        })
     }
 }

@@ -5,14 +5,15 @@ import type { SessionStateManager } from "../state/state.js"
 import { commitDurableSessionState } from "../state/state.js"
 import type { PluginConfig } from "../config.js"
 import { renderSystemPrompt } from "../prompts/index.js"
-import { getCurrentParams } from "../token-utils.js"
+import { type CurrentParams, getCurrentParams } from "../token-utils.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
-import { promptSession, showToast } from "../sdk/client.js"
+import { isRecord } from "../shared-utils.js"
+import { type PluginClient, promptSession, showToast } from "../sdk/client.js"
 
 export interface ManageCommandContext {
-    client: any
+    client: PluginClient
     stateManager: SessionStateManager
     state: SessionState
     config: PluginConfig
@@ -23,7 +24,7 @@ export interface ManageCommandContext {
 }
 
 export interface ManagementTurnStartContext {
-    client: any
+    client: PluginClient
     stateManager: SessionStateManager
     state: SessionState
     logger: Logger
@@ -130,10 +131,10 @@ export function generateAutomaticPromptMessageId(
  * recently created in the session (e.g. a mid-turn ignored status notification), not
  * necessarily the message that actually started this turn.
  */
-function extractPromptParentIdForLogging(promptResult: any): string | undefined {
-    const result = promptResult?.data ?? promptResult
-    const info = result?.info
-    if (!info || typeof info !== "object") {
+function extractPromptParentIdForLogging(promptResult: unknown): string | undefined {
+    const result = isRecord(promptResult) ? (promptResult.data ?? promptResult) : undefined
+    const info = isRecord(result) ? result.info : undefined
+    if (!isRecord(info)) {
         return undefined
     }
 
@@ -141,11 +142,11 @@ function extractPromptParentIdForLogging(promptResult: any): string | undefined 
 }
 
 export async function sendManageFailureFeedback(
-    client: any,
+    client: PluginClient,
     logger: Logger,
     sessionId: string,
     message: string,
-    params: any,
+    params: Partial<CurrentParams>,
 ): Promise<void> {
     if (
         await showToast(client, {
@@ -292,7 +293,7 @@ export async function stageManagementTurnWithinLock(
             : undefined
 
     return async () => {
-        let promptResult: any
+        let promptResult: unknown
         try {
             promptResult = await promptSession(client, {
                 sessionId,
@@ -303,7 +304,9 @@ export async function stageManagementTurnWithinLock(
                 messageId: triggerMessageId,
                 metadata: { "opencode.context-compress.management": true },
             })
-        } catch (err: any) {
+        } catch (err) {
+            const errorMessage =
+                isRecord(err) && typeof err.message === "string" ? err.message : undefined
             const rollbackResult = await stateManager.runExclusive(sessionId, async () => {
                 const currentTurn = state.managementTurns.find(
                     (turn) => turn.triggerMessageId === triggerMessageId,
@@ -323,7 +326,7 @@ export async function stageManagementTurnWithinLock(
                 commitDurableSessionState(state, rollbackState)
                 return "removed" as const
             })
-            logger.error("Manage command failed", { error: err?.message })
+            logger.error("Manage command failed", { error: errorMessage })
             if (rollbackResult === "completed") {
                 logger.warn(
                     "Manage prompt failed after compression completed; preserving the completed turn marker",
@@ -343,10 +346,10 @@ export async function stageManagementTurnWithinLock(
                 logger,
                 sessionId,
                 rollbackResult === "completed"
-                    ? `The compression management prompt reported an error after compression completed: ${err?.message || "the prompt failed."} The completed state was preserved.`
+                    ? `The compression management prompt reported an error after compression completed: ${errorMessage || "the prompt failed."} The completed state was preserved.`
                     : rollbackResult === "removed"
-                      ? `Compression management could not start: ${err?.message || "the prompt failed."}`
-                      : `Compression management could not start: ${err?.message || "the prompt failed."} Its saved cleanup marker could not be removed.`,
+                      ? `Compression management could not start: ${errorMessage || "the prompt failed."}`
+                      : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`,
                 currentParams,
             )
             return false

@@ -1,5 +1,6 @@
 import type { Logger } from "../logger.js"
 import type { PluginConfig } from "../config.js"
+import type { PluginClient } from "../sdk/client.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import type { SessionStateManager } from "../state/state.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
@@ -13,7 +14,7 @@ import {
 } from "./manage.js"
 
 export interface SquashCommandContext {
-    client: any
+    client: PluginClient
     stateManager: SessionStateManager
     state: SessionState
     config: PluginConfig
