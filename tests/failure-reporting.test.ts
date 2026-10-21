@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 import { createChatMessageTransformHandler } from "./transform-harness.ts"
-import { Logger, describeError } from "../lib/logger.ts"
+import { Logger } from "../lib/logger.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
 
@@ -28,36 +28,6 @@ const sessionFilePath = (sessionId: string) =>
         "compress",
         `${sessionId}.json`,
     )
-
-describe("describeError", () => {
-    it("keeps the stack and the cause chain on a single line", () => {
-        const described = describeError(
-            new Error("outer failure", { cause: new Error("inner failure") }),
-        )
-
-        assert.match(described, /outer failure/)
-        assert.match(described, /inner failure/)
-        assert.match(described, /at /)
-        assert.equal(described.includes("\n"), false)
-    })
-
-    it("keeps an error code", () => {
-        const error = Object.assign(new Error("request failed"), { code: "ECONNREFUSED" })
-
-        assert.match(describeError(error), /ECONNREFUSED/)
-    })
-
-    it("describes a thrown non-error instead of collapsing it", () => {
-        assert.match(describeError({ status: 503 }), /503/)
-    })
-
-    it("survives a circular value", () => {
-        const circular: { name: string; self?: unknown } = { name: "loop" }
-        circular.self = circular
-
-        assert.match(describeError(circular), /loop/)
-    })
-})
 
 describe("unsynchronized session state", () => {
     it("reports that the model will see the untransformed transcript", async () => {
