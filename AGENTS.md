@@ -59,10 +59,14 @@ ignore retired fields.
 ## Validation
 
 ```bash
-npm run typecheck   # generates prompts, then tsc --noEmit
+npm run check       # Biome format and lint, then typecheck of source, tests, and scripts
+npm run fix         # apply Biome formatting and safe fixes
 npm run build       # clean && tsc && bun build index.ts → dist (ESM)
 npm test            # builds first, then node --import tsx --test tests/*.test.ts
 ```
+
+Every change passes `npm run check` with zero diagnostics, tests included. Fix findings instead of
+adding suppressions or relaxing rules.
 
 Keep `dist/index.js` at the root of `dist`, because OpenCode configuration points to the `dist`
 directory. For host smoke tests, isolate both `XDG_CONFIG_HOME` and `XDG_DATA_HOME`; never use live

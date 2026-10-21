@@ -68,7 +68,7 @@ overrides remain compatible. Retired Goal and persona-specific fields are ignore
 ## Validate
 
 ```bash
-npm run typecheck
+npm run check
 npm test
 ```
 
