@@ -5,6 +5,18 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
+import type { ModelMessage } from "../lib/messages/v2-transform.ts"
+import {
+    type CommandFake,
+    type ContextMessage,
+    fakeSession,
+    hostContext,
+    type ModelHookInput,
+    type SyntheticInput,
+    sessionInfo,
+    type ToolFake,
+} from "./helpers.ts"
+
 describe("built OpenCode 2.0.13 Promise plugin", () => {
     it("loads and executes command, context, generate, and tool paths", async () => {
         const root = await mkdtemp(join(tmpdir(), "context-compress-2013-"))
@@ -25,18 +37,20 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
         try {
             const staged = process.env.OPENCODE_COMPRESS_TEST_BUNDLE
             const bundle = staged ? pathToFileURL(staged).href : "../dist/index.js"
-            const { default: plugin } = await import(`${bundle}?test=${Date.now()}`)
+            const { default: plugin }: typeof import("../index.ts") = await import(
+                `${bundle}?test=${Date.now()}`
+            )
             assert.equal(plugin.id, "opencode-context-compress")
             assert.equal(typeof plugin.setup, "function")
             assert.equal("server" in plugin, false)
 
-            const commands: any[] = []
-            const tools: any[] = []
-            const hooks = new Map<string, (input: any) => Promise<void>>()
-            const synthetic: any[] = []
+            const commands: CommandFake[] = []
+            const tools: ToolFake[] = []
+            const hooks = new Map<string, (input: ModelHookInput) => Promise<void> | void>()
+            const synthetic: SyntheticInput[] = []
             const registration = { dispose: async () => undefined }
             const sessionID = "session-2013-smoke"
-            const projected = [
+            const projected: ContextMessage[] = [
                 { id: "old-user", type: "user", text: "older", time: { created: 1 } },
                 {
                     id: "old-assistant",
@@ -62,6 +76,7 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                             state: {
                                 status: "running",
                                 input: { summary: "Earlier", topic: "Earlier" },
+                                metadata: {},
                             },
                             time: { created: 5 },
                         },
@@ -71,44 +86,46 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                 },
             ]
             const events = { async *[Symbol.asyncIterator]() {} }
-            const cleanup = await plugin.setup({
-                location: { directory: root },
-                command: {
-                    transform: async (callback: any) => {
-                        callback({ add: (command: any) => commands.push(command) })
-                        return registration
+            const cleanup = await plugin.setup(
+                hostContext({
+                    location: { directory: root },
+                    command: {
+                        transform: async (callback) => {
+                            callback({ add: (command) => commands.push(command) })
+                            return registration
+                        },
                     },
-                },
-                tool: {
-                    transform: async (callback: any) => {
-                        callback({ add: (tool: any) => tools.push(tool) })
-                        return registration
+                    tool: {
+                        transform: async (callback) => {
+                            callback({ add: (tool) => tools.push(tool) })
+                            return registration
+                        },
                     },
-                },
-                session: {
-                    context: async () => projected,
-                    wait: async () => undefined,
-                    synthetic: async (input: any) => void synthetic.push(input),
-                    prompt: async () => undefined,
-                    get: async () => ({ location: { directory: root } }),
-                    hook: async (name: string, callback: any) => {
-                        hooks.set(name, callback)
-                        return registration
+                    session: {
+                        ...fakeSession({
+                            context: async () => projected,
+                            synthetic: (input) => synthetic.push(input),
+                        }),
+                        get: async () => sessionInfo({ location: { directory: root } }),
+                        hook: async (name, callback) => {
+                            hooks.set(name, callback)
+                            return registration
+                        },
                     },
-                },
-                model: {
-                    list: async () => ({
-                        data: [
-                            {
-                                id: "gpt-test",
-                                providerID: "openai",
-                                limit: { context: 1000 },
-                            },
-                        ],
-                    }),
-                },
-                event: { subscribe: () => events },
-            } as any)
+                    model: {
+                        list: async () => ({
+                            data: [
+                                {
+                                    id: "gpt-test",
+                                    providerID: "openai",
+                                    limit: { context: 1000 },
+                                },
+                            ],
+                        }),
+                    },
+                    event: { subscribe: () => events },
+                }),
+            )
 
             assert.deepEqual(
                 commands.map((command) => command.name),
@@ -128,7 +145,7 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
             assert.match(synthetic[0].text, /Compress commands/)
             assert.equal(synthetic[0].resume, false)
 
-            const modelMessages = [
+            const modelMessages: ModelMessage[] = [
                 { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
                 {
                     id: "old-assistant",
@@ -151,8 +168,7 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                 system: [],
                 messages: modelMessages,
                 tools: {},
-                generation: {},
-                providerOptions: {},
+                options: {},
             })
             assert.equal(modelMessages.length, 4)
 
@@ -179,8 +195,7 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                 system: [],
                 messages: sideMessages,
                 tools: {},
-                generation: {},
-                providerOptions: {},
+                options: {},
             })
             assert.equal(
                 sideMessages.some(

@@ -1,15 +1,12 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import {
-    listSessionMessages,
-    pluginClient,
-    promptSession,
-    setSessionSelection,
-} from "../lib/sdk/client.ts"
+import { listSessionMessages, promptSession, setSessionSelection } from "../lib/sdk/client.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { fakeClient } from "./helpers.ts"
 
 describe("beta Promise session adapter", () => {
     it("projects session.context history with the current selection", async () => {
-        const client = pluginClient({
+        const client = fakeClient({
             context: async () => [
                 { id: "user", type: "user", text: "hello", time: { created: 1 } },
                 { id: "idle", type: "idle", outcome: "failed", time: { created: 2 } },
@@ -23,16 +20,13 @@ describe("beta Promise session adapter", () => {
                     time: { created: 2, completed: 3 },
                 },
             ],
-            prompt: async () => undefined,
-            synthetic: async () => undefined,
-            wait: async () => undefined,
-        } as any)
+        })
         setSessionSelection(client, "session", {
             agent: "build",
             model: { providerID: "openai", id: "gpt-test", variant: "high" },
         })
 
-        const messages = (await listSessionMessages(client, "session")) as any[]
+        const messages = (await listSessionMessages(client, "session")) as WithParts[]
         assert.deepEqual(
             messages.map((message) => message.info.id),
             ["user", "assistant"],
@@ -43,12 +37,10 @@ describe("beta Promise session adapter", () => {
 
     it("uses prompt for model work and admit-only synthetic feedback", async () => {
         const calls: Array<[string, unknown]> = []
-        const client = pluginClient({
-            context: async () => [],
-            prompt: async (input) => void calls.push(["prompt", input]),
-            synthetic: async (input) => void calls.push(["synthetic", input]),
-            wait: async (input) => void calls.push(["wait", input]),
-        } as any)
+        const client = fakeClient({
+            prompt: (input) => calls.push(["prompt", input]),
+            synthetic: (input) => calls.push(["synthetic", input]),
+        })
 
         await promptSession(client, {
             sessionId: "session",

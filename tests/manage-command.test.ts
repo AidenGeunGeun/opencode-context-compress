@@ -12,14 +12,12 @@ import {
     handleManageCommand,
 } from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
+import { Logger } from "../lib/logger.ts"
 import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { fakeClient, type PromptInput, type SyntheticInput } from "./helpers.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
 it("keeps automatic admission identity stable across unrelated prompt creation", () => {
     const trigger = {
@@ -78,7 +76,7 @@ const cleanupSessionFile = async (sessionId: string) => {
     }
 }
 
-const createUserMessage = (sessionID: string) => ({
+const createUserMessage = (sessionID: string): WithParts => ({
     info: {
         id: "m1",
         role: "user" as const,
@@ -93,17 +91,6 @@ const createUserMessage = (sessionID: string) => ({
     parts: [{ type: "text", text: "Please manage context" }],
 })
 
-const createPromptResponse = (assistantId: string, userId: string) => ({
-    data: {
-        info: {
-            id: assistantId,
-            role: "assistant",
-            parentID: userId,
-        },
-        parts: [],
-    },
-})
-
 describe("handleManageCommand", () => {
     it("does not open a management turn when compress is denied", async () => {
         const sessionId = `session-manage-tool-denied-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -112,16 +99,13 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         let promptCalls = 0
-        const feedback: any[] = []
-        const client = {
-            session: {
-                wait: async () => undefined,
-                synthetic: async (input: any) => feedback.push(input),
-                prompt: async () => {
-                    promptCalls++
-                },
+        const feedback: SyntheticInput[] = []
+        const client = fakeClient({
+            synthetic: (input) => feedback.push(input),
+            prompt: () => {
+                promptCalls++
             },
-        }
+        })
         const deniedConfig: PluginConfig = {
             ...config,
             tools: {
@@ -137,7 +121,7 @@ describe("handleManageCommand", () => {
             config: deniedConfig,
             logger,
             sessionId,
-            messages: [createUserMessage(sessionId)] as any,
+            messages: [createUserMessage(sessionId)],
             arguments: "manage",
         })
 
@@ -155,16 +139,12 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
 
-        let promptBody: any
-        const generatedAssistantId = "msg_01900000000000000000000002"
-        const client = {
-            session: {
-                prompt: async (input: any) => {
-                    promptBody = input
-                    return createPromptResponse(generatedAssistantId, input.id)
-                },
+        let promptBody: PromptInput | undefined
+        const client = fakeClient({
+            prompt: (input) => {
+                promptBody = input
             },
-        }
+        })
 
         try {
             await handleManageCommand({
@@ -174,10 +154,11 @@ describe("handleManageCommand", () => {
                 config,
                 logger,
                 sessionId,
-                messages: [createUserMessage(sessionId)] as any,
+                messages: [createUserMessage(sessionId)],
                 arguments: "manage",
             })
 
+            assert.ok(promptBody)
             const reminderText = promptBody.text
             const fullPayload = promptBody.text
             assert.match(reminderText, /<system-reminder>/)
@@ -188,7 +169,7 @@ describe("handleManageCommand", () => {
             assert.match(reminderText, /A failure means nothing was compressed/)
             assert.doesNotMatch(reminderText, /compress_map|context-map/i)
             assert.doesNotMatch(fullPayload, /compress_map|context-map/i)
-            assert.match(promptBody.id, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+            assert.match(promptBody.id ?? "", /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
             assert.equal(state.managementTurns.length, 1)
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
             assert.deepEqual(promptBody.metadata, { "opencode.context-compress.management": true })
@@ -211,16 +192,12 @@ describe("handleManageCommand", () => {
         state.persistenceSynchronized = true
 
         const misleadingNotificationId = "msg_01900000000000000000000099"
-        const generatedAssistantId = "msg_01900000000000000000000011"
-        let promptBody: any
-        const client = {
-            session: {
-                prompt: async (input: any) => {
-                    promptBody = input
-                    return createPromptResponse(generatedAssistantId, misleadingNotificationId)
-                },
+        let promptBody: PromptInput | undefined
+        const client = fakeClient({
+            prompt: (input) => {
+                promptBody = input
             },
-        }
+        })
 
         try {
             await handleManageCommand({
@@ -230,12 +207,12 @@ describe("handleManageCommand", () => {
                 config,
                 logger,
                 sessionId,
-                messages: [createUserMessage(sessionId)] as any,
+                messages: [createUserMessage(sessionId)],
                 arguments: "manage",
             })
 
             assert.equal(state.managementTurns.length, 1)
-            assert.ok(promptBody.id, "expected a generated message ID to be sent")
+            assert.ok(promptBody?.id, "expected a generated message ID to be sent")
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
             assert.notEqual(state.managementTurns[0].triggerMessageId, misleadingNotificationId)
         } finally {
@@ -249,17 +226,14 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
 
-        const feedback: any[] = []
+        const feedback: SyntheticInput[] = []
         let promptCalls = 0
-        const client = {
-            session: {
-                wait: async () => undefined,
-                synthetic: async (input: any) => feedback.push(input),
-                prompt: async () => {
-                    promptCalls++
-                },
+        const client = fakeClient({
+            synthetic: (input) => feedback.push(input),
+            prompt: () => {
+                promptCalls++
             },
-        }
+        })
 
         await handleManageCommand({
             client,
@@ -268,7 +242,7 @@ describe("handleManageCommand", () => {
             config,
             logger,
             sessionId,
-            messages: [createUserMessage(sessionId)] as any,
+            messages: [createUserMessage(sessionId)],
             arguments: "manage",
         })
 
@@ -283,17 +257,14 @@ describe("handleManageCommand", () => {
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
-        const feedback: any[] = []
+        const feedback: SyntheticInput[] = []
         let promptCalls = 0
-        const client = {
-            session: {
-                wait: async () => undefined,
-                synthetic: async (input: any) => feedback.push(input),
-                prompt: async () => {
-                    promptCalls++
-                },
+        const client = fakeClient({
+            synthetic: (input) => feedback.push(input),
+            prompt: () => {
+                promptCalls++
             },
-        }
+        })
 
         await handleManageCommand({
             client,
@@ -302,7 +273,7 @@ describe("handleManageCommand", () => {
             config,
             logger,
             sessionId,
-            messages: [createUserMessage(sessionId)] as any,
+            messages: [createUserMessage(sessionId)],
             arguments: "manage",
         })
 
@@ -320,18 +291,15 @@ describe("handleManageCommand", () => {
         state.initialized = true
         state.persistenceSynchronized = true
 
-        const feedback: any[] = []
+        const feedback: SyntheticInput[] = []
         let promptCalls = 0
-        const client = {
-            session: {
-                wait: async () => undefined,
-                synthetic: async (input: any) => feedback.push(input),
-                prompt: async () => {
-                    promptCalls++
-                    throw new Error("agent unavailable")
-                },
+        const client = fakeClient({
+            synthetic: (input) => feedback.push(input),
+            prompt: () => {
+                promptCalls++
+                throw new Error("agent unavailable")
             },
-        }
+        })
 
         try {
             await handleManageCommand({
@@ -341,7 +309,7 @@ describe("handleManageCommand", () => {
                 config,
                 logger,
                 sessionId,
-                messages: [createUserMessage(sessionId)] as any,
+                messages: [createUserMessage(sessionId)],
                 arguments: "manage",
             })
 

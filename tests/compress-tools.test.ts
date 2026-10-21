@@ -6,17 +6,15 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
+import { Logger } from "../lib/logger.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
 import { createCompressTool, resolveCompressionBoundary } from "../lib/tools/compress.ts"
+import type { ToolExecutionContext } from "../lib/tools/types.ts"
+import { fakeClient } from "./helpers.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    saveContext: async () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
 const baseConfig: PluginConfig = {
     enabled: true,
@@ -40,7 +38,7 @@ function textMessage(
     sessionID: string,
     role: "user" | "assistant",
     options: { parentID?: string; stepStart?: boolean } = {},
-) {
+): WithParts {
     return {
         info: {
             id,
@@ -52,11 +50,19 @@ function textMessage(
                 ...(role === "assistant" ? { completed: Date.now() } : {}),
             },
         },
-        parts: [...(options.stepStart ? [{ type: "step-start" }] : []), { type: "text", text: id }],
-    } as any
+        parts: [
+            ...(options.stepStart ? [{ type: "step-start" as const }] : []),
+            { type: "text", text: id },
+        ],
+    }
 }
 
-function compressCallMessage(id: string, sessionID: string, parentID: string, callID: string) {
+function compressCallMessage(
+    id: string,
+    sessionID: string,
+    parentID: string,
+    callID: string,
+): WithParts {
     return {
         info: {
             id,
@@ -73,29 +79,15 @@ function compressCallMessage(id: string, sessionID: string, parentID: string, ca
                 state: { status: "running", input: {} },
             },
         ],
-    } as any
-}
-
-function toolContext(sessionID: string, messageID: string, callID: string) {
-    return {
-        sessionID,
-        messageID,
-        callID,
-        agent: "agent-test",
-        directory: "/tmp",
-        worktree: "/tmp",
-        abort: new AbortController().signal,
-        metadata: () => {},
-    } as any
-}
-
-function client(messages: any[]) {
-    return {
-        session: {
-            get: async () => ({ data: {} }),
-            context: async () => messages,
-        },
     }
+}
+
+function toolContext(sessionID: string, messageID: string, callID: string): ToolExecutionContext {
+    return { sessionID, messageID, callID, agent: "agent-test" }
+}
+
+function client(messages: WithParts[]) {
+    return fakeClient({ context: async () => messages })
 }
 
 function sessionFile(sessionId: string) {
@@ -124,7 +116,7 @@ async function executePath(source: "normal" | "manual" | "automatic", protectedT
         textMessage("recent-step", sessionId, "assistant", { stepStart: true }),
     ]
     let owner = textMessage("current-user", sessionId, "user")
-    let messages: any[]
+    let messages: WithParts[]
     const stateManager = new SessionStateManager()
     const state = stateManager.get(sessionId)
     state.initialized = true
@@ -223,11 +215,11 @@ describe("single-tool compression", () => {
                 const transformed = structuredClone(result.messages)
                 applyCompressTransforms(result.state, logger, transformed)
                 assert.equal(
-                    transformed.some((message: any) => message.info.id === "recent-step"),
+                    transformed.some((message) => message.info.id === "recent-step"),
                     true,
                 )
                 assert.equal(
-                    transformed.some((message: any) => message.info.id === "old-step"),
+                    transformed.some((message) => message.info.id === "old-step"),
                     false,
                 )
             } finally {
@@ -415,14 +407,11 @@ describe("single-tool compression", () => {
         const state = stateManager.get(sessionId)
         state.initialized = true
         const tool = createCompressTool({
-            client: {
-                session: {
-                    get: async () => ({ data: {} }),
-                    context: async () => {
-                        throw new Error("offline")
-                    },
+            client: fakeClient({
+                context: async () => {
+                    throw new Error("offline")
                 },
-            },
+            }),
             stateManager,
             logger,
             config: baseConfig,

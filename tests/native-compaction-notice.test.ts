@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { it } from "node:test"
 
 import { setup } from "../lib/plugin.ts"
+import { fakeSession, hostContext, type SyntheticInput, sessionInfo } from "./helpers.ts"
 
 it("warns the owning session about native auto-compaction but not a manual reset", async () => {
     const root = await mkdtemp(join(tmpdir(), "context-compress-native-"))
@@ -13,7 +14,7 @@ it("warns the owning session about native auto-compaction but not a manual reset
     process.env.XDG_CONFIG_HOME = join(root, "config")
     process.env.XDG_DATA_HOME = join(root, "data")
     await mkdir(join(root, "config", "opencode"), { recursive: true })
-    const synthetic: any[] = []
+    const synthetic: SyntheticInput[] = []
     const registration = { dispose: async () => undefined }
     const compactionStarted = (sessionID: string, reason: string, directory = root) => ({
         type: "session.compaction.started",
@@ -34,20 +35,20 @@ it("warns the owning session about native auto-compaction but not a manual reset
     }
 
     try {
-        const cleanup = await setup({
-            location: { directory: root },
-            command: { transform: async () => registration },
-            tool: { transform: async () => registration },
-            session: {
-                context: async () => [],
-                synthetic: async (input: any) => void synthetic.push(input),
-                prompt: async () => undefined,
-                get: async () => ({ location: { directory: root } }),
-                hook: async () => registration,
-            },
-            model: { list: async () => ({ data: [] }) },
-            event: { subscribe: () => events },
-        } as any)
+        const cleanup = await setup(
+            hostContext({
+                location: { directory: root },
+                command: { transform: async () => registration },
+                tool: { transform: async () => registration },
+                session: {
+                    ...fakeSession({ synthetic: (input) => synthetic.push(input) }),
+                    get: async () => sessionInfo({ location: { directory: root } }),
+                    hook: async () => registration,
+                },
+                model: { list: async () => ({ data: [] }) },
+                event: { subscribe: () => events },
+            }),
+        )
         await allProcessed
         await cleanup()
 

@@ -7,15 +7,13 @@ import { dirname, join } from "node:path"
 
 import { handleCompressCommand } from "../lib/commands/route.ts"
 import { DEFAULT_AUTO_COMPRESSION, type PluginConfig } from "../lib/config.ts"
+import { Logger } from "../lib/logger.ts"
 import { loadSessionState } from "../lib/state/persistence.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { fakeClient, type SyntheticInput } from "./helpers.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
 const config: PluginConfig = {
     enabled: true,
@@ -45,7 +43,7 @@ const cleanupSessionFile = async (sessionId: string) => {
     if (existsSync(path)) await rm(path)
 }
 
-const userMessage = (id: string, sessionID: string) => ({
+const userMessage = (id: string, sessionID: string): WithParts => ({
     info: {
         id,
         sessionID,
@@ -57,7 +55,7 @@ const userMessage = (id: string, sessionID: string) => ({
     parts: [{ type: "text", text: "Continue the task" }],
 })
 
-const assistantMessage = (id: string, sessionID: string) => ({
+const assistantMessage = (id: string, sessionID: string): WithParts => ({
     info: {
         id,
         sessionID,
@@ -70,18 +68,12 @@ const assistantMessage = (id: string, sessionID: string) => ({
     parts: [{ type: "text", text: "Done" }],
 })
 
-function createHarness(sessionId: string, messages: any[], configOverride = config) {
-    const ignoredPrompts: any[] = []
-    const client = {
-        session: {
-            get: async () => ({ data: {} }),
-            context: async () => messages,
-            wait: async () => undefined,
-            synthetic: async (input: any) => {
-                ignoredPrompts.push(input)
-            },
-        },
-    }
+function createHarness(sessionId: string, messages: WithParts[], configOverride = config) {
+    const ignoredPrompts: SyntheticInput[] = []
+    const client = fakeClient({
+        context: async () => messages,
+        synthetic: (input) => ignoredPrompts.push(input),
+    })
     const stateManager = new SessionStateManager()
     const run = async (arguments_: string) => {
         await handleCompressCommand(
@@ -91,7 +83,7 @@ function createHarness(sessionId: string, messages: any[], configOverride = conf
         const call = ignoredPrompts.at(-1)
         assert.equal(call?.metadata?.["opencode.context-compress.ignored"], true)
         assert.equal(call?.resume, false)
-        return call?.text as string
+        return call?.text ?? ""
     }
 
     return { stateManager, run }
@@ -154,7 +146,7 @@ describe("session automatic-compression commands", () => {
             assert.match(status, /75% \(session override\)/)
             assert.match(status, /2 assistant responses remaining/)
 
-            const loaded = await loadSessionState(sessionId, logger, messages as any)
+            const loaded = await loadSessionState(sessionId, logger, messages)
             assert.equal(loaded.status, "loaded")
             if (loaded.status !== "loaded") throw new Error("expected persisted state")
             assert.equal(loaded.state.autoCompressionEnabledOverride, false)

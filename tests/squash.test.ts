@@ -7,21 +7,19 @@ import { join } from "node:path"
 
 import type { PluginConfig } from "../lib/config.ts"
 import { extractSquashCommandResidual, handleSquashCommand } from "../lib/commands/squash.ts"
+import { Logger } from "../lib/logger.ts"
 import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
 import { formatCompressBlockContent, orderCompressBlocks } from "../lib/messages/blocks.ts"
 import { loadSessionState } from "../lib/state/persistence.ts"
-import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
+import { SessionStateManager } from "../lib/state/state.ts"
+import type { CompressSummary, WithParts } from "../lib/state/types.ts"
 import { estimateTokensBatch } from "../lib/token-utils.ts"
 import { createCompressTool } from "../lib/tools/compress.ts"
-import { createSquashTool } from "../lib/tools/squash.ts"
+import { createSquashTool, type SquashInput } from "../lib/tools/squash.ts"
+import type { ToolExecutionContext } from "../lib/tools/types.ts"
+import { fakeClient, type PromptInput, partText, type SyntheticInput } from "./helpers.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    saveContext: async () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
 const config: PluginConfig = {
     enabled: true,
@@ -45,7 +43,7 @@ function textMessage(
     sessionID: string,
     role: "user" | "assistant" = "user",
     text = id,
-) {
+): WithParts {
     return {
         info: {
             id,
@@ -60,10 +58,15 @@ function textMessage(
             time: { created: Date.now() },
         },
         parts: [{ type: "text", text }],
-    } as any
+    }
 }
 
-function squashCallMessage(id: string, sessionID: string, parentID: string, callID: string) {
+function squashCallMessage(
+    id: string,
+    sessionID: string,
+    parentID: string,
+    callID: string,
+): WithParts {
     return {
         info: {
             id,
@@ -83,10 +86,15 @@ function squashCallMessage(id: string, sessionID: string, parentID: string, call
                 },
             },
         ],
-    } as any
+    }
 }
 
-function completedToolMessage(id: string, sessionID: string, callID: string, output: string) {
+function completedToolMessage(
+    id: string,
+    sessionID: string,
+    callID: string,
+    output: string,
+): WithParts {
     return {
         info: { id, role: "assistant", sessionID, time: { created: Date.now() } },
         parts: [
@@ -97,10 +105,15 @@ function completedToolMessage(id: string, sessionID: string, callID: string, out
                 state: { status: "completed", input: { filePath: "/tmp/example" }, output },
             },
         ],
-    } as any
+    }
 }
 
-function compressCallMessage(id: string, sessionID: string, parentID: string, callID: string) {
+function compressCallMessage(
+    id: string,
+    sessionID: string,
+    parentID: string,
+    callID: string,
+): WithParts {
     return {
         ...squashCallMessage(id, sessionID, parentID, callID),
         parts: [
@@ -111,29 +124,15 @@ function compressCallMessage(id: string, sessionID: string, parentID: string, ca
                 state: { status: "running", input: {} },
             },
         ],
-    } as any
-}
-
-function toolContext(sessionID: string, messageID: string, callID: string) {
-    return {
-        sessionID,
-        messageID,
-        callID,
-        agent: "agent-test",
-        directory: "/tmp",
-        worktree: "/tmp",
-        abort: new AbortController().signal,
-        metadata: () => {},
-    } as any
-}
-
-function client(messages: any[]) {
-    return {
-        session: {
-            get: async () => ({ data: {} }),
-            context: async () => messages,
-        },
     }
+}
+
+function toolContext(sessionID: string, messageID: string, callID: string): ToolExecutionContext {
+    return { sessionID, messageID, callID, agent: "agent-test" }
+}
+
+function client(messages: WithParts[]) {
+    return fakeClient({ context: async () => messages })
 }
 
 function sessionFile(sessionId: string) {
@@ -170,8 +169,8 @@ function seedBlocks(
     sessionId: string,
     count: number,
 ) {
-    const messages: any[] = []
-    const summaries: any[] = []
+    const messages: WithParts[] = []
+    const summaries: CompressSummary[] = []
     for (let index = 0; index < count; index++) {
         const anchor = `block-${index}-user`
         const detail = `block-${index}-assistant`
@@ -222,16 +221,12 @@ async function executeSquashRange(
         "Keep this tool output literal",
     )
     const messages = [...seeded.messages, uncompressed, visibleTool, trigger, call]
-    const notifications: Array<{ text: string; resume: boolean }> = []
-    const toolClient = client(messages)
+    const notifications: SyntheticInput[] = []
     const tool = createSquashTool({
-        client: {
-            session: {
-                ...toolClient.session,
-                synthetic: async (input: { text: string; resume: boolean }) =>
-                    notifications.push(input),
-            },
-        },
+        client: fakeClient({
+            context: async () => messages,
+            synthetic: (input) => notifications.push(input),
+        }),
         stateManager: manager,
         logger,
         config: { ...config, notification },
@@ -309,14 +304,12 @@ describe("squash command", () => {
         const failedTrigger = textMessage("failed-squash", sessionId, "user", "/compress squash")
         state.managementTurns = [{ triggerMessageId: failedTrigger.info.id, source: "squash" }]
         const messages = [...seeded.messages, failedTrigger]
-        let promptBody: any
-        const commandClient = {
-            session: {
-                prompt: async (input: any) => {
-                    promptBody = input
-                },
+        let promptBody: PromptInput | undefined
+        const commandClient = fakeClient({
+            prompt: (input) => {
+                promptBody = input
             },
-        }
+        })
 
         try {
             await handleSquashCommand({
@@ -336,6 +329,7 @@ describe("squash command", () => {
                 state.managementTurns[1].retainedText,
                 "(do not update anything, as we've already updated all docs)",
             )
+            assert.ok(promptBody)
             assert.match(promptBody.text, /CONTEXT SQUASH REQUESTED/)
             assert.match(
                 promptBody.text,
@@ -371,17 +365,14 @@ describe("squash command", () => {
                 state.compressSummaries[1].anchorMessageId =
                     state.compressSummaries[0].anchorMessageId
             }
-            const feedback: any[] = []
+            const feedback: SyntheticInput[] = []
             let promptCalls = 0
-            const commandClient = {
-                session: {
-                    prompt: async () => {
-                        promptCalls++
-                    },
-                    wait: async () => undefined,
-                    synthetic: async (input: any) => feedback.push(input),
+            const commandClient = fakeClient({
+                prompt: () => {
+                    promptCalls++
                 },
-            }
+                synthetic: (input) => feedback.push(input),
+            })
             const commandConfig =
                 scenario === "denied"
                     ? {
@@ -419,19 +410,16 @@ describe("squash command", () => {
         state.persistenceSynchronized = true
         const seeded = seedBlocks(state, sessionId, 2)
         const before = durableSnapshot(state)
-        const feedback: any[] = []
+        const feedback: SyntheticInput[] = []
         let promptCalls = 0
 
         await handleSquashCommand({
-            client: {
-                session: {
-                    prompt: async () => {
-                        promptCalls++
-                    },
-                    wait: async () => undefined,
-                    synthetic: async (input: any) => feedback.push(input),
+            client: fakeClient({
+                prompt: () => {
+                    promptCalls++
                 },
-            },
+                synthetic: (input) => feedback.push(input),
+            }),
             stateManager: manager,
             state,
             config,
@@ -500,7 +488,7 @@ describe("squash tool", () => {
             const transformed = structuredClone(result.messages)
             applyCompressTransforms(result.state, logger, transformed)
             const blockTexts = transformed
-                .map((message: any) => message.parts[0]?.text)
+                .map((message) => partText(message.parts[0]))
                 .filter(
                     (text: unknown): text is string =>
                         typeof text === "string" &&
@@ -511,19 +499,23 @@ describe("squash tool", () => {
                 ["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8"],
             )
             assert.equal(
-                transformed.some((message: any) => message.info.id === "visible-uncompressed"),
+                transformed.some((message) => message.info.id === "visible-uncompressed"),
                 true,
             )
             const visibleTool = transformed.find(
-                (message: any) => message.info.id === "visible-tool-message",
+                (message) => message.info.id === "visible-tool-message",
             )
-            assert.equal(visibleTool?.parts[0].state.output, "Keep this tool output literal")
+            const visiblePart = visibleTool?.parts[0]
             assert.equal(
-                transformed.some((message: any) => message.info.id === "squash-trigger"),
+                visiblePart?.type === "tool" ? visiblePart.state.output : undefined,
+                "Keep this tool output literal",
+            )
+            assert.equal(
+                transformed.some((message) => message.info.id === "squash-trigger"),
                 false,
             )
             assert.equal(
-                transformed.some((message: any) => message.info.id === "squash-call"),
+                transformed.some((message) => message.info.id === "squash-call"),
                 true,
             )
 
@@ -533,15 +525,15 @@ describe("squash tool", () => {
             ]
             applyCompressTransforms(result.state, logger, laterMessages)
             assert.equal(
-                laterMessages.some((message: any) => message.info.id === "squash-trigger"),
+                laterMessages.some((message) => message.info.id === "squash-trigger"),
                 false,
             )
             assert.equal(
-                laterMessages.some((message: any) => message.info.id === "squash-call"),
+                laterMessages.some((message) => message.info.id === "squash-call"),
                 false,
             )
             assert.equal(
-                laterMessages.some((message: any) => message.info.id === "later-user"),
+                laterMessages.some((message) => message.info.id === "later-user"),
                 true,
             )
 
@@ -701,7 +693,7 @@ describe("squash tool", () => {
             { from: "b0", to: "b1", summary: "Summary", topic: "   " },
         ]) {
             await assert.rejects(
-                tool.execute(input as any, toolContext("blank-squash", "message", "call")),
+                tool.execute(input as SquashInput, toolContext("blank-squash", "message", "call")),
                 /squash requires/,
             )
         }
@@ -743,14 +735,11 @@ describe("squash tool", () => {
         fetchState.initialized = true
         const beforeFetch = durableSnapshot(fetchState)
         const fetchTool = createSquashTool({
-            client: {
-                session: {
-                    get: async () => ({ data: {} }),
-                    context: async () => {
-                        throw new Error("offline")
-                    },
+            client: fakeClient({
+                context: async () => {
+                    throw new Error("offline")
                 },
-            },
+            }),
             stateManager: fetchManager,
             logger,
             config,

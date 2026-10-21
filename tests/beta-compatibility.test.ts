@@ -7,21 +7,16 @@ import { describe, it } from "node:test"
 
 import { createAutomaticCompressionEventHandler } from "../lib/auto-compression.ts"
 import type { PluginConfig } from "../lib/config.ts"
+import { Logger } from "../lib/logger.ts"
 import { adaptProjectedMessages } from "../lib/messages/v2-adapter.ts"
 import { transformV2Messages } from "../lib/messages/v2-transform.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
-import { pluginClient } from "../lib/sdk/client.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
 import { createCompressTool } from "../lib/tools/compress.ts"
 import { createSquashTool } from "../lib/tools/squash.ts"
+import { type ContextMessage, fakeClient } from "./helpers.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    saveContext: async () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
 const config: PluginConfig = {
     enabled: true,
@@ -34,7 +29,7 @@ const config: PluginConfig = {
     tools: { compress: { permission: "allow", showCompression: false } },
 }
 
-function projected(sessionID: string) {
+function projected(): ContextMessage[] {
     return [
         { id: "old-user", type: "user", text: "older", files: [], time: { created: 1 } },
         {
@@ -63,6 +58,7 @@ function projected(sessionID: string) {
                         input: { summary: "Earlier work", topic: "Earlier" },
                         metadata: {},
                     },
+                    time: { created: 5 },
                 },
             ],
             finish: "tool-calls",
@@ -77,7 +73,7 @@ describe("beta projected message compatibility", () => {
         const messages = adaptProjectedMessages(
             "session",
             [
-                ...projected("session"),
+                ...projected(),
                 {
                     id: "feedback",
                     type: "synthetic",
@@ -96,15 +92,17 @@ describe("beta projected message compatibility", () => {
             messages.map((message) => message.info.id),
             ["old-user", "old-assistant", "owner", "tool-message", "feedback"],
         )
-        assert.equal((messages[0].info as any).agent, "orchestrator")
-        assert.equal((messages[3].info as any).parentID, "owner")
-        assert.equal((messages[3].parts[1] as any).callID, "call-compress")
-        assert.equal((messages[4].parts[0] as any).ignored, true)
+        const toolPart = messages[3].parts[1]
+        const feedbackPart = messages[4].parts[0]
+        assert.equal(messages[0].info.agent, "orchestrator")
+        assert.equal(messages[3].info.parentID, "owner")
+        assert.equal("callID" in toolPart ? toolPart.callID : undefined, "call-compress")
+        assert.equal("ignored" in feedbackPart ? feedbackPart.ignored : undefined, true)
     })
 
     it("folds projected model context and removes ignored synthetic feedback", () => {
         const raw = adaptProjectedMessages("session", [
-            ...projected("session").slice(0, 2),
+            ...projected().slice(0, 2),
             {
                 id: "feedback",
                 type: "synthetic",
@@ -153,15 +151,15 @@ describe("beta projected message compatibility", () => {
                 text: "Earlier instructions",
                 time: { created: 0 },
             },
-            projected("session")[1],
+            projected()[1],
         ]
 
         for (const anchor of anchors) {
             const raw = adaptProjectedMessages("session", [
                 anchor,
-                projected("session")[0],
+                projected()[0],
                 { id: "later-model-change", type: "model-switched", time: { created: 3 } },
-                projected("session")[2],
+                projected()[2],
             ])
             const state = new SessionStateManager().get("session")
             state.compressed.messageIds = new Set([anchor.id, "old-user"])
@@ -196,7 +194,7 @@ describe("beta projected message compatibility", () => {
     })
 
     it("leaves history before the latest completed native compaction out of selection", () => {
-        const [oldUser, oldAssistant, owner] = projected("session")
+        const [oldUser, oldAssistant, owner] = projected()
         const nativeCompaction = (id: string, status: string) => ({
             id,
             type: "compaction",
@@ -240,7 +238,7 @@ describe("beta projected message compatibility", () => {
     })
 
     it("keeps attached media objects intact", () => {
-        const raw = adaptProjectedMessages("session", projected("session").slice(0, 2))
+        const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")
         class Asset {
             source = { type: "base64", data: "iVBORw0KGgo=" }
@@ -266,7 +264,7 @@ describe("beta projected message compatibility", () => {
     })
 
     it("preserves idless user and system inputs added by transient generation", () => {
-        const raw = adaptProjectedMessages("session", projected("session").slice(0, 2))
+        const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")
         const transformed = transformV2Messages(raw, state, logger, [
             { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
@@ -295,12 +293,8 @@ describe("beta projected message compatibility", () => {
 describe("beta tool and automatic lifecycle compatibility", () => {
     it("executes compress against projected history and persists the same state shape", async () => {
         const sessionID = `v2-compress-${Date.now()}-${Math.random()}`
-        const values = projected(sessionID)
-        const client = pluginClient({
-            context: async () => values,
-            prompt: async () => undefined,
-            synthetic: async () => undefined,
-        })
+        const values = projected()
+        const client = fakeClient({ context: async () => values })
         const manager = new SessionStateManager()
         const tool = createCompressTool({ client, stateManager: manager, logger, config })
 
@@ -328,7 +322,7 @@ describe("beta tool and automatic lifecycle compatibility", () => {
 
     it("executes squash against projected block history without an authorization marker", async () => {
         const sessionID = `v2-squash-${Date.now()}-${Math.random()}`
-        const values = [
+        const values: ContextMessage[] = [
             { id: "block-a", type: "user", text: "a", files: [], time: { created: 1 } },
             { id: "block-b", type: "user", text: "b", files: [], time: { created: 2 } },
             { id: "squash-trigger", type: "user", text: "squash", files: [], time: { created: 3 } },
@@ -343,17 +337,14 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                         id: "call-squash",
                         name: "squash",
                         state: { status: "running", input: {}, metadata: {} },
+                        time: { created: 4 },
                     },
                 ],
                 tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
                 time: { created: 4 },
             },
         ]
-        const client = pluginClient({
-            context: async () => values,
-            prompt: async () => undefined,
-            synthetic: async () => undefined,
-        })
+        const client = fakeClient({ context: async () => values })
         const manager = new SessionStateManager()
         const state = manager.get(sessionID)
         state.initialized = true
@@ -386,12 +377,11 @@ describe("beta tool and automatic lifecycle compatibility", () => {
 
     it("starts automatic compression when a hot reload observed only the V2 step end", async () => {
         const sessionID = `v2-auto-${Date.now()}-${Math.random()}`
-        const values = projected(sessionID).slice(0, 2)
+        const values = projected().slice(0, 2)
         const prompts: unknown[] = []
-        const client = pluginClient({
+        const client = fakeClient({
             context: async () => values,
-            prompt: async (input) => void prompts.push(input),
-            synthetic: async () => undefined,
+            prompt: (input) => prompts.push(input),
         })
         const manager = new SessionStateManager()
         manager.get(sessionID).modelContext = {
@@ -420,12 +410,11 @@ describe("beta tool and automatic lifecycle compatibility", () => {
 
     it("admits automatic compression only from the matching V2 workspace", async () => {
         const sessionID = `v2-location-${Date.now()}-${Math.random()}`
-        const values = projected(sessionID).slice(0, 2)
+        const values = projected().slice(0, 2)
         const prompts: unknown[] = []
-        const client = pluginClient({
+        const client = fakeClient({
             context: async () => values,
-            prompt: async (input) => void prompts.push(input),
-            synthetic: async () => undefined,
+            prompt: (input) => prompts.push(input),
         })
         const matching = new SessionStateManager()
         const other = new SessionStateManager()
