@@ -87,12 +87,8 @@ function analyzeTokens(
     let firstAssistant: AssistantMessage | undefined
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
-            const assistantInfo = msg.info
-            if (
-                (assistantInfo.tokens?.input ?? 0) > 0 ||
-                (assistantInfo.tokens?.cache?.read ?? 0) > 0
-            ) {
-                firstAssistant = assistantInfo
+            if ((msg.info.tokens?.input ?? 0) > 0 || (msg.info.tokens?.cache?.read ?? 0) > 0) {
+                firstAssistant = msg.info
                 break
             }
         }
@@ -102,9 +98,8 @@ function analyzeTokens(
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]
         if (msg.info.role === "assistant") {
-            const assistantInfo = msg.info
-            if ((assistantInfo.tokens?.output ?? 0) > 0) {
-                lastAssistant = assistantInfo
+            if ((msg.info.tokens?.output ?? 0) > 0) {
+                lastAssistant = msg.info
                 break
             }
         }

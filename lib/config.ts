@@ -128,18 +128,23 @@ interface ValidationError {
     actual: string
 }
 
+function typeName(value: unknown): string {
+    if (value === null) return "null"
+    return Array.isArray(value) ? "array" : typeof value
+}
+
 function validateConfigTypes(config: Record<string, unknown>): ValidationError[] {
     const errors: ValidationError[] = []
 
     // Top-level validators
     if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-        errors.push({ key: "enabled", expected: "boolean", actual: typeof config.enabled })
+        errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) })
     }
     if (config.debug !== undefined && typeof config.debug !== "boolean") {
-        errors.push({ key: "debug", expected: "boolean", actual: typeof config.debug })
+        errors.push({ key: "debug", expected: "boolean", actual: typeName(config.debug) })
     }
     if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
-        errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog })
+        errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) })
     }
     if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
         errors.push({
@@ -164,12 +169,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             errors.push({
                 key: "autoCompression",
                 expected: "object",
-                actual:
-                    autoCompression === null
-                        ? "null"
-                        : Array.isArray(autoCompression)
-                          ? "array"
-                          : typeof autoCompression,
+                actual: typeName(autoCompression),
             })
         } else {
             if (
@@ -179,7 +179,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
                 errors.push({
                     key: "autoCompression.enabled",
                     expected: "boolean",
-                    actual: typeof autoCompression.enabled,
+                    actual: typeName(autoCompression.enabled),
                 })
             }
             if (
@@ -223,19 +223,14 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
                 errors.push({
                     key: "commands.enabled",
                     expected: "boolean",
-                    actual: typeof commands.enabled,
+                    actual: typeName(commands.enabled),
                 })
             }
         } else {
             errors.push({
                 key: "commands",
                 expected: "{ enabled: boolean }",
-                actual:
-                    commands === null
-                        ? "null"
-                        : Array.isArray(commands)
-                          ? "array"
-                          : typeof commands,
+                actual: typeName(commands),
             })
         }
     }
@@ -260,7 +255,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             errors.push({
                 key: "tools.compress.showCompression",
                 expected: "boolean",
-                actual: typeof compress.showCompression,
+                actual: typeName(compress.showCompression),
             })
         }
     }
