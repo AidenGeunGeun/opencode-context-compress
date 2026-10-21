@@ -12,8 +12,9 @@ plugin clears every compression block. To merge blocks without a reset, use `/co
 
 ## Install
 
-Requires OpenCode 2; the plugin is built against the `2.0.13` plugin API. On OpenCode 1.x, pin
-`@skybluejacket/opencode-context-compress@0.5.0` instead.
+Requires OpenCode 2; the plugin is built against the `2.0.13` plugin API. OpenCode 1.x needs the
+0.5 line, pinned so it does not resolve to this release:
+`"plugin": ["@skybluejacket/opencode-context-compress@0.5.0"]`.
 
 Add the plugin and disable native compaction in `opencode.jsonc`:
 
@@ -33,7 +34,7 @@ Optional plugin settings live in `compress.jsonc` under the OpenCode config dire
 
 ```jsonc
 {
-  "$schema": "/absolute/path/to/opencode-context-compress/compress.schema.json",
+  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json",
   "protectedTurns": 3,
   "autoCompression": {
     "enabled": true,
