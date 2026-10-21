@@ -167,10 +167,7 @@ describe("post-compression notice", () => {
             assert.equal(notice.info.role, "user")
             assert.match(noticeText(notice), NOTICE)
             assert.equal(noticeText(notice), renderPostCompressionNotice())
-            assert.equal(
-                messages.filter((message) => NOTICE.test(noticeText(message))).length,
-                1,
-            )
+            assert.equal(messages.filter((message) => NOTICE.test(noticeText(message))).length, 1)
         } finally {
             await cleanupSessionFile(harness.sessionId)
         }
@@ -237,7 +234,11 @@ describe("post-compression notice", () => {
             const transcript = [
                 userMessage("u1", harness.sessionId, "Do the work"),
                 assistantMessage("a-compress", harness.sessionId, [compressPart()]),
-                ignoredUserMessage("n1", harness.sessionId, "▣ Context Compress | ~12k saved total"),
+                ignoredUserMessage(
+                    "n1",
+                    harness.sessionId,
+                    "▣ Context Compress | ~12k saved total",
+                ),
                 syntheticContinuationMessage("g1", harness.sessionId),
                 userMessage("u2", harness.sessionId, "Also check the logs"),
             ]
@@ -370,7 +371,12 @@ describe("post-compression notice", () => {
                 assistantMessage("a-compress", harness.sessionId, [
                     textPart("Compressing now."),
                     compressPart(),
-                    { type: "tool", tool: "read", callID: "call-read", state: { status: "completed", input: {}, output: "file" } },
+                    {
+                        type: "tool",
+                        tool: "read",
+                        callID: "call-read",
+                        state: { status: "completed", input: {}, output: "file" },
+                    },
                 ]),
             ]
 

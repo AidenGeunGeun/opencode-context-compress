@@ -41,12 +41,15 @@ export interface ManagementTurnStartContext {
 
 export type StagedManagementTurn = () => Promise<boolean>
 
-const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i
-const LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i
-const LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i
+const COMPRESSION_ONLY_TEXT =
+    /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i
+const LEADING_COMPRESSION_REQUEST =
+    /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i
+const LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION =
+    /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i
 
 function trimCommandBoundary(text: string): string {
-    return text.replace(/^[\s:;,.|\-]+/, "").replace(/\s+$/, "")
+    return text.replace(/^[\s:;,.|-]+/, "").replace(/\s+$/, "")
 }
 
 export function extractManageCommandResidual(args: string | undefined): string | undefined {
@@ -85,16 +88,23 @@ function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity?: s
         lastGeneratedMessageIdCounter++
     }
 
-    const current = BigInt(timestamp) * 0x1000n + BigInt(identity ? 0 : lastGeneratedMessageIdCounter)
+    const current =
+        BigInt(timestamp) * 0x1000n + BigInt(identity ? 0 : lastGeneratedMessageIdCounter)
     const value = ~current
     const time = Array.from({ length: 6 }, (_, index) =>
         Number((value >> BigInt(40 - 8 * index)) & 0xffn)
             .toString(16)
             .padStart(2, "0"),
     ).join("")
-    const random = identity ? createHash("sha256").update(identity).digest("hex").slice(0, 14) : Array.from({ length: 14 }, () =>
-        ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)],
-    ).join("")
+    const random = identity
+        ? createHash("sha256").update(identity).digest("hex").slice(0, 14)
+        : Array.from(
+              { length: 14 },
+              () =>
+                  ASCENDING_ID_RANDOM_CHARS[
+                      Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)
+                  ],
+          ).join("")
     return time + random
 }
 
@@ -102,7 +112,10 @@ export function generateManagePromptMessageId(): string {
     return `msg_${generateLiveOrderedMessageIdSuffix()}`
 }
 
-export function generateAutomaticPromptMessageId(sessionId: string, trigger: WithParts["info"]): string {
+export function generateAutomaticPromptMessageId(
+    sessionId: string,
+    trigger: WithParts["info"],
+): string {
     // The host deduplicates prompt admission by ID, including across plugin instances.
     return `msg_${generateLiveOrderedMessageIdSuffix(
         trigger.time.completed ?? trigger.time.created,
@@ -134,12 +147,14 @@ export async function sendManageFailureFeedback(
     message: string,
     params: any,
 ): Promise<void> {
-    if (await showToast(client, {
-        title: "Compression Management",
-        message,
-        variant: "error",
-        duration: 8000,
-    })) {
+    if (
+        await showToast(client, {
+            title: "Compression Management",
+            message,
+            variant: "error",
+            duration: 8000,
+        })
+    ) {
         return
     }
 
@@ -197,22 +212,17 @@ export async function stageManagementTurnWithinLock(
 
     const automaticTail =
         ctx.source === "automatic"
-            ? deriveAutomaticProtectedTail(
-                  messages,
-                  state,
-                  logger,
-                  ctx.protectedTurns ?? 0,
-              )
+            ? deriveAutomaticProtectedTail(messages, state, logger, ctx.protectedTurns ?? 0)
             : undefined
 
-    if (
-        ctx.source === "automatic" &&
-        !automaticTail?.hasSelectableMessages
-    ) {
-        logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
-            sessionId,
-            protectedTurns: ctx.protectedTurns ?? 0,
-        })
+    if (ctx.source === "automatic" && !automaticTail?.hasSelectableMessages) {
+        logger.warn(
+            "Automatic compression skipped because the protected tail covers all selectable messages",
+            {
+                sessionId,
+                protectedTurns: ctx.protectedTurns ?? 0,
+            },
+        )
         return undefined
     }
 
@@ -228,9 +238,10 @@ export async function stageManagementTurnWithinLock(
         })
     }
 
-    const trigger = ctx.source === "automatic"
-        ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
-        : undefined
+    const trigger =
+        ctx.source === "automatic"
+            ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
+            : undefined
     if (ctx.source === "automatic" && !trigger) {
         throw new Error("Automatic compression trigger is missing from projected history")
     }
@@ -244,7 +255,9 @@ export async function stageManagementTurnWithinLock(
         ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
-        ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
+        ...(typeof ctx.thresholdTokens === "number"
+            ? { thresholdTokens: ctx.thresholdTokens }
+            : {}),
     }
     const candidateState: SessionState = {
         ...state,
@@ -312,10 +325,13 @@ export async function stageManagementTurnWithinLock(
             })
             logger.error("Manage command failed", { error: err?.message })
             if (rollbackResult === "completed") {
-                logger.warn("Manage prompt failed after compression completed; preserving the completed turn marker", {
-                    sessionId,
-                    triggerMessageId,
-                })
+                logger.warn(
+                    "Manage prompt failed after compression completed; preserving the completed turn marker",
+                    {
+                        sessionId,
+                        triggerMessageId,
+                    },
+                )
             } else if (rollbackResult === "failed") {
                 logger.error("Manage prompt failure marker could not be rolled back", {
                     sessionId,
@@ -338,11 +354,14 @@ export async function stageManagementTurnWithinLock(
 
         const returnedParentId = extractPromptParentIdForLogging(promptResult)
         if (returnedParentId && returnedParentId !== triggerMessageId) {
-            logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
-                sessionId,
-                triggerMessageId,
-                returnedParentId,
-            })
+            logger.warn(
+                "Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor",
+                {
+                    sessionId,
+                    triggerMessageId,
+                    returnedParentId,
+                },
+            )
         }
 
         logger.info("Sent compression context to agent", {

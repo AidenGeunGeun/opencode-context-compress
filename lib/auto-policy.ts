@@ -28,8 +28,7 @@ export function resolveEffectiveAutoCompressionPolicy(
         enabledSource:
             config.enabled && enabledOverride !== undefined ? "session override" : "config",
         tokenThreshold: tokenThresholdOverride ?? config.tokenThreshold,
-        tokenThresholdSource:
-            tokenThresholdOverride !== undefined ? "session override" : "config",
+        tokenThresholdSource: tokenThresholdOverride !== undefined ? "session override" : "config",
         contextWindowRatio: contextWindowRatioOverride ?? config.contextWindowRatio,
         contextWindowRatioSource:
             contextWindowRatioOverride !== undefined ? "session override" : "config",
@@ -48,10 +47,7 @@ function isVisibleUserMessage(message: WithParts): boolean {
     )
 }
 
-function collectManagementTurnMessageIds(
-    state: SessionState,
-    messages: WithParts[],
-): Set<string> {
+function collectManagementTurnMessageIds(state: SessionState, messages: WithParts[]): Set<string> {
     const managementMessageIds = new Set<string>()
     const indexByMessageId = new Map(messages.map((message, index) => [message.info.id, index]))
 

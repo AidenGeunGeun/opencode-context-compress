@@ -63,7 +63,10 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
         args: {
             from: { type: "string", description: "Inclusive current block label, for example b1" },
             to: { type: "string", description: "Inclusive current block label, for example b12" },
-            summary: { type: "string", description: "Truthful replacement for only the selected blocks" },
+            summary: {
+                type: "string",
+                description: "Truthful replacement for only the selected blocks",
+            },
             topic: { type: "string", description: "Short replacement block title" },
         },
         async execute(args, toolCtx) {
@@ -84,7 +87,9 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
                     rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
-                    throw new Error(`squash could not fetch session messages: ${message}. Nothing changed.`)
+                    throw new Error(
+                        `squash could not fetch session messages: ${message}. Nothing changed.`,
+                    )
                 }
                 if (rawMessages.length === 0) {
                     throw new Error("squash could not fetch any session messages. Nothing changed.")
@@ -92,23 +97,28 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
 
                 await reconcileSessionLifecycle(state, sessionId, logger, rawMessages)
                 if (!state.persistenceSynchronized) {
-                    throw new Error("squash could not synchronize saved session state. Nothing changed.")
+                    throw new Error(
+                        "squash could not synchronize saved session state. Nothing changed.",
+                    )
                 }
 
                 const orderedBlocks = orderCompressBlocks(rawMessages, state.compressSummaries)
                 const active = findActiveManagementTurn(state, rawMessages)
                 const managementTurn = active?.turn.source === "squash" ? active.turn : undefined
                 if (fromIndex > toIndex) {
-                    throw new Error("squash requires from to precede or equal to to. Nothing changed.")
+                    throw new Error(
+                        "squash requires from to precede or equal to to. Nothing changed.",
+                    )
                 }
-                if (
-                    fromIndex >= orderedBlocks.length ||
-                    toIndex >= orderedBlocks.length
-                ) {
-                    throw new Error("squash block range does not exist in the current block ordering. Nothing changed.")
+                if (fromIndex >= orderedBlocks.length || toIndex >= orderedBlocks.length) {
+                    throw new Error(
+                        "squash block range does not exist in the current block ordering. Nothing changed.",
+                    )
                 }
                 if (toIndex - fromIndex + 1 < 2) {
-                    throw new Error("squash requires a range containing at least two blocks. Nothing changed.")
+                    throw new Error(
+                        "squash requires a range containing at least two blocks. Nothing changed.",
+                    )
                 }
 
                 const selected = orderedBlocks.slice(fromIndex, toIndex + 1)
@@ -148,8 +158,7 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
                     managementTurns: candidateManagementTurns,
                     stats: {
                         compressTokenCounter: 0,
-                        totalCompressTokens:
-                            state.stats.totalCompressTokens + estimatedSavedTokens,
+                        totalCompressTokens: state.stats.totalCompressTokens + estimatedSavedTokens,
                     },
                     compressionMapSnapshot: undefined,
                 }

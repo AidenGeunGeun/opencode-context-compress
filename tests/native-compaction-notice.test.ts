@@ -15,10 +15,15 @@ it("warns the owning session about native auto-compaction but not a manual reset
     await mkdir(join(root, "config", "opencode"), { recursive: true })
     const synthetic: any[] = []
     const registration = { dispose: async () => undefined }
-    const compactionStarted = (sessionID: string, reason: string, directory = root) =>
-        ({ type: "session.compaction.started", data: { sessionID, reason }, location: { directory } })
+    const compactionStarted = (sessionID: string, reason: string, directory = root) => ({
+        type: "session.compaction.started",
+        data: { sessionID, reason },
+        location: { directory },
+    })
     let processed!: () => void
-    const allProcessed = new Promise<void>((resolve) => { processed = resolve })
+    const allProcessed = new Promise<void>((resolve) => {
+        processed = resolve
+    })
     const events = {
         async *[Symbol.asyncIterator]() {
             yield compactionStarted("elsewhere", "auto", join(root, "other"))
@@ -46,7 +51,10 @@ it("warns the owning session about native auto-compaction but not a manual reset
         await allProcessed
         await cleanup()
 
-        assert.deepEqual(synthetic.map((input) => input.sessionID), ["owned"])
+        assert.deepEqual(
+            synthetic.map((input) => input.sessionID),
+            ["owned"],
+        )
         assert.match(synthetic[0].text, /"compaction": \{ "auto": false \}/)
         assert.equal(synthetic[0].resume, false)
     } finally {

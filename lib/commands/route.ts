@@ -1,7 +1,11 @@
 import type { PluginConfig } from "../config.js"
 import type { Logger } from "../logger.js"
 import { listSessionMessages } from "../sdk/client.js"
-import { reconcileSessionLifecycle, SessionStateManager, type WithParts } from "../state/index.js"
+import {
+    reconcileSessionLifecycle,
+    type SessionStateManager,
+    type WithParts,
+} from "../state/index.js"
 import { handleAutoCommand } from "./auto.js"
 import { handleContextCommand } from "./context.js"
 import { handleHelpCommand } from "./help.js"

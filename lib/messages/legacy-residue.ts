@@ -39,7 +39,10 @@ function getMessageText(message: WithParts): string {
 
 function hasToolPart(message: WithParts, predicate: (tool: string) => boolean): boolean {
     const parts = Array.isArray(message.parts) ? message.parts : []
-    return parts.some((part: any) => part.type === "tool" && typeof part.tool === "string" && predicate(part.tool))
+    return parts.some(
+        (part: any) =>
+            part.type === "tool" && typeof part.tool === "string" && predicate(part.tool),
+    )
 }
 
 const isCompressToolName = (tool: string): boolean =>
@@ -103,7 +106,9 @@ export interface LegacyResidueSuppressionPlan {
     retainedTextByMessageId: Map<string, string>
 }
 
-export function buildLegacyResidueSuppressionPlan(rawMessages: WithParts[]): LegacyResidueSuppressionPlan {
+export function buildLegacyResidueSuppressionPlan(
+    rawMessages: WithParts[],
+): LegacyResidueSuppressionPlan {
     const suppressed = new Set<string>()
     const retainedTextByMessageId = new Map<string, string>()
     let i = 0
@@ -156,7 +161,9 @@ export function buildLegacyResidueSuppressionPlan(rawMessages: WithParts[]): Leg
 
         for (let k = start; k <= end; k++) {
             const candidate = rawMessages[k]
-            const embeddedText = isManagePromptMessage(candidate) ? extractEmbeddedUserText(candidate) : undefined
+            const embeddedText = isManagePromptMessage(candidate)
+                ? extractEmbeddedUserText(candidate)
+                : undefined
             if (embeddedText) {
                 retainedTextByMessageId.set(candidate.info.id, embeddedText)
                 continue

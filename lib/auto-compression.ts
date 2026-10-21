@@ -1,13 +1,14 @@
 import type { PluginConfig } from "./config.js"
 import type { Logger } from "./logger.js"
-import {
-    stageManagementTurnWithinLock,
-    type StagedManagementTurn,
-} from "./commands/manage.js"
+import { stageManagementTurnWithinLock, type StagedManagementTurn } from "./commands/manage.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
 import { listSessionMessages, showToast } from "./sdk/client.js"
-import { reconcileSessionLifecycle, SessionStateManager, type WithParts } from "./state/index.js"
+import {
+    reconcileSessionLifecycle,
+    type SessionStateManager,
+    type WithParts,
+} from "./state/index.js"
 import { sendIgnoredMessage } from "./ui/notification.js"
 import {
     isMessageWithinPostCompressionCooldown,
@@ -84,7 +85,8 @@ export function resolveAutomaticCompressionThreshold(
         relativeThresholdTokens,
         contextLimit: normalizedContextLimit,
         reason:
-            relativeThresholdTokens !== undefined && relativeThresholdTokens <= config.tokenThreshold
+            relativeThresholdTokens !== undefined &&
+            relativeThresholdTokens <= config.tokenThreshold
                 ? "context-window-ratio"
                 : "absolute-token-threshold",
     }
@@ -189,13 +191,10 @@ export function createAutomaticCompressionEventHandler(
                     time: { completed: Date.now() },
                     tokens: isRecord(data.tokens) ? (data.tokens as AssistantUsage) : undefined,
                 }
-            : isRecord(event.properties) && isRecord(event.properties.info)
-              ? (event.properties.info as unknown as AssistantMessageInfo)
-              : undefined
-        if (
-            !config.autoCompression.enabled ||
-            config.tools.compress.permission === "deny"
-        ) return
+              : isRecord(event.properties) && isRecord(event.properties.info)
+                ? (event.properties.info as unknown as AssistantMessageInfo)
+                : undefined
+        if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
         if (event.type !== "message.updated" && event.type !== "session.step.ended") return
         if (
             !info ||
@@ -244,18 +243,24 @@ export function createAutomaticCompressionEventHandler(
             reserved = await stateManager.runExclusive(info.sessionID, async () => {
                 const messages = (await listSessionMessages(client, info.sessionID)) as WithParts[]
                 if (messages.length === 0) {
-                    logger.warn("Automatic compression skipped because session messages were unavailable", {
-                        sessionId: info.sessionID,
-                        messageId: info.id,
-                    })
+                    logger.warn(
+                        "Automatic compression skipped because session messages were unavailable",
+                        {
+                            sessionId: info.sessionID,
+                            messageId: info.id,
+                        },
+                    )
                     return undefined
                 }
 
                 await reconcileSessionLifecycle(state, info.sessionID, logger, messages)
                 if (!state.persistenceSynchronized) {
-                    logger.warn("Automatic compression skipped because session policy could not be loaded", {
-                        sessionId: info.sessionID,
-                    })
+                    logger.warn(
+                        "Automatic compression skipped because session policy could not be loaded",
+                        {
+                            sessionId: info.sessionID,
+                        },
+                    )
                     return undefined
                 }
                 const cooldownApplies = isMessageWithinPostCompressionCooldown(
@@ -263,10 +268,7 @@ export function createAutomaticCompressionEventHandler(
                     messages,
                     info.id,
                 )
-                const policy = resolveEffectiveAutoCompressionPolicy(
-                    config.autoCompression,
-                    state,
-                )
+                const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state)
                 if (
                     !policy.enabled ||
                     config.tools.compress.permission === "deny" ||
@@ -287,8 +289,7 @@ export function createAutomaticCompressionEventHandler(
                     state.lastAutoTriggeredMessageId === info.id ||
                     state.managementTurns.some(
                         (turn) =>
-                            turn.source === "automatic" &&
-                            turn.triggeredByMessageId === info.id,
+                            turn.source === "automatic" && turn.triggeredByMessageId === info.id,
                     ) ||
                     findActiveManagementTurn(state, messages) ||
                     messageContainsCompressCall(

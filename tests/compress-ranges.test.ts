@@ -5,10 +5,11 @@ import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.
 import { createSessionState } from "../lib/state/state.ts"
 
 const logger = { info: () => {}, warn: () => {} } as any
-const message = (id: string, role: "user" | "assistant" = "user") => ({
-    info: { id, role, sessionID: "block-session", time: { created: Date.now() } },
-    parts: [{ type: "text", text: id }],
-}) as any
+const message = (id: string, role: "user" | "assistant" = "user") =>
+    ({
+        info: { id, role, sessionID: "block-session", time: { created: Date.now() } },
+        parts: [{ type: "text", text: id }],
+    }) as any
 
 describe("existing block exclusion", () => {
     it("selects only canonical uncompressed messages after the newest existing block", () => {
@@ -42,7 +43,10 @@ describe("existing block exclusion", () => {
         const span = selectDeterministicCompressionSpan(messages, state, logger, 0)
 
         assert.deepEqual(span.messageIds, ["m7", "m8"])
-        assert.deepEqual(state.compressSummaries.map((summary) => summary.anchorMessageId), ["m5", "m2"])
+        assert.deepEqual(
+            state.compressSummaries.map((summary) => summary.anchorMessageId),
+            ["m5", "m2"],
+        )
         assert.deepEqual([...state.compressed.messageIds], ["m2", "m3", "m5", "m6"])
     })
 })

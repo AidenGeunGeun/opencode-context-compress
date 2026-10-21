@@ -105,7 +105,11 @@ async function writeFileAtomic(filePath: string, content: string): Promise<void>
     }
 }
 
-async function readJsonFile<T>(filePath: string): Promise<{ status: "missing" } | { status: "loaded"; data: T } | { status: "error"; error: any }> {
+async function readJsonFile<T>(
+    filePath: string,
+): Promise<
+    { status: "missing" } | { status: "loaded"; data: T } | { status: "error"; error: any }
+> {
     try {
         const content = await fs.readFile(filePath, "utf-8")
         return {
@@ -172,7 +176,9 @@ type MaybeBackfilledCompressSummary = Omit<CompressSummary, "messageIds"> & {
 
 type MaybePersistedManagementTurn = Partial<ManagementTurn>
 
-function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefined): ManagementTurn[] {
+function normalizeManagementTurns(
+    turns: MaybePersistedManagementTurn[] | undefined,
+): ManagementTurn[] {
     if (!Array.isArray(turns)) {
         return []
     }
@@ -180,7 +186,11 @@ function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefi
     const normalized: ManagementTurn[] = []
     const seen = new Set<string>()
     for (const turn of turns) {
-        if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
+        if (
+            !turn ||
+            typeof turn.triggerMessageId !== "string" ||
+            turn.triggerMessageId.length === 0
+        ) {
             continue
         }
         if (seen.has(turn.triggerMessageId)) {
@@ -202,7 +212,8 @@ function normalizeManagementTurns(turns: MaybePersistedManagementTurn[] | undefi
             ...(turn.source === "automatic" || turn.source === "squash"
                 ? { source: turn.source }
                 : {}),
-            ...(typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0
+            ...(typeof turn.triggeredByMessageId === "string" &&
+            turn.triggeredByMessageId.length > 0
                 ? { triggeredByMessageId: turn.triggeredByMessageId }
                 : {}),
             ...(Array.isArray(turn.protectedMessageIds)
@@ -467,8 +478,7 @@ export async function loadSessionState(
         ...(typeof state.compressionCooldownAfterMessageId === "string" &&
         state.compressionCooldownAfterMessageId.length > 0
             ? {
-                  compressionCooldownAfterMessageId:
-                      state.compressionCooldownAfterMessageId,
+                  compressionCooldownAfterMessageId: state.compressionCooldownAfterMessageId,
               }
             : {}),
         ...(typeof state.lastCompaction === "number" &&

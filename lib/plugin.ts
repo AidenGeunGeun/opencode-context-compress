@@ -15,7 +15,12 @@ import {
     promptSession,
     setSessionSelection,
 } from "./sdk/client.js"
-import { checkSession, reconcileSessionLifecycle, SessionStateManager, type WithParts } from "./state/index.js"
+import {
+    checkSession,
+    reconcileSessionLifecycle,
+    SessionStateManager,
+    type WithParts,
+} from "./state/index.js"
 import { inheritForkCompression } from "./state/fork.js"
 import { createCompressTool, createSquashTool } from "./tools/index.js"
 
@@ -25,7 +30,7 @@ type Registration = Awaited<ReturnType<Plugin.Context["session"]["hook"]>>
 // Manual /compact is a deliberate reset and gets no notice.
 const NATIVE_AUTO_COMPACTION_NOTICE =
     "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
-    "this compaction clears every compression block. Set `\"compaction\": { \"auto\": false }` " +
+    'this compaction clears every compression block. Set `"compaction": { "auto": false }` ' +
     "in opencode.jsonc."
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
@@ -114,27 +119,41 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
             if (modelContext) state.modelContext = modelContext
             let syncResult = await checkSession(state, logger, messages)
             if (!state.persistenceSynchronized) {
-                logger.error("Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript", {
-                    sessionID: event.sessionID,
-                    source: syncResult.source,
-                })
+                logger.error(
+                    "Skipping compression for this turn: session state is not synchronized, so the model sees the untransformed transcript",
+                    {
+                        sessionID: event.sessionID,
+                        source: syncResult.source,
+                    },
+                )
                 return
             }
             if (!state.hasPersistedState) {
                 await inheritForkCompression(context.session, client, state, logger, messages)
                 syncResult = await checkSession(state, logger, messages)
-                if (!state.persistenceSynchronized) throw new Error("Cannot load inherited fork compression state")
+                if (!state.persistenceSynchronized)
+                    throw new Error("Cannot load inherited fork compression state")
             }
-            transformed = transformV2Messages(messages, state, logger, event.messages as unknown as ModelMessage[])
+            transformed = transformV2Messages(
+                messages,
+                state,
+                logger,
+                event.messages as unknown as ModelMessage[],
+            )
             if (kind === "context" && isPostCompressionNoticeDue(state, messages)) {
                 transformed.push({
                     role: "user",
                     content: [{ type: "text", text: renderPostCompressionNotice() }],
                 })
             }
-            event.messages.splice(0, event.messages.length, ...transformed as unknown as typeof event.messages)
+            event.messages.splice(
+                0,
+                event.messages.length,
+                ...(transformed as unknown as typeof event.messages),
+            )
         })
-        if (kind === "context" && transformed) await logger.saveContext(event.sessionID, transformed)
+        if (kind === "context" && transformed)
+            await logger.saveContext(event.sessionID, transformed)
     }
     registrations.push(
         await context.session.hook("context", (event) => applyCompression(event, "context")),
@@ -216,11 +235,17 @@ async function runEvents(
                 })
                 continue
             }
-            if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string") continue
+            if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
+                continue
             if (!(await ownsSession(context, data.sessionID, event))) continue
             const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
             await stateManager.runExclusive(data.sessionID, () =>
-                reconcileSessionLifecycle(stateManager.get(data.sessionID as string), data.sessionID as string, logger, messages),
+                reconcileSessionLifecycle(
+                    stateManager.get(data.sessionID as string),
+                    data.sessionID as string,
+                    logger,
+                    messages,
+                ),
             )
         } catch (error) {
             logger.error("Context Compress event handling failed", {
@@ -230,11 +255,17 @@ async function runEvents(
     }
 }
 
-async function ownsSession(context: Plugin.Context, sessionID: string, event: unknown): Promise<boolean> {
+async function ownsSession(
+    context: Plugin.Context,
+    sessionID: string,
+    event: unknown,
+): Promise<boolean> {
     const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined
     if (ref && typeof ref.directory === "string") {
-        return ref.directory === context.location.directory &&
+        return (
+            ref.directory === context.location.directory &&
             ref.workspaceID === context.location.workspaceID
+        )
     }
     const location = (await context.session.get({ sessionID })).location
     return location.directory === context.location.directory

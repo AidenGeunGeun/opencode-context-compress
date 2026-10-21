@@ -210,10 +210,7 @@ function withoutCompletionTool(
     )
 }
 
-function buildV2CleanupPlan(
-    state: SessionState,
-    rawMessages: WithParts[],
-): V2CleanupPlan {
+function buildV2CleanupPlan(state: SessionState, rawMessages: WithParts[]): V2CleanupPlan {
     const suppressedMessageIds = new Set<string>()
     const retainedTextByMessageId = new Map<string, string>()
     const retainedPartsByMessageId = new Map<string, WithParts["parts"]>()
@@ -226,13 +223,14 @@ function buildV2CleanupPlan(
         if (triggerIndex === undefined) return false
         return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage)
     })
-    const newestCompleted = [...turns].reverse().find(
-        (turn) => turn.completedAt && turn.completedMessageId,
-    )
+    const newestCompleted = [...turns]
+        .reverse()
+        .find((turn) => turn.completedAt && turn.completedMessageId)
     const visibleAnchors = turns.flatMap((turn) =>
-        [indexByMessageId.get(turn.triggerMessageId), turn.completedMessageId
-            ? indexByMessageId.get(turn.completedMessageId)
-            : undefined].filter((index): index is number => index !== undefined),
+        [
+            indexByMessageId.get(turn.triggerMessageId),
+            turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined,
+        ].filter((index): index is number => index !== undefined),
     )
     const firstV2Index = visibleAnchors.length > 0 ? Math.min(...visibleAnchors) : undefined
 
@@ -247,7 +245,8 @@ function buildV2CleanupPlan(
     for (const turn of turns) {
         const triggerIndex = indexByMessageId.get(turn.triggerMessageId)
         if (triggerIndex !== undefined && turn !== active) {
-            if (turn.retainedText) retainedTextByMessageId.set(turn.triggerMessageId, turn.retainedText)
+            if (turn.retainedText)
+                retainedTextByMessageId.set(turn.triggerMessageId, turn.retainedText)
             else suppressedMessageIds.add(turn.triggerMessageId)
         }
 
@@ -347,7 +346,8 @@ export const transformMessagesForSearch = (
     // incomplete - it is the only thing that can find orphaned artifacts in that case.
     const legacyPlan = buildLegacyResidueSuppressionPlan(rawMessages)
     const v2Plan = buildV2CleanupPlan(state, rawMessages)
-    const hasLegacyFindings = legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0
+    const hasLegacyFindings =
+        legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0
 
     if (
         !state.compressed.messageIds?.size &&

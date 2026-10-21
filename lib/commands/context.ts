@@ -66,7 +66,11 @@ interface TokenBreakdown {
     total: number
 }
 
-function analyzeTokens(state: SessionState, messages: WithParts[], providerId?: string): TokenBreakdown {
+function analyzeTokens(
+    state: SessionState,
+    messages: WithParts[],
+    providerId?: string,
+): TokenBreakdown {
     const breakdown: TokenBreakdown = {
         system: 0,
         user: 0,
@@ -83,7 +87,10 @@ function analyzeTokens(state: SessionState, messages: WithParts[], providerId?: 
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info as AssistantMessage
-            if ((assistantInfo.tokens?.input ?? 0) > 0 || (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
+            if (
+                (assistantInfo.tokens?.input ?? 0) > 0 ||
+                (assistantInfo.tokens?.cache?.read ?? 0) > 0
+            ) {
                 firstAssistant = assistantInfo
                 break
             }
@@ -129,7 +136,8 @@ function analyzeTokens(state: SessionState, messages: WithParts[], providerId?: 
                     foundToolIds.add(toolPart.callID)
                 }
 
-                const isCompressed = toolPart.callID && state.compressed.toolIds.has(toolPart.callID)
+                const isCompressed =
+                    toolPart.callID && state.compressed.toolIds.has(toolPart.callID)
                 if (!isCompacted && !isCompressed) {
                     if (toolPart.state?.input) {
                         const inputStr =

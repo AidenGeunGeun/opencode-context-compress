@@ -153,7 +153,11 @@ function validateConfigTypes(config: Record<string, any>): ValidationError[] {
 
     const autoCompression = config.autoCompression
     if (autoCompression !== undefined) {
-        if (!autoCompression || typeof autoCompression !== "object" || Array.isArray(autoCompression)) {
+        if (
+            !autoCompression ||
+            typeof autoCompression !== "object" ||
+            Array.isArray(autoCompression)
+        ) {
             errors.push({
                 key: "autoCompression",
                 expected: "object",
@@ -470,7 +474,9 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global)
         if (result.parseError) {
-            console.warn(`Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`)
+            console.warn(
+                `Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`,
+            )
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false)
@@ -503,7 +509,9 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
     if (configPaths.configDir) {
         const result = loadConfigFile(configPaths.configDir)
         if (result.parseError) {
-            console.warn(`Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`)
+            console.warn(
+                `Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
+            )
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true)
@@ -534,7 +542,9 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
     if (configPaths.project) {
         const result = loadConfigFile(configPaths.project)
         if (result.parseError) {
-            console.warn(`Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`)
+            console.warn(
+                `Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`,
+            )
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true)

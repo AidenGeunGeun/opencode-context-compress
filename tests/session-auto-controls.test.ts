@@ -245,10 +245,7 @@ describe("session automatic-compression commands", () => {
             [userMessage("u1", disabledSessionId)],
             globallyDisabled,
         )
-        const failing = createHarness(
-            failingSessionId,
-            [userMessage("u1", failingSessionId)],
-        )
+        const failing = createHarness(failingSessionId, [userMessage("u1", failingSessionId)])
 
         try {
             assert.match(await disabled.run("auto on"), /disabled globally/)
@@ -280,10 +277,7 @@ describe("session automatic-compression commands", () => {
             const response = await run("auto off")
 
             assert.match(response, /saved session state could not be loaded/)
-            assert.equal(
-                stateManager.get(sessionId).autoCompressionEnabledOverride,
-                undefined,
-            )
+            assert.equal(stateManager.get(sessionId).autoCompressionEnabledOverride, undefined)
             assert.equal(await readFile(filePath, "utf8"), "{invalid-json")
         } finally {
             await cleanupSessionFile(sessionId)

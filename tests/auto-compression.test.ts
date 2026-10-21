@@ -78,10 +78,7 @@ const assistantMessage = (id: string, sessionID: string, text: string) => ({
         time: { created: Date.now(), completed: Date.now() },
         tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
     },
-    parts: [
-        { type: "step-start" },
-        { type: "text", text },
-    ],
+    parts: [{ type: "step-start" }, { type: "text", text }],
 })
 
 describe("automatic compression thresholds", () => {
@@ -92,8 +89,16 @@ describe("automatic compression thresholds", () => {
     })
 
     it("uses the earlier of 90% of the context window and the absolute threshold", () => {
-        const small = resolveAutomaticCompressionThreshold(180_000, DEFAULT_AUTO_COMPRESSION, 200_000)
-        const large = resolveAutomaticCompressionThreshold(432_000, DEFAULT_AUTO_COMPRESSION, 1_000_000)
+        const small = resolveAutomaticCompressionThreshold(
+            180_000,
+            DEFAULT_AUTO_COMPRESSION,
+            200_000,
+        )
+        const large = resolveAutomaticCompressionThreshold(
+            432_000,
+            DEFAULT_AUTO_COMPRESSION,
+            1_000_000,
+        )
 
         assert.equal(small.thresholdTokens, 180_000)
         assert.equal(small.reason, "context-window-ratio")
@@ -255,7 +260,10 @@ describe("post-compression cooldown", () => {
 
             await complete("response-4")
             assert.equal(promptCalls.length, 1)
-            assert.equal(stateManager.get(sessionId).managementTurns[0].triggeredByMessageId, "response-4")
+            assert.equal(
+                stateManager.get(sessionId).managementTurns[0].triggeredByMessageId,
+                "response-4",
+            )
         } finally {
             await cleanupSessionFile(sessionId)
         }
@@ -347,7 +355,12 @@ describe("automatic compression lifecycle", () => {
             tokens: { total: 400_000 },
         }
 
-        await createAutomaticCompressionEventHandler(client, new SessionStateManager(), logger, config)({
+        await createAutomaticCompressionEventHandler(
+            client,
+            new SessionStateManager(),
+            logger,
+            config,
+        )({
             event: { type: "message.updated", properties: { info: latest } },
         } as any)
 
@@ -423,9 +436,12 @@ describe("automatic compression lifecycle", () => {
         state.initialized = true
         state.persistenceSynchronized = true
         state.autoCompressionTokenThresholdOverride = 500
-        await createAutomaticCompressionEventHandler(client, stateManager, logger, config)(
-            event as any,
-        )
+        await createAutomaticCompressionEventHandler(
+            client,
+            stateManager,
+            logger,
+            config,
+        )(event as any)
 
         assert.equal(messageReads, 0)
         assert.equal(sessionReads, 0)
@@ -574,7 +590,10 @@ describe("automatic compression lifecycle", () => {
             assert.match(payload, /the newest configured execution steps remain verbatim/)
             assert.match(payload, /this is not a task-status transition/i)
             assert.match(payload, /continue immediately only when work was genuinely active/i)
-            assert.match(payload, /Preserve completed or awaiting-user status instead of reopening work or duplicating a final response/i)
+            assert.match(
+                payload,
+                /Preserve completed or awaiting-user status instead of reopening work or duplicating a final response/i,
+            )
             assert.match(payload, /call `compress` once/i)
             assert.doesNotMatch(payload, /compress_map|context-map/i)
 
@@ -628,7 +647,12 @@ describe("automatic compression lifecycle", () => {
 
         try {
             const stateManager = new SessionStateManager()
-            const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
+            const handler = createAutomaticCompressionEventHandler(
+                client,
+                stateManager,
+                logger,
+                config,
+            )
             const event = { event: { type: "message.updated", properties: { info: latest.info } } }
             await handler(event as any)
             await handler(event as any)
@@ -636,12 +660,15 @@ describe("automatic compression lifecycle", () => {
             const later = {
                 ...assistantMessage("later", sessionId, "Finished the current logical block"),
                 info: {
-                    ...assistantMessage("later", sessionId, "Finished the current logical block").info,
+                    ...assistantMessage("later", sessionId, "Finished the current logical block")
+                        .info,
                     tokens: { total: 410_000 },
                 },
             }
             messages.push(later)
-            await handler({ event: { type: "message.updated", properties: { info: later.info } } } as any)
+            await handler({
+                event: { type: "message.updated", properties: { info: later.info } },
+            } as any)
 
             assert.equal(promptCalls, 0)
             assert.equal(stateManager.get(sessionId).managementTurns.length, 1)
@@ -675,8 +702,15 @@ describe("automatic compression lifecycle", () => {
 
         try {
             const stateManager = new SessionStateManager()
-            const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
-            await handler({ event: { type: "message.updated", properties: { info: latest.info } } } as any)
+            const handler = createAutomaticCompressionEventHandler(
+                client,
+                stateManager,
+                logger,
+                config,
+            )
+            await handler({
+                event: { type: "message.updated", properties: { info: latest.info } },
+            } as any)
 
             assert.equal(promptCalls, 0)
             assert.equal(stateManager.get(sessionId).managementTurns.length, 0)
@@ -745,16 +779,20 @@ describe("automatic compression lifecycle", () => {
         }
 
         try {
-            const handler = createAutomaticCompressionEventHandler(client, new SessionStateManager(), logger, {
-                ...config,
-                protectedTurns: 0,
-            })
-            await handler({ event: { type: "message.updated", properties: { info: latest.info } } } as any)
-            assert.equal(promptCalls.length, 1)
-            assert.match(
-                promptCalls[0].text,
-                /AUTOMATIC CONTEXT COMPRESSION DUE/,
+            const handler = createAutomaticCompressionEventHandler(
+                client,
+                new SessionStateManager(),
+                logger,
+                {
+                    ...config,
+                    protectedTurns: 0,
+                },
             )
+            await handler({
+                event: { type: "message.updated", properties: { info: latest.info } },
+            } as any)
+            assert.equal(promptCalls.length, 1)
+            assert.match(promptCalls[0].text, /AUTOMATIC CONTEXT COMPRESSION DUE/)
         } finally {
             await cleanupSessionFile(sessionId)
         }

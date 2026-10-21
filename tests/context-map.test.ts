@@ -14,10 +14,7 @@ function message(id: string, role: "user" | "assistant", stepStart = false) {
             sessionID: "selection-session",
             time: { created: Date.now() },
         },
-        parts: [
-            ...(stepStart ? [{ type: "step-start" }] : []),
-            { type: "text", text: id },
-        ],
+        parts: [...(stepStart ? [{ type: "step-start" }] : []), { type: "text", text: id }],
     } as any
 }
 
@@ -77,12 +74,7 @@ describe("deterministic compression selection", () => {
 
         assert.throws(
             () =>
-                selectDeterministicCompressionSpan(
-                    [message("visible", "user")],
-                    state,
-                    logger,
-                    0,
-                ),
+                selectDeterministicCompressionSpan([message("visible", "user")], state, logger, 0),
             /could not reconcile an existing compressed block/,
         )
     })

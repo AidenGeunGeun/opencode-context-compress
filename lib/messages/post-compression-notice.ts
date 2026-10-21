@@ -38,10 +38,7 @@ function isResumableAgentTurn(info: { summary?: unknown; error?: unknown }): boo
  * Evaluation is at part granularity because the `compress` call and its same-step siblings
  * share one assistant message.
  */
-export function isPostCompressionNoticeDue(
-    state: SessionState,
-    rawMessages: WithParts[],
-): boolean {
+export function isPostCompressionNoticeDue(state: SessionState, rawMessages: WithParts[]): boolean {
     const anchorMessageId = state.compressionCooldownAfterMessageId
     if (!anchorMessageId) return false
 

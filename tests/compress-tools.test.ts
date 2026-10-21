@@ -47,21 +47,16 @@ function textMessage(
             role,
             sessionID,
             ...(options.parentID ? { parentID: options.parentID } : {}),
-            time: { created: Date.now(), ...(role === "assistant" ? { completed: Date.now() } : {}) },
+            time: {
+                created: Date.now(),
+                ...(role === "assistant" ? { completed: Date.now() } : {}),
+            },
         },
-        parts: [
-            ...(options.stepStart ? [{ type: "step-start" }] : []),
-            { type: "text", text: id },
-        ],
+        parts: [...(options.stepStart ? [{ type: "step-start" }] : []), { type: "text", text: id }],
     } as any
 }
 
-function compressCallMessage(
-    id: string,
-    sessionID: string,
-    parentID: string,
-    callID: string,
-) {
+function compressCallMessage(id: string, sessionID: string, parentID: string, callID: string) {
     return {
         info: {
             id,
@@ -119,10 +114,7 @@ async function cleanup(sessionId: string) {
     if (existsSync(path)) await rm(path)
 }
 
-async function executePath(
-    source: "normal" | "manual" | "automatic",
-    protectedTurns = 0,
-) {
+async function executePath(source: "normal" | "manual" | "automatic", protectedTurns = 0) {
     const sessionId = `single-tool-${source}-${Date.now()}-${Math.random()}`
     const callID = `call-${source}`
     const old = [
@@ -198,7 +190,10 @@ describe("single-tool compression", () => {
             try {
                 assert.match(result.receipt, /fold is already in effect/)
                 if (source === "automatic") {
-                    assert.match(result.receipt, /Automatic compression finished.*Continue the original work now/i)
+                    assert.match(
+                        result.receipt,
+                        /Automatic compression finished.*Continue the original work now/i,
+                    )
                     assert.match(result.receipt, /already complete or awaiting the user/i)
                     assert.doesNotMatch(result.receipt, /Continue the original task now/i)
                 }
@@ -208,7 +203,10 @@ describe("single-tool compression", () => {
                     "recent-user",
                     "recent-step",
                 ])
-                assert.equal(result.state.managementTurns[0]?.completedAt !== undefined, source !== "normal")
+                assert.equal(
+                    result.state.managementTurns[0]?.completedAt !== undefined,
+                    source !== "normal",
+                )
             } finally {
                 await cleanup(result.sessionId)
             }
@@ -217,11 +215,21 @@ describe("single-tool compression", () => {
         it(`${source} compression preserves the same configured execution tail`, async () => {
             const result = await executePath(source, 1)
             try {
-                assert.deepEqual(result.state.compressSummaries[0].messageIds, ["old-user", "old-step", "recent-user"])
+                assert.deepEqual(result.state.compressSummaries[0].messageIds, [
+                    "old-user",
+                    "old-step",
+                    "recent-user",
+                ])
                 const transformed = structuredClone(result.messages)
                 applyCompressTransforms(result.state, logger, transformed)
-                assert.equal(transformed.some((message: any) => message.info.id === "recent-step"), true)
-                assert.equal(transformed.some((message: any) => message.info.id === "old-step"), false)
+                assert.equal(
+                    transformed.some((message: any) => message.info.id === "recent-step"),
+                    true,
+                )
+                assert.equal(
+                    transformed.some((message: any) => message.info.id === "old-step"),
+                    false,
+                )
             } finally {
                 await cleanup(result.sessionId)
             }
@@ -295,7 +303,10 @@ describe("single-tool compression", () => {
         ]
         const original = structuredClone(state.compressSummaries[0])
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig,
+            client: client(messages),
+            stateManager,
+            logger,
+            config: baseConfig,
         })
 
         try {
@@ -322,7 +333,10 @@ describe("single-tool compression", () => {
         const stateManager = new SessionStateManager()
         stateManager.get(sessionId).initialized = true
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig,
+            client: client(messages),
+            stateManager,
+            logger,
+            config: baseConfig,
         })
 
         try {
@@ -330,7 +344,9 @@ describe("single-tool compression", () => {
                 { summary: "history only", topic: "Boundary" },
                 toolContext(sessionId, "compress-message", callID),
             )
-            assert.deepEqual(stateManager.get(sessionId).compressSummaries[0].messageIds, ["history"])
+            assert.deepEqual(stateManager.get(sessionId).compressSummaries[0].messageIds, [
+                "history",
+            ])
         } finally {
             await cleanup(sessionId)
         }
@@ -402,7 +418,9 @@ describe("single-tool compression", () => {
             client: {
                 session: {
                     get: async () => ({ data: {} }),
-                    context: async () => { throw new Error("offline") },
+                    context: async () => {
+                        throw new Error("offline")
+                    },
                 },
             },
             stateManager,
@@ -433,7 +451,10 @@ describe("single-tool compression", () => {
         const state = stateManager.get(sessionId)
         state.initialized = true
         const tool = createCompressTool({
-            client: client(messages), stateManager, logger, config: baseConfig,
+            client: client(messages),
+            stateManager,
+            logger,
+            config: baseConfig,
         })
 
         await assert.rejects(

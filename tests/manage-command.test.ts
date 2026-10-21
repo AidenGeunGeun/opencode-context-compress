@@ -5,7 +5,12 @@ import { rm } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { extractManageCommandResidual, generateAutomaticPromptMessageId, generateManagePromptMessageId, handleManageCommand } from "../lib/commands/manage.ts"
+import {
+    extractManageCommandResidual,
+    generateAutomaticPromptMessageId,
+    generateManagePromptMessageId,
+    handleManageCommand,
+} from "../lib/commands/manage.ts"
 import type { PluginConfig } from "../lib/config.ts"
 import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
 
@@ -18,14 +23,19 @@ const logger = {
 
 it("keeps automatic admission identity stable across unrelated prompt creation", () => {
     const trigger = {
-        id: "assistant-threshold-crossing", sessionID: "session-a", role: "assistant" as const,
+        id: "assistant-threshold-crossing",
+        sessionID: "session-a",
+        role: "assistant" as const,
         time: { created: 1788599600000, completed: 1788599634450 },
     }
     const first = generateAutomaticPromptMessageId("session-a", trigger)
     generateManagePromptMessageId()
     assert.equal(generateAutomaticPromptMessageId("session-a", structuredClone(trigger)), first)
     assert.notEqual(generateAutomaticPromptMessageId("session-b", trigger), first)
-    assert.notEqual(generateAutomaticPromptMessageId("session-a", { ...trigger, id: "next-step" }), first)
+    assert.notEqual(
+        generateAutomaticPromptMessageId("session-a", { ...trigger, id: "next-step" }),
+        first,
+    )
     assert.match(first, /^msg_[0-9a-f]{26}$/)
 })
 
@@ -171,14 +181,17 @@ describe("handleManageCommand", () => {
             const reminderText = promptBody.text
             const fullPayload = promptBody.text
             assert.match(reminderText, /<system-reminder>/)
-            assert.match(reminderText, /call `compress` once, before this turn ends, with `summary` and `topic`/)
+            assert.match(
+                reminderText,
+                /call `compress` once, before this turn ends, with `summary` and `topic`/,
+            )
             assert.match(reminderText, /A failure means nothing was compressed/)
             assert.doesNotMatch(reminderText, /compress_map|context-map/i)
             assert.doesNotMatch(fullPayload, /compress_map|context-map/i)
             assert.match(promptBody.id, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
             assert.equal(state.managementTurns.length, 1)
-        assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
-        assert.deepEqual(promptBody.metadata, { "opencode.context-compress.management": true })
+            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
+            assert.deepEqual(promptBody.metadata, { "opencode.context-compress.management": true })
             assert.equal(state.managementTurns[0].cleanupVersion, 2)
         } finally {
             await cleanupSessionFile(sessionId)
@@ -343,17 +356,24 @@ describe("handleManageCommand", () => {
 
     it("extracts mixed-content text after the manage invocation", () => {
         assert.equal(extractManageCommandResidual("manage"), undefined)
-        assert.equal(extractManageCommandResidual("manage please compress the old context now"), undefined)
+        assert.equal(
+            extractManageCommandResidual("manage please compress the old context now"),
+            undefined,
+        )
         assert.equal(
             extractManageCommandResidual("manage Also, the launch window is June."),
             "Also, the launch window is June.",
         )
         assert.equal(
-            extractManageCommandResidual("manage please compress completed work; the launch window is June."),
+            extractManageCommandResidual(
+                "manage please compress completed work; the launch window is June.",
+            ),
             "the launch window is June.",
         )
         assert.equal(
-            extractManageCommandResidual("manage please compress completed work and the launch window is June."),
+            extractManageCommandResidual(
+                "manage please compress completed work and the launch window is June.",
+            ),
             "the launch window is June.",
         )
     })

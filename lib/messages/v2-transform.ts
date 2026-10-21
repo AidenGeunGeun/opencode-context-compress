@@ -24,7 +24,8 @@ export function transformV2Messages(
     for (const message of raw) {
         for (const part of message.parts) {
             if (part.type !== "tool") continue
-            if (tools.has(part.callID)) throw new Error(`Duplicate projected tool call ID: ${part.callID}`)
+            if (tools.has(part.callID))
+                throw new Error(`Duplicate projected tool call ID: ${part.callID}`)
             tools.set(part.callID, message.info.id)
         }
     }
@@ -64,9 +65,13 @@ export function transformV2Messages(
             if (!source) throw new Error(`Missing projected source for ${message.info.id}`)
             const messages = owned.get(message.info.id) ?? []
             if (messages.length === 0) return []
-            if (message.info.role === "assistant") return transformToolPair(messages, message, state)
+            if (message.info.role === "assistant")
+                return transformToolPair(messages, message, state)
             if (message.info.role === "user" && text(message) !== text(source)) {
-                return messages.map((item) => ({ ...item, content: [{ type: "text", text: text(message) }] }))
+                return messages.map((item) => ({
+                    ...item,
+                    content: [{ type: "text", text: text(message) }],
+                }))
             }
             return messages
         }),
@@ -95,21 +100,32 @@ function resolveOwner(
 
     if (message.role === "system") {
         const content = textFromModel(message)
-        const match = system.find((candidate) => !usedSystem.has(candidate.info.id) && text(candidate) === content)
+        const match = system.find(
+            (candidate) => !usedSystem.has(candidate.info.id) && text(candidate) === content,
+        )
         if (match) {
             usedSystem.add(match.info.id)
             return match.info.id
         }
     }
-    if (message.id === undefined && (message.role === "user" || message.role === "system")) return undefined
-    throw new Error(`Could not map a model-facing ${message.role} message to authoritative projected history`)
+    if (message.id === undefined && (message.role === "user" || message.role === "system"))
+        return undefined
+    throw new Error(
+        `Could not map a model-facing ${message.role} message to authoritative projected history`,
+    )
 }
 
 function transformToolPair(messages: ModelMessage[], target: WithParts, state: SessionState) {
-    const tools = new Map(target.parts.filter((part) => part.type === "tool").map((part) => [part.callID, part]))
+    const tools = new Map(
+        target.parts.filter((part) => part.type === "tool").map((part) => [part.callID, part]),
+    )
     return messages.flatMap((message) => {
         const content = message.content.flatMap((part) => {
-            if ((part.type !== "tool-call" && part.type !== "tool-result") || typeof part.id !== "string") return [part]
+            if (
+                (part.type !== "tool-call" && part.type !== "tool-result") ||
+                typeof part.id !== "string"
+            )
+                return [part]
             const tool = tools.get(part.id)
             if (!tool) return []
             if (part.type === "tool-call" && typeof tool.state.input !== "string") {
@@ -123,7 +139,9 @@ function transformToolPair(messages: ModelMessage[], target: WithParts, state: S
                 tool.tool !== "edit" &&
                 tool.tool !== "write"
             ) {
-                return [{ ...part, result: { type: "text", value: String(tool.state.output ?? "") } }]
+                return [
+                    { ...part, result: { type: "text", value: String(tool.state.output ?? "") } },
+                ]
             }
             return [part]
         })

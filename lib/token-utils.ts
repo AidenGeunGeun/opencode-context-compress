@@ -1,6 +1,6 @@
-import { SessionState, WithParts } from "./state/index.js"
+import type { SessionState, WithParts } from "./state/index.js"
 import type { UserMessage } from "./state/types.js"
-import { Logger } from "./logger.js"
+import type { Logger } from "./logger.js"
 import { getLastUserMessage } from "./shared-utils.js"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
 import { encodingForModel, type Tiktoken } from "js-tiktoken"

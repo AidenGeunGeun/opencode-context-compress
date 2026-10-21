@@ -1,4 +1,4 @@
-import { SessionState, WithParts } from "./state/index.js"
+import type { SessionState, WithParts } from "./state/index.js"
 import { isIgnoredUserMessage } from "./messages/utils.js"
 
 export const isMessageCompacted = (state: SessionState, msg: WithParts): boolean => {

@@ -59,12 +59,19 @@ describe("compressed message transformation", () => {
             summary: "legacy block summary with needle",
         }
         const state = createState(["m2", "m3"], [summary])
-        const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages as any, state, logger)
+        const { transformed, syntheticMap } = transformMessagesForSearch(
+            rawMessages as any,
+            state,
+            logger,
+        )
 
         assert.equal(transformed.length, 2)
         assert.equal(syntheticMap.size, 1)
         assert.equal(transformed[0].info.id, "m1")
-        assert.equal((transformed[1] as any).parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
+        assert.equal(
+            (transformed[1] as any).parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX),
+            true,
+        )
     })
 
     it("excludes Version 2 machinery from a future summary without dropping other parts", () => {
@@ -77,8 +84,17 @@ describe("compressed message transformation", () => {
                 completedMessageId: "compress-v2",
             },
         ]
-        const completion = textMessage("compress-v2", "reasoning before compression", "assistant") as any
-        completion.parts.push({ type: "tool", tool: "compress", callID: "call-v2", state: { status: "completed" } })
+        const completion = textMessage(
+            "compress-v2",
+            "reasoning before compression",
+            "assistant",
+        ) as any
+        completion.parts.push({
+            type: "tool",
+            tool: "compress",
+            callID: "call-v2",
+            state: { status: "completed" },
+        })
         completion.parts.push({ type: "text", text: "work after compression" })
         const rawMessages = [
             textMessage("before-v2", "before"),
@@ -91,11 +107,18 @@ describe("compressed message transformation", () => {
         const span = selectDeterministicCompressionSpan(rawMessages as any, state, logger, 0)
 
         assert.deepEqual(span.messageIds, ["before-v2", "compress-v2", "after-v2", "user-v2"])
-        assert.equal(span.messages.flatMap((message) => message.parts).some((part: any) => part.tool === "compress"), false)
-        assert.match(JSON.stringify(span.messages), /reasoning before compression|work after compression|continued work/)
+        assert.equal(
+            span.messages
+                .flatMap((message) => message.parts)
+                .some((part: any) => part.tool === "compress"),
+            false,
+        )
+        assert.match(
+            JSON.stringify(span.messages),
+            /reasoning before compression|work after compression|continued work/,
+        )
         assert.doesNotMatch(JSON.stringify(span.messages), /CONTEXT MANAGEMENT REQUESTED/)
     })
-
 })
 
 describe("compress summary maintenance", () => {

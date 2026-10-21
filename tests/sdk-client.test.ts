@@ -32,8 +32,11 @@ describe("beta Promise session adapter", () => {
             model: { providerID: "openai", id: "gpt-test", variant: "high" },
         })
 
-        const messages = await listSessionMessages(client, "session") as any[]
-        assert.deepEqual(messages.map((message) => message.info.id), ["user", "assistant"])
+        const messages = (await listSessionMessages(client, "session")) as any[]
+        assert.deepEqual(
+            messages.map((message) => message.info.id),
+            ["user", "assistant"],
+        )
         assert.equal(messages[0].info.variant, "high")
         assert.equal(messages[1].info.parentID, "user")
     })
@@ -59,14 +62,26 @@ describe("beta Promise session adapter", () => {
         })
 
         assert.deepEqual(calls, [
-            ["prompt", { sessionID: "session", text: "manage", id: "message", delivery: "steer", resume: true }],
-            ["synthetic", {
-                sessionID: "session",
-                text: "status",
-                description: "status",
-                metadata: { "opencode.context-compress.ignored": true },
-                resume: false,
-            }],
+            [
+                "prompt",
+                {
+                    sessionID: "session",
+                    text: "manage",
+                    id: "message",
+                    delivery: "steer",
+                    resume: true,
+                },
+            ],
+            [
+                "synthetic",
+                {
+                    sessionID: "session",
+                    text: "status",
+                    description: "status",
+                    metadata: { "opencode.context-compress.ignored": true },
+                    resume: false,
+                },
+            ],
         ])
     })
 })

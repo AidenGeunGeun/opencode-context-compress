@@ -13,11 +13,14 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
         process.env.XDG_CONFIG_HOME = join(root, "config")
         process.env.XDG_DATA_HOME = join(root, "data")
         await mkdir(join(root, "config", "opencode"), { recursive: true })
-        await writeFile(join(root, "config", "opencode", "compress.json"), JSON.stringify({
-            protectedTurns: 0,
-            notification: "off",
-            autoCompression: { enabled: false },
-        }))
+        await writeFile(
+            join(root, "config", "opencode", "compress.json"),
+            JSON.stringify({
+                protectedTurns: 0,
+                notification: "off",
+                autoCompression: { enabled: false },
+            }),
+        )
 
         try {
             const staged = process.env.OPENCODE_COMPRESS_TEST_BUNDLE
@@ -51,13 +54,18 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                     type: "assistant",
                     agent: "build",
                     model: { providerID: "openai", id: "gpt-test" },
-                    content: [{
-                        type: "tool",
-                        id: "call-compress",
-                        name: "compress",
-                        state: { status: "running", input: { summary: "Earlier", topic: "Earlier" } },
-                        time: { created: 5 },
-                    }],
+                    content: [
+                        {
+                            type: "tool",
+                            id: "call-compress",
+                            name: "compress",
+                            state: {
+                                status: "running",
+                                input: { summary: "Earlier", topic: "Earlier" },
+                            },
+                            time: { created: 5 },
+                        },
+                    ],
                     tokens: { input: 12, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
                     time: { created: 5 },
                 },
@@ -89,17 +97,27 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                     },
                 },
                 model: {
-                    list: async () => ({ data: [{
-                        id: "gpt-test",
-                        providerID: "openai",
-                        limit: { context: 1000 },
-                    }] }),
+                    list: async () => ({
+                        data: [
+                            {
+                                id: "gpt-test",
+                                providerID: "openai",
+                                limit: { context: 1000 },
+                            },
+                        ],
+                    }),
                 },
                 event: { subscribe: () => events },
             } as any)
 
-            assert.deepEqual(commands.map((command) => command.name), ["compress"])
-            assert.deepEqual(tools.map((tool) => tool.name), ["compress", "squash"])
+            assert.deepEqual(
+                commands.map((command) => command.name),
+                ["compress"],
+            )
+            assert.deepEqual(
+                tools.map((tool) => tool.name),
+                ["compress", "squash"],
+            )
             assert.deepEqual([...hooks.keys()], ["context", "generate"])
 
             await commands[0].execute({
@@ -112,9 +130,19 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
 
             const modelMessages = [
                 { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
-                { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "done" }] },
+                {
+                    id: "old-assistant",
+                    role: "assistant",
+                    content: [{ type: "text", text: "done" }],
+                },
                 { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
-                { id: "tool-message", role: "assistant", content: [{ type: "tool-call", id: "call-compress", name: "compress", input: {} }] },
+                {
+                    id: "tool-message",
+                    role: "assistant",
+                    content: [
+                        { type: "tool-call", id: "call-compress", name: "compress", input: {} },
+                    ],
+                },
             ]
             await hooks.get("context")?.({
                 sessionID,
@@ -130,7 +158,13 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
 
             const result = await tools[0].execute(
                 { summary: "Earlier work completed", topic: "Earlier" },
-                { sessionID, agent: "build", messageID: "tool-message", id: "call-compress", progress: async () => undefined },
+                {
+                    sessionID,
+                    agent: "build",
+                    messageID: "tool-message",
+                    id: "call-compress",
+                    progress: async () => undefined,
+                },
             )
             assert.match(result.content, /Compression complete/)
 
@@ -148,7 +182,12 @@ describe("built OpenCode 2.0.13 Promise plugin", () => {
                 generation: {},
                 providerOptions: {},
             })
-            assert.equal(sideMessages.some((message) => message.id === "old-user" || message.id === "old-assistant"), false)
+            assert.equal(
+                sideMessages.some(
+                    (message) => message.id === "old-user" || message.id === "old-assistant",
+                ),
+                false,
+            )
             assert.match(JSON.stringify(sideMessages), /Earlier work completed/)
             assert.deepEqual(sideMessages.at(-1), {
                 role: "user",

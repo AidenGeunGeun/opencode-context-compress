@@ -8,7 +8,7 @@ import type { SessionState, WithParts } from "../state/index.js"
 import {
     commitDurableSessionState,
     reconcileSessionLifecycle,
-    SessionStateManager,
+    type SessionStateManager,
 } from "../state/state.js"
 import { saveSessionState } from "../state/persistence.js"
 import { getCurrentParams } from "../token-utils.js"
@@ -69,11 +69,7 @@ function parseAutoAction(args: string[]): ParsedAutoAction {
     return { kind: "invalid" }
 }
 
-function formatStatus(
-    config: PluginConfig,
-    state: SessionState,
-    messages: WithParts[],
-): string {
+function formatStatus(config: PluginConfig, state: SessionState, messages: WithParts[]): string {
     const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state)
     const remaining = getPostCompressionCooldownRemaining(state, messages)
     const globalAvailability = policy.globallyEnabled
@@ -98,16 +94,8 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
         response = AUTO_USAGE
     } else {
         response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-            const messages = (await listSessionMessages(
-                ctx.client,
-                ctx.sessionId,
-            )) as WithParts[]
-            await reconcileSessionLifecycle(
-                ctx.state,
-                ctx.sessionId,
-                ctx.logger,
-                messages,
-            )
+            const messages = (await listSessionMessages(ctx.client, ctx.sessionId)) as WithParts[]
+            await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages)
 
             if (!ctx.state.persistenceSynchronized) {
                 return "Automatic compression settings are unavailable because saved session state could not be loaded. No session setting was changed."

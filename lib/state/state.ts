@@ -19,8 +19,7 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.compressionMapSnapshot = candidate.compressionMapSnapshot
     state.stats = candidate.stats
     state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride
-    state.autoCompressionTokenThresholdOverride =
-        candidate.autoCompressionTokenThresholdOverride
+    state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride
     state.autoCompressionContextWindowRatioOverride =
         candidate.autoCompressionContextWindowRatioOverride
     state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId
@@ -29,7 +28,10 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.persistedLastUpdated = candidate.persistedLastUpdated
 }
 
-function applyPersistedState(state: SessionState, persisted: Awaited<ReturnType<typeof loadSessionState>>) {
+function applyPersistedState(
+    state: SessionState,
+    persisted: Awaited<ReturnType<typeof loadSessionState>>,
+) {
     if (!persisted || persisted.status !== "loaded") {
         return
     }
@@ -168,9 +170,7 @@ function getCompressionStateCompactionOrder(
     if (!hasCompressionState) return "after"
     if (referencedMessageIds.size === 0) return "unknown"
 
-    const indexByMessageId = new Map(
-        messages.map((message, index) => [message.info.id, index]),
-    )
+    const indexByMessageId = new Map(messages.map((message, index) => [message.info.id, index]))
     let missingReference = false
     for (const messageId of referencedMessageIds) {
         const messageIndex = indexByMessageId.get(messageId)
@@ -205,8 +205,7 @@ export async function reconcileSessionLifecycle(
     const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction
     const requiresCompactionReset =
         compactionIndex !== -1 &&
-        (compactionOrder === "before" ||
-            (compactionOrder === "unknown" && unresolvedNewCompaction))
+        (compactionOrder === "before" || (compactionOrder === "unknown" && unresolvedNewCompaction))
 
     const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined
     if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
@@ -223,9 +222,7 @@ export async function reconcileSessionLifecycle(
                   }
                 : {}),
             ...(hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {}),
-            ...(unresolvedNewCompaction
-                ? { lastCompaction: compactionTimestamp }
-                : {}),
+            ...(unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}),
         }
         const persisted = await saveSessionState(candidate, logger)
         if (!persisted) {

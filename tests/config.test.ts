@@ -1,10 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import {
-    getInvalidConfigKeys,
-    resolveProtectedTurnsSetting,
-} from "../lib/config.ts"
+import { getInvalidConfigKeys, resolveProtectedTurnsSetting } from "../lib/config.ts"
 
 describe("automatic compression defaults", () => {
     it("rejects keys outside the documented surface", () => {
@@ -24,10 +21,7 @@ describe("protectedTurns configuration", () => {
     })
 
     it("accepts the legacy nested key as a fallback", () => {
-        assert.equal(
-            resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 7 } }),
-            7,
-        )
+        assert.equal(resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 7 } }), 7)
     })
 
     it("prefers the new top-level key when both are present", () => {
@@ -42,11 +36,7 @@ describe("protectedTurns configuration", () => {
 
     it("does not let a lower-priority legacy alias replace an explicit top-level value", () => {
         assert.equal(
-            resolveProtectedTurnsSetting(
-                { autoCompression: { protectedTurns: 9 } },
-                2,
-                true,
-            ),
+            resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 9 } }, 2, true),
             2,
         )
     })

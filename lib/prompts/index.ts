@@ -10,9 +10,7 @@ export function renderSystemPrompt(): string {
     return SYSTEM_PROMPT.trim()
 }
 
-export function renderAutomaticSystemPrompt(
-    vars: Record<string, string>,
-): string {
+export function renderAutomaticSystemPrompt(vars: Record<string, string>): string {
     let prompt = AUTOMATIC_SYSTEM_PROMPT.trim()
     for (const [key, value] of Object.entries(vars)) {
         prompt = prompt.replaceAll(`{{${key}}}`, value)

@@ -41,6 +41,8 @@ export function orderCompressBlocks(
     }))
 }
 
-export function formatCompressBlockContent(block: Pick<OrderedCompressBlock, "label" | "summary">): string {
+export function formatCompressBlockContent(
+    block: Pick<OrderedCompressBlock, "label" | "summary">,
+): string {
     return `${COMPRESS_SUMMARY_PREFIX}[${block.label}]\n\n${block.summary.summary}`
 }

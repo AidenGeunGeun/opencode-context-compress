@@ -93,18 +93,23 @@ function buildDetailedMessage(args: {
         showCompression,
     } = args
 
-    let message = formatStatsHeader(state.stats.totalCompressTokens, state.stats.compressTokenCounter)
+    let message = formatStatsHeader(
+        state.stats.totalCompressTokens,
+        state.stats.compressTokenCounter,
+    )
     const rangeTokenCount = rangeTokenEstimate ?? state.stats.compressTokenCounter
     const rangeTokenCountLabel = `~${formatTokenCount(rangeTokenCount)}`
-    const progressBar = formatProgressBar(totalMessages, startResult.messageIndex, endResult.messageIndex, 25)
+    const progressBar = formatProgressBar(
+        totalMessages,
+        startResult.messageIndex,
+        endResult.messageIndex,
+        25,
+    )
 
     message += `\n\n▣ Compressing (${rangeTokenCountLabel}) ${progressBar}`
     message += `\n→ Topic: ${topic}`
     message += `\n→ Items: ${itemCount} ${itemCount === 1 ? "entry" : "entries"}`
-    message +=
-        toolIds.length > 0
-            ? ` and ${toolIds.length} tools condensed`
-            : " condensed"
+    message += toolIds.length > 0 ? ` and ${toolIds.length} tools condensed` : " condensed"
 
     if (showCompression) {
         message += `\n→ Compression: ${summary}`

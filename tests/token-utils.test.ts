@@ -38,7 +38,8 @@ describe("countTokens", () => {
     })
 
     it("uses Anthropic tokenizer when providerId is anthropic", () => {
-        const text = "function calculateTokens(text: string): number { return Math.ceil(text.length / 4); }"
+        const text =
+            "function calculateTokens(text: string): number { return Math.ceil(text.length / 4); }"
         const anthropicCount = countTokens(text, "anthropic")
         const defaultCount = countTokens(text)
         // Both should be positive

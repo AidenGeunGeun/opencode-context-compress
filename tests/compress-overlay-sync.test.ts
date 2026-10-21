@@ -146,8 +146,8 @@ describe("session-scoped compress overlay", () => {
             const output = { messages: cloneMessages(rawMessages) as any }
             await handler({}, output)
 
-            const summaryMessages = output.messages.filter(
-                (message: any) => message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX),
+            const summaryMessages = output.messages.filter((message: any) =>
+                message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX),
             )
             assert.equal(summaryMessages.length, 2)
             assert.deepEqual(

@@ -45,9 +45,7 @@ function findExecutingToolMessage(
 
     const hasExecutingCall = matches[0].message.parts.some(
         (part) =>
-            part.type === "tool" &&
-            part.tool === "compress" &&
-            (!callId || part.callID === callId),
+            part.type === "tool" && part.tool === "compress" && (!callId || part.callID === callId),
     )
     return hasExecutingCall ? matches[0] : undefined
 }
@@ -134,7 +132,11 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
     return {
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            summary: { type: "string", description: "Compact structured continuation handoff described by this tool's instructions" },
+            summary: {
+                type: "string",
+                description:
+                    "Compact structured continuation handoff described by this tool's instructions",
+            },
             topic: { type: "string", description: "Short block title, usually 3-5 words" },
         },
         async execute(args, toolCtx) {
@@ -154,7 +156,9 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                     rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
-                    throw new Error(`compress could not fetch session messages: ${message}. Nothing was compressed.`)
+                    throw new Error(
+                        `compress could not fetch session messages: ${message}. Nothing was compressed.`,
+                    )
                 }
                 if (rawMessages.length === 0) {
                     throw new Error(
@@ -170,7 +174,12 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                 }
 
                 const callId = toolCtx.id ?? toolCtx.callID
-                const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, callId)
+                const boundary = resolveCompressionBoundary(
+                    rawMessages,
+                    state,
+                    toolCtx.messageID,
+                    callId,
+                )
                 if (
                     !boundary.managementTurn &&
                     getPostCompressionCooldownRemaining(state, rawMessages) > 0
@@ -218,10 +227,9 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                         topic,
                     },
                 ]
-                const storedBlock = orderCompressBlocks(
-                    boundary.history,
-                    candidateSummaries,
-                ).find((block) => block.summary === candidateSummaries[candidateSummaries.length - 1])
+                const storedBlock = orderCompressBlocks(boundary.history, candidateSummaries).find(
+                    (block) => block.summary === candidateSummaries[candidateSummaries.length - 1],
+                )
                 if (!storedBlock) {
                     throw new Error(
                         "compress could not reconcile the new compressed block with the current transcript. Nothing was compressed.",

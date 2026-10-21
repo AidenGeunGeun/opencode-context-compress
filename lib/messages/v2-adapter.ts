@@ -14,50 +14,65 @@ export function adaptProjectedMessages(
 ): WithParts[] {
     const seen = new Set<string>()
     let parentID: string | undefined
-    return values.filter((value) => !isRecord(value) || value.type !== "idle").map((value) => {
-        const message = requireRecord(value, "session message")
-        const id = requireString(message.id, "session message id")
-        if (seen.has(id)) throw new Error(`Duplicate projected session message ID: ${id}`)
-        seen.add(id)
-        const type = requireString(message.type, `session message ${id} type`)
-        const time = requireRecord(message.time, `session message ${id} time`)
-        const created = requireNumber(time.created, `session message ${id} created time`)
+    return values
+        .filter((value) => !isRecord(value) || value.type !== "idle")
+        .map((value) => {
+            const message = requireRecord(value, "session message")
+            const id = requireString(message.id, "session message id")
+            if (seen.has(id)) throw new Error(`Duplicate projected session message ID: ${id}`)
+            seen.add(id)
+            const type = requireString(message.type, `session message ${id} type`)
+            const time = requireRecord(message.time, `session message ${id} time`)
+            const created = requireNumber(time.created, `session message ${id} created time`)
 
-        if (type === "user") {
-            parentID = id
-            return user(sessionID, id, created, message, selection)
-        }
-        if (type === "synthetic") return synthetic(sessionID, id, created, message, selection)
-        if (type === "assistant") return assistant(sessionID, id, created, message, time, parentID)
-        if (type === "compaction") return compaction(sessionID, id, created, message)
-        if (type === "system" || type === "skill") {
-            return system(sessionID, id, created, type, typeof message.text === "string" ? message.text : "")
-        }
-        if (type === "shell") {
-            const output = isRecord(message.output) && typeof message.output.output === "string" ? message.output.output : ""
-            const entry = system(
-                sessionID,
-                id,
-                created,
-                type,
-                `The following shell command was executed by the user:\n\nCommand:\n${String(message.command ?? "")}\n\nOutput:\n${output}`,
-            )
-            entry.info.finish = message.status === "running" ? undefined : "stop"
-            return entry
-        }
-        if (type === "location-switched") {
-            const location = isRecord(message.location) ? message.location.directory : undefined
-            return system(
-                sessionID,
-                id,
-                created,
-                type,
-                typeof location === "string" ? `The working directory has been changed to ${location}.` : "",
-            )
-        }
-        if (type === "agent-switched" || type === "model-switched") return system(sessionID, id, created, type, "")
-        throw new Error(`Unsupported projected session message type: ${type}`)
-    })
+            if (type === "user") {
+                parentID = id
+                return user(sessionID, id, created, message, selection)
+            }
+            if (type === "synthetic") return synthetic(sessionID, id, created, message, selection)
+            if (type === "assistant")
+                return assistant(sessionID, id, created, message, time, parentID)
+            if (type === "compaction") return compaction(sessionID, id, created, message)
+            if (type === "system" || type === "skill") {
+                return system(
+                    sessionID,
+                    id,
+                    created,
+                    type,
+                    typeof message.text === "string" ? message.text : "",
+                )
+            }
+            if (type === "shell") {
+                const output =
+                    isRecord(message.output) && typeof message.output.output === "string"
+                        ? message.output.output
+                        : ""
+                const entry = system(
+                    sessionID,
+                    id,
+                    created,
+                    type,
+                    `The following shell command was executed by the user:\n\nCommand:\n${String(message.command ?? "")}\n\nOutput:\n${output}`,
+                )
+                entry.info.finish = message.status === "running" ? undefined : "stop"
+                return entry
+            }
+            if (type === "location-switched") {
+                const location = isRecord(message.location) ? message.location.directory : undefined
+                return system(
+                    sessionID,
+                    id,
+                    created,
+                    type,
+                    typeof location === "string"
+                        ? `The working directory has been changed to ${location}.`
+                        : "",
+                )
+            }
+            if (type === "agent-switched" || type === "model-switched")
+                return system(sessionID, id, created, type, "")
+            throw new Error(`Unsupported projected session message type: ${type}`)
+        })
 }
 
 function user(
@@ -80,7 +95,10 @@ function user(
             variant: selection?.model?.variant,
             time: { created },
         } as any,
-        parts: typeof message.text === "string" && message.text.length > 0 ? [{ type: "text", text: message.text } as any] : [],
+        parts:
+            typeof message.text === "string" && message.text.length > 0
+                ? [{ type: "text", text: message.text } as any]
+                : [],
     }
 }
 
@@ -110,7 +128,9 @@ function synthetic(
                 type: "text",
                 text: typeof message.text === "string" ? message.text : "",
                 synthetic: true,
-                ...(metadata["opencode.context-compress.ignored"] === true ? { ignored: true } : {}),
+                ...(metadata["opencode.context-compress.ignored"] === true
+                    ? { ignored: true }
+                    : {}),
             } as any,
         ],
     }
@@ -145,7 +165,10 @@ function assistant(
             error: message.error,
             tokens: adaptTokens(message.tokens),
         } as any,
-        parts: [{ type: "step-start" } as any, ...content.map((part) => adaptAssistantPart(id, part))],
+        parts: [
+            { type: "step-start" } as any,
+            ...content.map((part) => adaptAssistantPart(id, part)),
+        ],
     }
 }
 
@@ -153,12 +176,20 @@ function adaptAssistantPart(messageID: string, value: unknown): WithParts["parts
     const part = requireRecord(value, `assistant message ${messageID} content`)
     const type = requireString(part.type, `assistant message ${messageID} content type`)
     if (type === "text" || type === "reasoning") {
-        return { type, text: typeof part.text === "string" ? part.text : "" } as WithParts["parts"][number]
+        return {
+            type,
+            text: typeof part.text === "string" ? part.text : "",
+        } as WithParts["parts"][number]
     }
     if (type !== "tool") throw new Error(`Unsupported assistant content type: ${type}`)
     const state = requireRecord(part.state, `assistant tool ${String(part.id)} state`)
     const status = requireToolStatus(state.status)
-    const input = status === "streaming" ? String(state.input ?? "") : isRecord(state.input) ? state.input : {}
+    const input =
+        status === "streaming"
+            ? String(state.input ?? "")
+            : isRecord(state.input)
+              ? state.input
+              : {}
     return {
         type: "tool",
         callID: requireString(part.id, "assistant tool id"),
@@ -173,7 +204,12 @@ function adaptAssistantPart(messageID: string, value: unknown): WithParts["parts
     } as unknown as WithParts["parts"][number]
 }
 
-function compaction(sessionID: string, id: string, created: number, message: RecordValue): WithParts {
+function compaction(
+    sessionID: string,
+    id: string,
+    created: number,
+    message: RecordValue,
+): WithParts {
     const status = requireString(message.status, `compaction message ${id} status`)
     return {
         info: {
@@ -186,11 +222,22 @@ function compaction(sessionID: string, id: string, created: number, message: Rec
             error: status === "failed" ? message.error : undefined,
             time: { created, ...(status === "completed" ? { completed: created } : {}) },
         } as any,
-        parts: [{ type: "compaction", summary: typeof message.summary === "string" ? message.summary : undefined } as any],
+        parts: [
+            {
+                type: "compaction",
+                summary: typeof message.summary === "string" ? message.summary : undefined,
+            } as any,
+        ],
     }
 }
 
-function system(sessionID: string, id: string, created: number, sourceType: string, text: string): WithParts {
+function system(
+    sessionID: string,
+    id: string,
+    created: number,
+    sourceType: string,
+    text: string,
+): WithParts {
     return {
         info: { id, sessionID, role: "system", sourceType, time: { created } } as any,
         parts: text ? [{ type: "text", text } as any] : [],
@@ -210,14 +257,20 @@ function adaptTokens(value: unknown) {
 
 function toolOutput(value: unknown) {
     if (!Array.isArray(value)) return value
-    if (value.length === 1 && isRecord(value[0]) && value[0].type === "text" && typeof value[0].text === "string") {
+    if (
+        value.length === 1 &&
+        isRecord(value[0]) &&
+        value[0].type === "text" &&
+        typeof value[0].text === "string"
+    ) {
         return value[0].text
     }
     return value
 }
 
 function requireToolStatus(value: unknown): "streaming" | "running" | "completed" | "error" {
-    if (value === "streaming" || value === "running" || value === "completed" || value === "error") return value
+    if (value === "streaming" || value === "running" || value === "completed" || value === "error")
+        return value
     throw new Error(`Unsupported assistant tool state: ${String(value)}`)
 }
 

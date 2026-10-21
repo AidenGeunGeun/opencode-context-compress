@@ -26,7 +26,7 @@ export interface SquashCommandContext {
 export function extractSquashCommandResidual(args: string | undefined): string | undefined {
     const residual = (args || "")
         .replace(/^\s*squash\b/i, "")
-        .replace(/^[\s:;,.|\-]+/, "")
+        .replace(/^[\s:;,.|-]+/, "")
         .trim()
     return residual || undefined
 }
@@ -44,7 +44,7 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
         return
     }
 
-    const staged = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const staged = (await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
         if (!ctx.state.persistenceSynchronized) {
             return async () => {
                 await sendManageFailureFeedback(
@@ -107,7 +107,7 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
             retainedText: extractSquashCommandResidual(ctx.arguments),
             source: "squash",
         })
-    }) as StagedManagementTurn | undefined
+    })) as StagedManagementTurn | undefined
 
     if (staged) await staged()
 }

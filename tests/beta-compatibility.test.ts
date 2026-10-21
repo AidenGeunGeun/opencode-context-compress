@@ -58,7 +58,11 @@ function projected(sessionID: string) {
                     type: "tool",
                     id: "call-compress",
                     name: "compress",
-                    state: { status: "running", input: { summary: "Earlier work", topic: "Earlier" }, metadata: {} },
+                    state: {
+                        status: "running",
+                        input: { summary: "Earlier work", topic: "Earlier" },
+                        metadata: {},
+                    },
                 },
             ],
             finish: "tool-calls",
@@ -82,16 +86,16 @@ describe("beta projected message compatibility", () => {
                     time: { created: 6 },
                 },
             ],
-            { agent: "orchestrator", model: { providerID: "anthropic", id: "claude", variant: "high" } },
+            {
+                agent: "orchestrator",
+                model: { providerID: "anthropic", id: "claude", variant: "high" },
+            },
         )
 
-        assert.deepEqual(messages.map((message) => message.info.id), [
-            "old-user",
-            "old-assistant",
-            "owner",
-            "tool-message",
-            "feedback",
-        ])
+        assert.deepEqual(
+            messages.map((message) => message.info.id),
+            ["old-user", "old-assistant", "owner", "tool-message", "feedback"],
+        )
         assert.equal((messages[0].info as any).agent, "orchestrator")
         assert.equal((messages[3].info as any).parentID, "owner")
         assert.equal((messages[3].parts[1] as any).callID, "call-compress")
@@ -121,19 +125,34 @@ describe("beta projected message compatibility", () => {
         ]
         const transformed = transformV2Messages(raw, state, logger, [
             { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
-            { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "older result" }] },
+            {
+                id: "old-assistant",
+                role: "assistant",
+                content: [{ type: "text", text: "older result" }],
+            },
             { id: "feedback", role: "user", content: [{ type: "text", text: "status" }] },
         ])
 
         assert.match(String(transformed[0].content[0].text), /\[b0\].*Earlier work/s)
-        assert.equal(transformed.some((message) => message.id === "old-user"), false)
-        assert.equal(transformed.some((message) => message.id === "feedback"), false)
+        assert.equal(
+            transformed.some((message) => message.id === "old-user"),
+            false,
+        )
+        assert.equal(
+            transformed.some((message) => message.id === "feedback"),
+            false,
+        )
     })
 
     it("restores non-user block anchors and allows subsequent compression", () => {
         const anchors = [
             { id: "model-change", type: "model-switched", time: { created: 0 } },
-            { id: "system-entry", type: "system", text: "Earlier instructions", time: { created: 0 } },
+            {
+                id: "system-entry",
+                type: "system",
+                text: "Earlier instructions",
+                time: { created: 0 },
+            },
             projected("session")[1],
         ]
 
@@ -146,11 +165,13 @@ describe("beta projected message compatibility", () => {
             ])
             const state = new SessionStateManager().get("session")
             state.compressed.messageIds = new Set([anchor.id, "old-user"])
-            state.compressSummaries = [{
-                anchorMessageId: anchor.id,
-                messageIds: [anchor.id, "old-user"],
-                summary: "Earlier work was completed.",
-            }]
+            state.compressSummaries = [
+                {
+                    anchorMessageId: anchor.id,
+                    messageIds: [anchor.id, "old-user"],
+                    summary: "Earlier work was completed.",
+                },
+            ]
             const modelMessages = [
                 { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
                 { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
@@ -160,26 +181,44 @@ describe("beta projected message compatibility", () => {
 
             assert.equal(transformed.length, 2, anchor.type)
             assert.equal(transformed[0].role, "user")
-            assert.match(String(transformed[0].content[0].text), /\[b0\].*Earlier work was completed/s)
+            assert.match(
+                String(transformed[0].content[0].text),
+                /\[b0\].*Earlier work was completed/s,
+            )
             assert.deepEqual(transformed[1], modelMessages[1])
             assert.deepEqual(transformV2Messages(raw, state, logger, modelMessages), transformed)
-            assert.deepEqual(
-                selectDeterministicCompressionSpan(raw, state, logger, 0).messageIds,
-                ["later-model-change", "owner"],
-            )
+            assert.deepEqual(selectDeterministicCompressionSpan(raw, state, logger, 0).messageIds, [
+                "later-model-change",
+                "owner",
+            ])
             assert.equal(state.compressSummaries[0].anchorMessageId, anchor.id)
         }
     })
 
     it("leaves history before the latest completed native compaction out of selection", () => {
         const [oldUser, oldAssistant, owner] = projected("session")
-        const nativeCompaction = (id: string, status: string) =>
-            ({ id, type: "compaction", status, summary: "Native summary", time: { created: 3 } })
-        const later = { id: "later-user", type: "user", text: "continue", files: [], time: { created: 6 } }
+        const nativeCompaction = (id: string, status: string) => ({
+            id,
+            type: "compaction",
+            status,
+            summary: "Native summary",
+            time: { created: 3 },
+        })
+        const later = {
+            id: "later-user",
+            type: "user",
+            text: "continue",
+            files: [],
+            time: { created: 6 },
+        }
         const state = new SessionStateManager().get("session")
 
         const completed = adaptProjectedMessages("session", [
-            oldUser, oldAssistant, nativeCompaction("native", "completed"), owner, later,
+            oldUser,
+            oldAssistant,
+            nativeCompaction("native", "completed"),
+            owner,
+            later,
         ])
         assert.deepEqual(
             selectDeterministicCompressionSpan(completed, state, logger, 0).messageIds,
@@ -187,9 +226,17 @@ describe("beta projected message compatibility", () => {
         )
 
         const failed = adaptProjectedMessages("session", [
-            oldUser, oldAssistant, nativeCompaction("native", "failed"), owner, later,
+            oldUser,
+            oldAssistant,
+            nativeCompaction("native", "failed"),
+            owner,
+            later,
         ])
-        assert.ok(selectDeterministicCompressionSpan(failed, state, logger, 0).messageIds.includes("old-user"))
+        assert.ok(
+            selectDeterministicCompressionSpan(failed, state, logger, 0).messageIds.includes(
+                "old-user",
+            ),
+        )
     })
 
     it("keeps attached media objects intact", () => {
@@ -200,8 +247,19 @@ describe("beta projected message compatibility", () => {
         }
         const media = new Asset()
         const transformed = transformV2Messages(raw, state, logger, [
-            { id: "old-user", role: "user", content: [{ type: "text", text: "older" }, { type: "media", media }] },
-            { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "older result" }] },
+            {
+                id: "old-user",
+                role: "user",
+                content: [
+                    { type: "text", text: "older" },
+                    { type: "media", media },
+                ],
+            },
+            {
+                id: "old-assistant",
+                role: "assistant",
+                content: [{ type: "text", text: "older result" }],
+            },
         ])
 
         assert.equal(transformed[0].content[1].media, media)
@@ -212,13 +270,23 @@ describe("beta projected message compatibility", () => {
         const state = new SessionStateManager().get("session")
         const transformed = transformV2Messages(raw, state, logger, [
             { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
-            { id: "old-assistant", role: "assistant", content: [{ type: "text", text: "older result" }] },
-            { role: "system", content: [{ type: "text", text: "Generate without mutating history" }] },
+            {
+                id: "old-assistant",
+                role: "assistant",
+                content: [{ type: "text", text: "older result" }],
+            },
+            {
+                role: "system",
+                content: [{ type: "text", text: "Generate without mutating history" }],
+            },
             { role: "user", content: [{ type: "text", text: "Transient generation prompt" }] },
         ])
 
         assert.deepEqual(transformed.slice(-2), [
-            { role: "system", content: [{ type: "text", text: "Generate without mutating history" }] },
+            {
+                role: "system",
+                content: [{ type: "text", text: "Generate without mutating history" }],
+            },
             { role: "user", content: [{ type: "text", text: "Transient generation prompt" }] },
         ])
     })
@@ -239,11 +307,19 @@ describe("beta tool and automatic lifecycle compatibility", () => {
         try {
             const receipt = await tool.execute(
                 { summary: "Earlier work", topic: "Earlier" },
-                { sessionID, agent: "orchestrator", messageID: "tool-message", id: "call-compress" },
+                {
+                    sessionID,
+                    agent: "orchestrator",
+                    messageID: "tool-message",
+                    id: "call-compress",
+                },
             )
 
             assert.match(receipt, /Compression complete/)
-            assert.deepEqual(manager.get(sessionID).compressSummaries[0].messageIds, ["old-user", "old-assistant"])
+            assert.deepEqual(manager.get(sessionID).compressSummaries[0].messageIds, [
+                "old-user",
+                "old-assistant",
+            ])
             assert.equal(existsSync(sessionFile(sessionID)), true)
         } finally {
             await cleanup(sessionID)
@@ -292,7 +368,12 @@ describe("beta tool and automatic lifecycle compatibility", () => {
         try {
             const receipt = await tool.execute(
                 { from: "b0", to: "b1", summary: "Combined", topic: "Combined" },
-                { sessionID, agent: "orchestrator", messageID: "squash-message", id: "call-squash" },
+                {
+                    sessionID,
+                    agent: "orchestrator",
+                    messageID: "squash-message",
+                    id: "call-squash",
+                },
             )
 
             assert.match(receipt, /Squash complete/)
@@ -313,7 +394,11 @@ describe("beta tool and automatic lifecycle compatibility", () => {
             synthetic: async () => undefined,
         })
         const manager = new SessionStateManager()
-        manager.get(sessionID).modelContext = { providerId: "anthropic", modelId: "claude", contextLimit: 1_000 }
+        manager.get(sessionID).modelContext = {
+            providerId: "anthropic",
+            modelId: "claude",
+            contextLimit: 1_000,
+        }
         const handler = createAutomaticCompressionEventHandler(client, manager, logger, config)
 
         try {
@@ -344,8 +429,16 @@ describe("beta tool and automatic lifecycle compatibility", () => {
         })
         const matching = new SessionStateManager()
         const other = new SessionStateManager()
-        matching.get(sessionID).modelContext = { providerId: "anthropic", modelId: "claude", contextLimit: 1_000 }
-        other.get(sessionID).modelContext = { providerId: "anthropic", modelId: "claude", contextLimit: 1_000 }
+        matching.get(sessionID).modelContext = {
+            providerId: "anthropic",
+            modelId: "claude",
+            contextLimit: 1_000,
+        }
+        other.get(sessionID).modelContext = {
+            providerId: "anthropic",
+            modelId: "claude",
+            contextLimit: 1_000,
+        }
         const handlers = [
             createAutomaticCompressionEventHandler(
                 client,
@@ -353,8 +446,13 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                 logger,
                 config,
                 async (_sessionID, event) => {
-                    const location = (event as { location?: { directory: string; workspaceID?: string } }).location
-                    return location?.directory === "/matching" && location.workspaceID === "workspace-a"
+                    const location = (
+                        event as { location?: { directory: string; workspaceID?: string } }
+                    ).location
+                    return (
+                        location?.directory === "/matching" &&
+                        location.workspaceID === "workspace-a"
+                    )
                 },
             ),
             createAutomaticCompressionEventHandler(
@@ -363,8 +461,13 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                 logger,
                 config,
                 async (_sessionID, event) => {
-                    const location = (event as { location?: { directory: string; workspaceID?: string } }).location
-                    return location?.directory === "/matching" && location.workspaceID === "workspace-b"
+                    const location = (
+                        event as { location?: { directory: string; workspaceID?: string } }
+                    ).location
+                    return (
+                        location?.directory === "/matching" &&
+                        location.workspaceID === "workspace-b"
+                    )
                 },
             ),
         ]
@@ -386,7 +489,12 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                     data: {
                         sessionID,
                         assistantMessageID: "old-assistant",
-                        tokens: { input: 20, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+                        tokens: {
+                            input: 20,
+                            output: 5,
+                            reasoning: 0,
+                            cache: { read: 0, write: 0 },
+                        },
                     },
                 })
             }

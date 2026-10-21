@@ -157,24 +157,24 @@ describe("SessionStateManager", () => {
             const reloadedParent = reloaded.get(parentId)
             const reloadedChild = reloaded.get(childId)
             await Promise.all([
-                ensureSessionInitialized(
-                    reloadedParent,
-                    parentId,
-                    logger,
-                    [createMessage("parent-anchor", parentId, "user")] as any,
-                ),
-                ensureSessionInitialized(
-                    reloadedChild,
-                    childId,
-                    logger,
-                    [createMessage("child-anchor", childId, "user")] as any,
-                ),
+                ensureSessionInitialized(reloadedParent, parentId, logger, [
+                    createMessage("parent-anchor", parentId, "user"),
+                ] as any),
+                ensureSessionInitialized(reloadedChild, childId, logger, [
+                    createMessage("child-anchor", childId, "user"),
+                ] as any),
             ])
 
             assert.equal(existsSync(getSessionFilePath(parentId)), true)
             assert.equal(existsSync(getSessionFilePath(childId)), true)
-            assert.deepEqual(reloadedParent.compressSummaries.map((item) => item.summary), ["Parent-only summary"])
-            assert.deepEqual(reloadedChild.compressSummaries.map((item) => item.summary), ["Child-only summary"])
+            assert.deepEqual(
+                reloadedParent.compressSummaries.map((item) => item.summary),
+                ["Parent-only summary"],
+            )
+            assert.deepEqual(
+                reloadedChild.compressSummaries.map((item) => item.summary),
+                ["Child-only summary"],
+            )
             assert.equal(reloadedParent.autoCompressionEnabledOverride, false)
             assert.equal(reloadedParent.autoCompressionTokenThresholdOverride, undefined)
             assert.equal(reloadedParent.compressionCooldownAfterMessageId, "parent-cooldown")
@@ -269,12 +269,7 @@ describe("ensureSessionInitialized", () => {
         }
 
         try {
-            await ensureSessionInitialized(
-                state,
-                sessionId,
-                logger,
-                [compaction] as any,
-            )
+            await ensureSessionInitialized(state, sessionId, logger, [compaction] as any)
 
             assert.equal(state.initialized, true)
             assert.equal(state.lastCompaction, 0)
@@ -307,7 +302,12 @@ describe("ensureSessionInitialized", () => {
 
             const messages = [createMessage("m1", sessionId, "user")]
 
-            const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages as any)
+            const syncResult = await ensureSessionInitialized(
+                state,
+                sessionId,
+                logger,
+                messages as any,
+            )
 
             assert.equal(syncResult.source, "disk-cleared")
             assert.equal(state.hasPersistedState, false)
@@ -357,7 +357,12 @@ describe("ensureSessionInitialized", () => {
                 createMessage("m3", sessionId, "assistant"),
             ]
 
-            const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages as any)
+            const syncResult = await ensureSessionInitialized(
+                state,
+                sessionId,
+                logger,
+                messages as any,
+            )
 
             assert.equal(syncResult.source, "memory")
             assert.equal(state.hasPersistedState, true)
@@ -442,7 +447,10 @@ describe("saveSessionState", () => {
             assert.equal(existsSync(getSessionFilePath(sessionId)), true)
 
             const entries = await readdir(storageDir)
-            assert.equal(entries.some((entry) => entry.startsWith(`${sessionId}.json.tmp-`)), false)
+            assert.equal(
+                entries.some((entry) => entry.startsWith(`${sessionId}.json.tmp-`)),
+                false,
+            )
 
             const loadResult = await loadSessionState(sessionId, logger)
             assert.equal(loadResult.status, "loaded")
@@ -489,12 +497,9 @@ describe("saveSessionState", () => {
             assert.equal(typeof state.persistedLastUpdated, "string")
 
             const reloadedState = new SessionStateManager().get(sessionId)
-            await ensureSessionInitialized(
-                reloadedState,
-                sessionId,
-                logger,
-                [createMessage("m1", sessionId, "user")] as any,
-            )
+            await ensureSessionInitialized(reloadedState, sessionId, logger, [
+                createMessage("m1", sessionId, "user"),
+            ] as any)
             assert.equal(reloadedState.autoCompressionEnabledOverride, false)
             assert.equal(reloadedState.autoCompressionTokenThresholdOverride, 425_000)
             assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
@@ -540,7 +545,8 @@ describe("saveSessionState", () => {
 
             const loadResult = await loadSessionState(sessionId, logger)
             assert.equal(loadResult.status, "loaded")
-            if (loadResult.status !== "loaded") throw new Error(`Expected loaded, got ${loadResult.status}`)
+            if (loadResult.status !== "loaded")
+                throw new Error(`Expected loaded, got ${loadResult.status}`)
             assert.deepEqual(loadResult.state.managementTurns, [
                 {
                     triggerMessageId: "msg_compress_manage_legacy",

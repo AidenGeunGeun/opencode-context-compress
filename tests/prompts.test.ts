@@ -17,7 +17,8 @@ import { SQUASH_SYSTEM } from "../lib/prompts/_codegen/squash-system.generated.t
 import { SQUASH } from "../lib/prompts/_codegen/squash.generated.ts"
 import { POST_COMPRESSION_NOTICE } from "../lib/prompts/_codegen/post-compression-notice.generated.ts"
 
-const RETIRED = /compress_map|compress-context-map|pinned snapshot|handoff report|session notes|continuity file|goal reference/i
+const RETIRED =
+    /compress_map|compress-context-map|pinned snapshot|handoff report|session notes|continuity file|goal reference/i
 
 describe("compression prompts", () => {
     it("renders deterministic manual and automatic one-call workflows", () => {
@@ -28,7 +29,10 @@ describe("compression prompts", () => {
             threshold_reason: "the absolute token threshold",
         })
 
-        assert.match(manual, /call `compress` once, before this turn ends, with `summary` and `topic`/)
+        assert.match(
+            manual,
+            /call `compress` once, before this turn ends, with `summary` and `topic`/,
+        )
         assert.match(manual, /clean stopping point/)
         assert.match(automatic, /clean stopping point/)
         assert.match(automatic, /before this turn ends/)
@@ -53,11 +57,20 @@ describe("compression prompts", () => {
     it("keeps generated sources synchronized", () => {
         const root = process.cwd()
         assert.equal(SYSTEM, readFileSync(join(root, "lib/prompts/system.md"), "utf8"))
-        assert.equal(AUTOMATIC_SYSTEM, readFileSync(join(root, "lib/prompts/automatic-system.md"), "utf8"))
+        assert.equal(
+            AUTOMATIC_SYSTEM,
+            readFileSync(join(root, "lib/prompts/automatic-system.md"), "utf8"),
+        )
         assert.equal(COMPRESS, readFileSync(join(root, "lib/prompts/compress.md"), "utf8"))
-        assert.equal(SQUASH_SYSTEM, readFileSync(join(root, "lib/prompts/squash-system.md"), "utf8"))
+        assert.equal(
+            SQUASH_SYSTEM,
+            readFileSync(join(root, "lib/prompts/squash-system.md"), "utf8"),
+        )
         assert.equal(SQUASH, readFileSync(join(root, "lib/prompts/squash.md"), "utf8"))
-        assert.equal(POST_COMPRESSION_NOTICE, readFileSync(join(root, "lib/prompts/post-compression-notice.md"), "utf8"))
+        assert.equal(
+            POST_COMPRESSION_NOTICE,
+            readFileSync(join(root, "lib/prompts/post-compression-notice.md"), "utf8"),
+        )
         assert.equal(SYSTEM.trim(), renderSystemPrompt())
         assert.equal(SQUASH_SYSTEM.trim(), renderSquashSystemPrompt())
         assert.equal(COMPRESS.trim(), loadPrompt("compress-tool-spec").trim())
@@ -67,7 +80,10 @@ describe("compression prompts", () => {
     it("delivers a transient post-compression reread notice", () => {
         const output = renderPostCompressionNotice()
         assert.match(output, /context was compressed/i)
-        assert.match(output, /reload the skills and project instructions required by the active task/i)
+        assert.match(
+            output,
+            /reload the skills and project instructions required by the active task/i,
+        )
         assert.match(output, /continue the original task/i)
         assert.doesNotMatch(output, RETIRED)
     })

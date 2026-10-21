@@ -38,20 +38,17 @@ export async function listSessionMessages(
     if (
         values.every(
             (value) =>
-                typeof value === "object" &&
-                value !== null &&
-                "info" in value &&
-                "parts" in value,
+                typeof value === "object" && value !== null && "info" in value && "parts" in value,
         )
-    ) return values
-    return adaptProjectedMessages(
-        sessionId,
-        values,
-        client.selections.get(sessionId),
     )
+        return values
+    return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId))
 }
 
-export async function promptSession(client: PluginClient, input: SessionPromptInput): Promise<unknown> {
+export async function promptSession(
+    client: PluginClient,
+    input: SessionPromptInput,
+): Promise<unknown> {
     const text = input.parts
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => part.text as string)
