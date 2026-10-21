@@ -43,7 +43,7 @@ Optional plugin settings live in `compress.jsonc` under the OpenCode config dire
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json",
+  "$schema": "https://unpkg.com/@skybluejacket/opencode-context-compress@1/compress.schema.json",
   "protectedTurns": 3,
   "autoCompression": {
     "enabled": true,
