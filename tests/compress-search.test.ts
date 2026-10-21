@@ -42,7 +42,6 @@ const createState = (
         totalCompressTokens: 0,
     },
     lastCompaction: 0,
-    variant: undefined,
 })
 
 describe("compressed message transformation", () => {

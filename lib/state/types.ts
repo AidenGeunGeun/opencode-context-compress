@@ -118,9 +118,6 @@ export interface SessionState {
     compressionCooldownAfterMessageId?: string
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number
-    variant: string | undefined
-    /** Runtime-only agent identity supplied by hosts that omit it from projected user messages. */
-    currentAgent?: string
     /** Runtime-only model metadata captured from the latest chat.params hook. */
     modelContext?: {
         providerId: string

@@ -342,8 +342,6 @@ export function createSessionState(): SessionState {
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
         lastCompaction: 0,
-        variant: undefined,
-        currentAgent: undefined,
         autoCompressionStarting: false,
         lastAutoTriggeredMessageId: undefined,
     }

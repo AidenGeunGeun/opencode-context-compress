@@ -111,8 +111,6 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
         const modelContext = await resolveModelContext(context, event.model)
         let transformed: ModelMessage[] | undefined
         await stateManager.runExclusive(event.sessionID, async () => {
-            state.currentAgent = event.agent
-            state.variant = event.model.variant
             if (modelContext) state.modelContext = modelContext
             let syncResult = await checkSession(state, logger, messages)
             if (!state.persistenceSynchronized) {

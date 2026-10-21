@@ -44,7 +44,7 @@ import { sendIgnoredMessage } from "../ui/notification.js"
 import { formatTokenCount } from "../ui/utils.js"
 import { isMessageCompacted } from "../shared-utils.js"
 import { isIgnoredUserMessage } from "../messages/utils.js"
-import { countTokens, getCurrentParams } from "../token-utils.js"
+import { countTokens, getCurrentProviderId } from "../token-utils.js"
 import type { AssistantMessage, TextPart, ToolPart } from "../state/types.js"
 
 export interface ContextCommandContext {
@@ -268,8 +268,7 @@ function formatContextMessage(breakdown: TokenBreakdown): string {
 export async function handleContextCommand(ctx: ContextCommandContext): Promise<void> {
     const { client, state, logger, sessionId, messages } = ctx
 
-    const params = getCurrentParams(state, messages, logger)
-    const breakdown = analyzeTokens(state, messages, params.providerId)
+    const breakdown = analyzeTokens(state, messages, getCurrentProviderId(state, messages))
 
     const message = formatContextMessage(breakdown)
     await sendIgnoredMessage(client, sessionId, message, logger)

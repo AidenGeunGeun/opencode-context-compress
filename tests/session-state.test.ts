@@ -68,24 +68,28 @@ describe("SessionStateManager", () => {
             messageIds: ["m1"],
             summary: "main summary",
         })
-        mainState.variant = "high"
+        mainState.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
 
         assert.notStrictEqual(mainState, subagentState)
         assert.equal(mainState.sessionId, "main-session")
         assert.equal(subagentState.sessionId, "subagent-session")
         assert.equal(subagentState.compressed.messageIds.size, 0)
         assert.equal(subagentState.compressSummaries.length, 0)
-        assert.equal(subagentState.variant, undefined)
+        assert.equal(subagentState.modelContext, undefined)
     })
 
     it("returns the same object when the same session is requested again", () => {
         const manager = new SessionStateManager()
         const state = manager.get("main-session")
 
-        state.variant = "cached-variant"
+        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
 
         assert.strictEqual(manager.get("main-session"), state)
-        assert.equal(manager.get("main-session").variant, "cached-variant")
+        assert.deepEqual(manager.get("main-session").modelContext, {
+            providerId: "openai",
+            modelId: "gpt-test",
+            contextLimit: 1_000,
+        })
     })
 
     it("serializes mutations per session without blocking a different session", async () => {
@@ -231,11 +235,11 @@ describe("getLastUserSessionId", () => {
 })
 
 describe("ensureSessionInitialized", () => {
-    it("marks state initialized without clearing cached variant", async () => {
+    it("marks state initialized without clearing cached model context", async () => {
         const sessionId = `session-state-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const state = createSessionState()
         state.sessionId = sessionId
-        state.variant = "cached-variant"
+        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
 
         const messages: WithParts[] = [
             createMessage("m1", sessionId, "user"),
@@ -249,7 +253,11 @@ describe("ensureSessionInitialized", () => {
 
         assert.equal(state.initialized, true)
         assert.equal(state.sessionId, sessionId)
-        assert.equal(state.variant, "cached-variant")
+        assert.deepEqual(state.modelContext, {
+            providerId: "openai",
+            modelId: "gpt-test",
+            contextLimit: 1_000,
+        })
     })
 
     it("does not mark an observed compaction as reconciled during initialization", async () => {

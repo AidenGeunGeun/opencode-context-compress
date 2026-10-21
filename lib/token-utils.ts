@@ -1,6 +1,4 @@
 import type { SessionState, WithParts } from "./state/index.js"
-import type { UserMessage } from "./state/types.js"
-import type { Logger } from "./logger.js"
 import { getLastUserMessage } from "./shared-utils.js"
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer"
 import { encodingForModel, type Tiktoken } from "js-tiktoken"
@@ -19,38 +17,11 @@ export function isAnthropicProvider(providerId: string | undefined): boolean {
     return providerId.toLowerCase().includes("anthropic")
 }
 
-export interface CurrentParams {
-    providerId: string | undefined
-    modelId: string | undefined
-    agent: string | undefined
-    variant: string | undefined
-}
-
-export function getCurrentParams(
+export function getCurrentProviderId(
     state: SessionState,
     messages: WithParts[],
-    logger: Logger,
-): CurrentParams {
-    const userMsg = getLastUserMessage(messages)
-    if (!userMsg) {
-        logger.debug("No user message found when determining current params")
-        return {
-            providerId: state.modelContext?.providerId,
-            modelId: state.modelContext?.modelId,
-            agent: state.currentAgent,
-            variant: state.variant,
-        }
-    }
-    const userInfo = userMsg.info as UserMessage & {
-        agent?: string
-        model?: { providerID?: string; modelID?: string }
-    }
-    const agent = userInfo.agent ?? state.currentAgent
-    const providerId = userInfo.model?.providerID ?? state.modelContext?.providerId
-    const modelId = userInfo.model?.modelID ?? state.modelContext?.modelId
-    const variant: string | undefined = state.variant ?? userInfo.variant
-
-    return { providerId, modelId, agent, variant }
+): string | undefined {
+    return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId
 }
 
 export function countTokens(text: string, providerId?: string): number {
