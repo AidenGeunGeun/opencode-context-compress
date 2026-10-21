@@ -68,6 +68,7 @@ describe("beta Promise session adapter", () => {
                 "synthetic",
                 {
                     sessionID: "session",
+                    id: undefined,
                     text: "status",
                     description: "status",
                     metadata: { "opencode.context-compress.ignored": true },

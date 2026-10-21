@@ -348,6 +348,7 @@ describe("automatic compression lifecycle", () => {
         assert.deepEqual(notifications, [
             {
                 sessionID: sessionId,
+                id: undefined,
                 text: "Could not start automatic compression: offline",
                 description: "Could not start automatic compression: offline",
                 metadata: { "opencode.context-compress.ignored": true },
