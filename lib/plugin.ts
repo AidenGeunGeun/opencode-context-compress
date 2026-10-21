@@ -12,6 +12,7 @@ import { renderPostCompressionNotice } from "./prompts/index.js"
 import {
     listSessionMessages,
     pluginClient,
+    promptSession,
     setSessionSelection,
 } from "./sdk/client.js"
 import { checkSession, reconcileSessionLifecycle, SessionStateManager, type WithParts } from "./state/index.js"
@@ -19,6 +20,12 @@ import { inheritForkCompression } from "./state/fork.js"
 import { createCompressTool, createSquashTool } from "./tools/index.js"
 
 type Registration = Awaited<ReturnType<Plugin.Context["session"]["hook"]>>
+
+// The plugin API has no way to veto native compaction, so say so when it runs.
+const NATIVE_COMPACTION_NOTICE =
+    "Native OpenCode compaction ran in this session. Context Compress replaces native compaction, " +
+    "and native compaction retires earlier compression blocks. Set `\"compaction\": { \"auto\": false }` " +
+    "in opencode.jsonc and use `/compress manage` instead of `/compact`."
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -138,15 +145,7 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
         stateManager,
         logger,
         config,
-        async (sessionID, event) => {
-            const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined
-            if (ref && typeof ref.directory === "string") {
-                return ref.directory === context.location.directory &&
-                    ref.workspaceID === context.location.workspaceID
-            }
-            const location = (await context.session.get({ sessionID })).location
-            return location.directory === context.location.directory
-        },
+        (sessionID, event) => ownsSession(context, sessionID, event),
     )
     const events = context.event.subscribe()[Symbol.asyncIterator]()
     const eventLoop = runEvents(events, automatic, client, stateManager, logger, context)
@@ -193,16 +192,7 @@ async function runEvents(
             const event = isRecord(item.value) ? item.value : {}
             const data = isRecord(event.data) ? event.data : {}
             if (event.type === "session.forked" && typeof data.sessionID === "string") {
-                const location = isRecord(event.location) ? event.location : undefined
-                if (location && typeof location.directory === "string") {
-                    if (
-                        location.directory !== context.location.directory ||
-                        location.workspaceID !== context.location.workspaceID
-                    ) continue
-                } else {
-                    const child = await context.session.get({ sessionID: data.sessionID })
-                    if (child.location.directory !== context.location.directory) continue
-                }
+                if (!(await ownsSession(context, data.sessionID, event))) continue
                 const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
                 await stateManager.runExclusive(data.sessionID, async () => {
                     const state = stateManager.get(data.sessionID as string)
@@ -213,16 +203,32 @@ async function runEvents(
                 continue
             }
             if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string") continue
+            if (!(await ownsSession(context, data.sessionID, event))) continue
             const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
             await stateManager.runExclusive(data.sessionID, () =>
                 reconcileSessionLifecycle(stateManager.get(data.sessionID as string), data.sessionID as string, logger, messages),
             )
+            await promptSession(client, {
+                sessionId: data.sessionID,
+                parts: [{ type: "text", text: NATIVE_COMPACTION_NOTICE }],
+                noReply: true,
+            })
         } catch (error) {
             logger.error("Context Compress event handling failed", {
                 error: error instanceof Error ? error.message : String(error),
             })
         }
     }
+}
+
+async function ownsSession(context: Plugin.Context, sessionID: string, event: unknown): Promise<boolean> {
+    const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined
+    if (ref && typeof ref.directory === "string") {
+        return ref.directory === context.location.directory &&
+            ref.workspaceID === context.location.workspaceID
+    }
+    const location = (await context.session.get({ sessionID })).location
+    return location.directory === context.location.directory
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
