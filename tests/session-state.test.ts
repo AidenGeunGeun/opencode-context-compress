@@ -12,7 +12,6 @@ import {
     ensureSessionInitialized,
 } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
-import { getLastUserSessionId } from "./transform-harness.ts"
 import { loadSessionState, saveSessionState } from "../lib/state/persistence.ts"
 import { resetOnCompaction } from "../lib/state/utils.ts"
 
@@ -204,19 +203,6 @@ describe("native compaction reset", () => {
         assert.equal(state.autoCompressionContextWindowRatioOverride, 0.8)
         assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
         assert.equal(state.compressed.messageIds.size, 0)
-    })
-})
-
-describe("getLastUserSessionId", () => {
-    it("uses the last user message session id", () => {
-        const messages = [
-            createMessage("m1", "main-session", "user"),
-            createMessage("m2", "main-session", "assistant"),
-            createMessage("m3", "subagent-session", "user"),
-            createMessage("m4", "subagent-session", "assistant"),
-        ]
-
-        assert.equal(getLastUserSessionId(messages), "subagent-session")
     })
 })
 

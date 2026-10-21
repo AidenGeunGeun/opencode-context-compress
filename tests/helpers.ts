@@ -155,3 +155,76 @@ export function sessionInfo(fields: Partial<SessionInfo> = {}): SessionInfo {
 export function partText(part: Part | undefined): string | undefined {
     return part && "text" in part && typeof part.text === "string" ? part.text : undefined
 }
+
+/**
+ * Starts the plugin against a session fake and returns a caller for its `context` hook, so tests
+ * exercise the transform that `lib/plugin.ts` ships. Pass `setup` from a dynamic import made
+ * after `isolateHostDirs()`.
+ */
+export async function startContextHook(
+    setup: typeof import("../lib/plugin.ts").setup,
+    directory: string,
+    session: SessionFake,
+): Promise<(sessionID: string, messages: ModelMessage[]) => Promise<void>> {
+    const registration = { dispose: async () => undefined }
+    let hook: ((input: ModelHookInput) => Promise<void> | void) | undefined
+    await setup(
+        hostContext({
+            location: { directory },
+            command: { transform: async () => registration },
+            tool: { transform: async () => registration },
+            session: {
+                ...fakeSession(session),
+                get: async () => sessionInfo({ location: { directory } }),
+                hook: async (name, callback) => {
+                    if (name === "context") hook = callback
+                    return registration
+                },
+            },
+            model: { list: async () => ({ data: [] }) },
+            event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
+        }),
+    )
+    const context = hook
+    if (!context) throw new Error("The plugin did not register a context hook")
+    return async (sessionID, messages) => {
+        await context({
+            sessionID,
+            agent: "build",
+            model: { providerID: "openai", id: "gpt-test" },
+            system: [],
+            messages,
+            tools: {},
+            options: {},
+        })
+    }
+}
+
+/** The model request the host builds from a transcript: one message per projected message. */
+export function modelRequest(transcript: WithParts[]): ModelMessage[] {
+    return transcript.map(({ info, parts }) => ({
+        id: info.id,
+        role: info.role,
+        content: parts.flatMap((part): ModelMessage["content"] => {
+            if (part.type === "text") return [{ type: "text", text: part.text }]
+            if (part.type === "tool")
+                return [
+                    {
+                        type: "tool-call",
+                        id: part.callID,
+                        name: part.tool,
+                        input: part.state.input,
+                    },
+                ]
+            return []
+        }),
+    }))
+}
+
+export function modelText(message: ModelMessage | undefined): string {
+    return (message?.content ?? [])
+        .flatMap((part) =>
+            part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+        )
+        .join("\n")
+}

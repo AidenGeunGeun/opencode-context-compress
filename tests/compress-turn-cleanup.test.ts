@@ -1,18 +1,19 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
-import { rm } from "node:fs/promises"
-import { homedir } from "node:os"
+import { readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 
-import { createChatMessageTransformHandler } from "./transform-harness.ts"
-import { Logger } from "../lib/logger.ts"
-import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
-import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
-import { saveSessionState } from "../lib/state/persistence.ts"
-import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
 import type { Part, SessionState, TextPart, ToolPart, WithParts } from "../lib/state/types.ts"
-import { partText } from "./helpers.ts"
+import { isolateHostDirs, modelRequest, modelText, partText, startContextHook } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { Logger } = await import("../lib/logger.ts")
+const { applyCompressTransforms } = await import("../lib/messages/compress-transform.ts")
+const { COMPRESS_SUMMARY_PREFIX } = await import("../lib/messages/utils.ts")
+const { setup } = await import("../lib/plugin.ts")
+const { saveSessionState } = await import("../lib/state/persistence.ts")
+const { createSessionState } = await import("../lib/state/state.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -127,21 +128,15 @@ const serializeProviderPrefix = (
 
 const messageTexts = (messages: WithParts[]): string => JSON.stringify(messages)
 
-const getSessionFilePath = (sessionId: string) =>
-    join(
-        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-        "opencode",
-        "storage",
-        "plugin",
-        "compress",
-        `${sessionId}.json`,
-    )
+const sessionFilePath = (sessionId: string) =>
+    join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionId}.json`)
 
-const cleanupSessionFile = async (sessionId: string) => {
-    const filePath = getSessionFilePath(sessionId)
-    if (existsSync(filePath)) {
-        await rm(filePath)
-    }
+// Runs the plugin's context hook on the model request built from the transcript.
+const runContextHook = async (sessionId: string, transcript: WithParts[]) => {
+    const context = await startContextHook(setup, root, { context: async () => transcript })
+    const messages = modelRequest(transcript)
+    await context(sessionId, messages)
+    return messages
 }
 
 describe("compress-turn machinery cleanup", () => {
@@ -442,56 +437,37 @@ describe("compress-turn machinery cleanup", () => {
     })
 
     it("reproduces suppression after persisted state reload", async () => {
-        const sessionId = `session-cleanup-reload-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
+        const sessionId = "session-cleanup-reload"
+        const state = createState(sessionId)
+        state.managementTurns = [{ triggerMessageId: "manage-reload" }]
+        await saveSessionState(state, logger)
 
-        try {
-            const state = createState(sessionId)
-            state.managementTurns = [{ triggerMessageId: "manage-reload" }]
-            await saveSessionState(state, logger)
+        const messages = await runContextHook(sessionId, [
+            textMessage("before", sessionId, "Before reload"),
+            textMessage(
+                "manage-reload",
+                sessionId,
+                "<system-reminder>/compress manage</system-reminder>",
+            ),
+            toolMessage(
+                "reload-map",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>reload</compress-context-map>",
+            ),
+            textMessage("after", sessionId, "After reload"),
+        ])
 
-            const messages = [
-                textMessage("before", sessionId, "Before reload"),
-                textMessage(
-                    "manage-reload",
-                    sessionId,
-                    "<system-reminder>/compress manage</system-reminder>",
-                ),
-                toolMessage(
-                    "reload-map",
-                    sessionId,
-                    "compress_map",
-                    "<compress-context-map>reload</compress-context-map>",
-                ),
-                textMessage("after", sessionId, "After reload"),
-            ]
-            const manager = new SessionStateManager()
-            const handler = createChatMessageTransformHandler(
-                { session: { get: async () => ({ data: {} }) } },
-                manager,
-                logger,
-            )
-            const output = { messages: cloneMessages(messages) }
-
-            await handler({}, output)
-
-            assert.deepEqual(
-                output.messages.map((message: WithParts) => message.info.id),
-                ["before", "after"],
-            )
-            assert.doesNotMatch(
-                messageTexts(output.messages),
-                /compress-context-map|compress manage/,
-            )
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
+        assert.deepEqual(
+            messages.map((message) => message.id),
+            ["before", "after"],
+        )
+        assert.doesNotMatch(JSON.stringify(messages), /compress-context-map|compress manage/)
     })
 
-    it("applies persisted blocks and management cleanup to subagent prompts", async () => {
+    it("applies persisted blocks and management cleanup without rewriting state", async () => {
         const sessionId = "session-cleanup-subagent"
-        const manager = new SessionStateManager()
-        const state = manager.get(sessionId)
+        const state = createState(sessionId)
         state.managementTurns = [{ triggerMessageId: "manage-subagent" }]
         state.compressed.messageIds = new Set(["sub-old"])
         state.compressSummaries = [
@@ -501,7 +477,10 @@ describe("compress-turn machinery cleanup", () => {
                 summary: "Subagent work was compressed independently.",
             },
         ]
-        const messages = [
+        await saveSessionState(state, logger)
+        const persisted = await readFile(sessionFilePath(sessionId), "utf-8")
+
+        const messages = await runContextHook(sessionId, [
             textMessage("sub-old", sessionId, "Subagent old content"),
             textMessage(
                 "manage-subagent",
@@ -515,26 +494,17 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>sub</compress-context-map>",
             ),
             textMessage("sub-next", sessionId, "Subagent next content"),
-        ]
-        const output = { messages: cloneMessages(messages) }
-        const handler = createChatMessageTransformHandler(
-            { session: { get: async () => ({ data: { parentID: "parent-session" } }) } },
-            manager,
-            logger,
-        )
+        ])
 
-        await handler({}, output)
-
-        assert.equal(output.messages.length, 2)
-        assert.notEqual(output.messages[0].info.id, "sub-old")
-        assert.equal(output.messages[1].info.id, "sub-next")
-        assert.match(messageTexts(output.messages), /Subagent work was compressed independently/)
+        assert.equal(messages.length, 2)
+        assert.notEqual(messages[0].id, "sub-old")
+        assert.match(modelText(messages[0]), /Subagent work was compressed independently/)
+        assert.equal(messages[1].id, "sub-next")
         assert.doesNotMatch(
-            messageTexts(output.messages),
+            JSON.stringify(messages),
             /Subagent old content|compress manage|compress-context-map/,
         )
-        assert.deepEqual(state.managementTurns, [{ triggerMessageId: "manage-subagent" }])
-        assert.deepEqual([...state.compressed.messageIds], ["sub-old"])
+        assert.equal(await readFile(sessionFilePath(sessionId), "utf-8"), persisted)
     })
 })
 

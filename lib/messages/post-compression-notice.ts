@@ -1,6 +1,4 @@
 import type { SessionState, WithParts } from "../state/index.js"
-import { renderPostCompressionNotice } from "../prompts/index.js"
-import { createSyntheticUserMessage } from "./utils.js"
 
 /**
  * True once a part represents work the agent actually produced, as opposed to step
@@ -73,22 +71,4 @@ export function isPostCompressionNoticeDue(state: SessionState, rawMessages: Wit
     }
 
     return true
-}
-
-/**
- * Appends the notice as the final element. It must run after the compression transforms,
- * which rebuild the array and would otherwise discard it, and it must stay a plain
- * (non-`ignored`) user message or OpenCode strips it before the model sees it.
- */
-export function appendPostCompressionNotice(
-    messages: WithParts[],
-    baseUserMessage: WithParts,
-): void {
-    messages.push(
-        createSyntheticUserMessage(
-            baseUserMessage,
-            renderPostCompressionNotice(),
-            (baseUserMessage.info as { variant?: string }).variant,
-        ),
-    )
 }
