@@ -1,26 +1,31 @@
 # OpenCode Context Compress
 
-Standalone context compression for the OpenCode 2.0.13 Promise plugin API. It keeps durable compressed blocks while preserving a configurable recent execution tail.
+Context compression for OpenCode 2 that replaces native compaction. The working agent folds its own
+history into durable compressed blocks, with no hidden summarizer, while a configurable recent
+execution tail stays verbatim.
+
+**Native compaction must never run alongside this plugin.** Disable `compaction.auto` and use
+`/compress manage` instead of `/compact`. A native compaction retires every existing compression
+block, and the plugin API cannot veto it, so the plugin posts a warning in the session when one runs.
 
 ## Install
 
-This checkout targets `2.0.13`.
+Requires OpenCode 2; the plugin is built against the `2.0.13` plugin API. On OpenCode 1.x, pin
+`@skybluejacket/opencode-context-compress@0.5.0` instead.
 
-```bash
-npm install
-npm run build
-```
-
-Point OpenCode at the built plugin directory and disable native automatic compaction in `opencode.jsonc`:
+Add the plugin and disable native compaction in `opencode.jsonc`:
 
 ```jsonc
 {
   "compaction": { "auto": false },
-  "plugins": [{ "package": "/absolute/path/to/opencode-context-compress/dist" }]
+  "plugins": [{ "package": "@skybluejacket/opencode-context-compress" }]
 }
 ```
 
-The plugin owns automatic compression only when `autoCompression.enabled` is true. Native compaction must stay disabled because the 2.0.13 API has no compaction-veto hook.
+To run a local checkout, build it with `npm install && npm run build` and set `package` to the
+checkout's absolute `dist` path.
+
+The plugin compresses automatically only when `autoCompression.enabled` is true.
 
 Optional plugin settings live in `compress.jsonc` under the OpenCode config directory or in a project's `.opencode` directory:
 
