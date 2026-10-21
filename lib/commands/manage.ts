@@ -134,27 +134,13 @@ export function generateAutomaticPromptMessageId(
     )}`
 }
 
-export async function sendManageFailureFeedback(
-    client: PluginClient,
-    logger: Logger,
-    sessionId: string,
-    message: string,
-): Promise<void> {
-    if (typeof client?.session?.prompt === "function") {
-        await sendIgnoredMessage(client, sessionId, message, logger)
-        return
-    }
-
-    logger.error("Unable to surface compression management error to user", { sessionId, message })
-}
-
 export async function handleManageCommand(ctx: ManageCommandContext): Promise<void> {
     if (ctx.config.tools.compress.permission === "deny") {
-        await sendManageFailureFeedback(
+        await sendIgnoredMessage(
             ctx.client,
-            ctx.logger,
             ctx.sessionId,
             "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.",
+            ctx.logger,
         )
         return
     }
@@ -179,11 +165,11 @@ export async function stageManagementTurnWithinLock(
 
     if (!state.persistenceSynchronized) {
         return async () => {
-            await sendManageFailureFeedback(
+            await sendIgnoredMessage(
                 client,
-                logger,
                 sessionId,
                 "Compression management could not start because saved session state could not be loaded.",
+                logger,
             )
             return false
         }
@@ -250,11 +236,11 @@ export async function stageManagementTurnWithinLock(
             triggerMessageId,
         })
         return async () => {
-            await sendManageFailureFeedback(
+            await sendIgnoredMessage(
                 client,
-                logger,
                 sessionId,
                 "Compression management could not start: cleanup state could not be saved.",
+                logger,
             )
             return false
         }
@@ -306,15 +292,15 @@ export async function stageManagementTurnWithinLock(
                     triggerMessageId,
                 })
             }
-            await sendManageFailureFeedback(
+            await sendIgnoredMessage(
                 client,
-                logger,
                 sessionId,
                 rollbackResult === "completed"
                     ? `The compression management prompt reported an error after compression completed: ${errorMessage || "the prompt failed."} The completed state was preserved.`
                     : rollbackResult === "removed"
                       ? `Compression management could not start: ${errorMessage || "the prompt failed."}`
                       : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`,
+                logger,
             )
             return false
         }

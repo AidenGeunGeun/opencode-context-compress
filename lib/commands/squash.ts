@@ -6,11 +6,8 @@ import type { SessionStateManager } from "../state/state.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import { orderCompressBlocks } from "../messages/blocks.js"
 import { renderSquashSystemPrompt } from "../prompts/index.js"
-import {
-    sendManageFailureFeedback,
-    stageManagementTurnWithinLock,
-    type StagedManagementTurn,
-} from "./manage.js"
+import { sendIgnoredMessage } from "../ui/notification.js"
+import { stageManagementTurnWithinLock, type StagedManagementTurn } from "./manage.js"
 
 export interface SquashCommandContext {
     client: PluginClient
@@ -33,11 +30,11 @@ export function extractSquashCommandResidual(args: string | undefined): string |
 
 export async function handleSquashCommand(ctx: SquashCommandContext): Promise<void> {
     if (ctx.config.tools.compress.permission === "deny") {
-        await sendManageFailureFeedback(
+        await sendIgnoredMessage(
             ctx.client,
-            ctx.logger,
             ctx.sessionId,
             "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.",
+            ctx.logger,
         )
         return
     }
@@ -45,11 +42,11 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
     const staged = (await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
         if (!ctx.state.persistenceSynchronized) {
             return async () => {
-                await sendManageFailureFeedback(
+                await sendIgnoredMessage(
                     ctx.client,
-                    ctx.logger,
                     ctx.sessionId,
                     "Block squash could not start because saved session state could not be loaded.",
+                    ctx.logger,
                 )
                 return false
             }
@@ -58,11 +55,11 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
         const active = findActiveManagementTurn(ctx.state, ctx.messages)
         if (active && active.turn.source !== "squash") {
             return async () => {
-                await sendManageFailureFeedback(
+                await sendIgnoredMessage(
                     ctx.client,
-                    ctx.logger,
                     ctx.sessionId,
                     "Block squash could not start because a compression management turn is still active.",
+                    ctx.logger,
                 )
                 return false
             }
@@ -74,22 +71,22 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
             return async () => {
-                await sendManageFailureFeedback(
+                await sendIgnoredMessage(
                     ctx.client,
-                    ctx.logger,
                     ctx.sessionId,
                     `Block squash could not start: ${message}`,
+                    ctx.logger,
                 )
                 return false
             }
         }
         if (blockCount < 2) {
             return async () => {
-                await sendManageFailureFeedback(
+                await sendIgnoredMessage(
                     ctx.client,
-                    ctx.logger,
                     ctx.sessionId,
                     "Block squash requires at least two existing compressed blocks.",
+                    ctx.logger,
                 )
                 return false
             }
