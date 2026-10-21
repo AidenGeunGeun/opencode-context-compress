@@ -6,6 +6,6 @@
     "javascript": {
         "formatter": { "semicolons": "asNeeded", "quoteStyle": "double", "trailingCommas": "all" }
     },
-    "linter": { "rules": { "recommended": true } },
+    "linter": { "rules": { "preset": "recommended" } },
     "assist": { "enabled": false }
 }
