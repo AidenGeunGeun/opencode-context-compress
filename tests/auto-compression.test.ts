@@ -7,7 +7,6 @@ import { dirname, join } from "node:path"
 
 import {
     createAutomaticCompressionEventHandler,
-    createChatParamsHandler,
     getAssistantContextTokens,
     resolveAutomaticCompressionThreshold,
 } from "../lib/auto-compression.ts"
@@ -478,14 +477,11 @@ describe("automatic compression lifecycle", () => {
         const stateManager = new SessionStateManager()
 
         try {
-            await createChatParamsHandler(stateManager)({
-                sessionID: sessionId,
-                model: {
-                    id: "gpt-test",
-                    providerID: "openai",
-                    limit: { context: 1_000_000 },
-                },
-            })
+            stateManager.get(sessionId).modelContext = {
+                providerId: "openai",
+                modelId: "gpt-test",
+                contextLimit: 1_000_000,
+            }
 
             const handler = createAutomaticCompressionEventHandler(
                 client,

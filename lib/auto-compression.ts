@@ -80,29 +80,6 @@ export function resolveAutomaticCompressionThreshold(
     }
 }
 
-export function createChatParamsHandler(stateManager: SessionStateManager) {
-    return async (input: {
-        sessionID: string
-        model: {
-            id?: string
-            modelID?: string
-            providerID?: string
-            limit?: { context?: number }
-        }
-    }) => {
-        const contextLimit = positiveFinite(input.model.limit?.context)
-        const modelId = input.model.id ?? input.model.modelID
-        const providerId = input.model.providerID
-        if (!contextLimit || !modelId || !providerId) return
-
-        stateManager.get(input.sessionID).modelContext = {
-            providerId,
-            modelId,
-            contextLimit,
-        }
-    }
-}
-
 function findContextLimit(
     stateManager: SessionStateManager,
     info: AssistantMessageInfo,

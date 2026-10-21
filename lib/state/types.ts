@@ -105,7 +105,7 @@ export interface SessionState {
     compressed: Compressed
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    /** Ignored legacy field retained only so old in-memory state can be cleared safely. */
+    /** Legacy persisted field: read from older state files and cleared on the next save. */
     compressionMapSnapshot?: unknown
     stats: SessionStats
     /** Session-local override. Missing inherits the process-level auto setting. */
@@ -118,7 +118,7 @@ export interface SessionState {
     compressionCooldownAfterMessageId?: string
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number
-    /** Runtime-only model metadata captured from the latest chat.params hook. */
+    /** Runtime-only model metadata resolved from the host model list on each model request. */
     modelContext?: {
         providerId: string
         modelId: string
