@@ -143,7 +143,6 @@ describe("session automatic-compression commands", () => {
 
             const loaded = await loadSessionState(sessionId, logger, messages)
             assert.equal(loaded.status, "loaded")
-            if (loaded.status !== "loaded") throw new Error("expected persisted state")
             assert.equal(loaded.state.autoCompressionEnabledOverride, false)
             assert.equal(loaded.state.autoCompressionTokenThresholdOverride, 250_000)
             assert.equal(loaded.state.autoCompressionContextWindowRatioOverride, 0.75)
@@ -207,7 +206,6 @@ describe("session automatic-compression commands", () => {
 
             const loaded = await loadSessionState(sessionId, logger)
             assert.equal(loaded.status, "loaded")
-            if (loaded.status !== "loaded") throw new Error("expected persisted state")
             assert.equal(loaded.state.autoCompressionTokenThresholdOverride, 222_222)
             assert.equal(loaded.state.autoCompressionEnabledOverride, false)
 

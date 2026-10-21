@@ -92,7 +92,6 @@ test("a fork inherits ordered compression blocks with remapped message IDs", asy
 
         const loaded = await loadSessionState("child", logger, child)
         assert.equal(loaded.status, "loaded")
-        if (loaded.status !== "loaded") return
         assert.deepEqual(loaded.state.compressed.messageIds, [
             "child-0",
             "child-1",
