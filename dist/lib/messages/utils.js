@@ -8,24 +8,24 @@ const isGeminiModel = (modelID) => {
     return lowerModelID.includes("gemini");
 };
 export const createSyntheticUserMessage = (baseMessage, content, variant, stableSeed) => {
-    const userInfo = baseMessage.info;
-    const now = stableSeed ? userInfo.time.created : Date.now();
+    const info = baseMessage.info;
+    const now = stableSeed ? info.time.created : Date.now();
     const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg");
     const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt");
     return {
         info: {
             id: messageId,
-            sessionID: userInfo.sessionID,
+            sessionID: info.sessionID,
             role: "user",
-            agent: userInfo.agent,
-            model: userInfo.model,
+            agent: info.agent,
+            model: info.model,
             time: { created: now },
             ...(variant !== undefined && { variant }),
         },
         parts: [
             {
                 id: partId,
-                sessionID: userInfo.sessionID,
+                sessionID: info.sessionID,
                 messageID: messageId,
                 type: "text",
                 text: content,

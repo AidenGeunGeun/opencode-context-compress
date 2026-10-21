@@ -6,10 +6,15 @@ import { Logger } from "./logger.js";
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js";
 import { transformV2Messages } from "./messages/v2-transform.js";
 import { renderPostCompressionNotice } from "./prompts/index.js";
-import { listSessionMessages, pluginClient, setSessionSelection, } from "./sdk/client.js";
+import { listSessionMessages, pluginClient, promptSession, setSessionSelection, } from "./sdk/client.js";
 import { checkSession, reconcileSessionLifecycle, SessionStateManager } from "./state/index.js";
 import { inheritForkCompression } from "./state/fork.js";
 import { createCompressTool, createSquashTool } from "./tools/index.js";
+// The plugin API cannot veto native auto-compaction, so flag the misconfiguration when it runs.
+// Manual /compact is a deliberate reset and gets no notice.
+const NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
+    "this compaction clears every compression block. Set `\"compaction\": { \"auto\": false }` " +
+    "in opencode.jsonc.";
 export async function setup(context) {
     const client = pluginClient(context.session);
     const config = getConfig({ directory: context.location.directory });
@@ -113,15 +118,7 @@ export async function setup(context) {
             await logger.saveContext(event.sessionID, transformed);
     };
     registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
-    const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, async (sessionID, event) => {
-        const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined;
-        if (ref && typeof ref.directory === "string") {
-            return ref.directory === context.location.directory &&
-                ref.workspaceID === context.location.workspaceID;
-        }
-        const location = (await context.session.get({ sessionID })).location;
-        return location.directory === context.location.directory;
-    });
+    const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
     const events = context.event.subscribe()[Symbol.asyncIterator]();
     const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
     return async () => {
@@ -153,17 +150,8 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
             const event = isRecord(item.value) ? item.value : {};
             const data = isRecord(event.data) ? event.data : {};
             if (event.type === "session.forked" && typeof data.sessionID === "string") {
-                const location = isRecord(event.location) ? event.location : undefined;
-                if (location && typeof location.directory === "string") {
-                    if (location.directory !== context.location.directory ||
-                        location.workspaceID !== context.location.workspaceID)
-                        continue;
-                }
-                else {
-                    const child = await context.session.get({ sessionID: data.sessionID });
-                    if (child.location.directory !== context.location.directory)
-                        continue;
-                }
+                if (!(await ownsSession(context, data.sessionID, event)))
+                    continue;
                 const messages = (await listSessionMessages(client, data.sessionID));
                 await stateManager.runExclusive(data.sessionID, async () => {
                     const state = stateManager.get(data.sessionID);
@@ -174,7 +162,21 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
                 });
                 continue;
             }
+            if (event.type === "session.compaction.started" &&
+                data.reason === "auto" &&
+                typeof data.sessionID === "string") {
+                if (!(await ownsSession(context, data.sessionID, event)))
+                    continue;
+                await promptSession(client, {
+                    sessionId: data.sessionID,
+                    parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
+                    noReply: true,
+                });
+                continue;
+            }
             if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
+                continue;
+            if (!(await ownsSession(context, data.sessionID, event)))
                 continue;
             const messages = (await listSessionMessages(client, data.sessionID));
             await stateManager.runExclusive(data.sessionID, () => reconcileSessionLifecycle(stateManager.get(data.sessionID), data.sessionID, logger, messages));
@@ -185,6 +187,15 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
             });
         }
     }
+}
+async function ownsSession(context, sessionID, event) {
+    const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined;
+    if (ref && typeof ref.directory === "string") {
+        return ref.directory === context.location.directory &&
+            ref.workspaceID === context.location.workspaceID;
+    }
+    const location = (await context.session.get({ sessionID })).location;
+    return location.directory === context.location.directory;
 }
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);

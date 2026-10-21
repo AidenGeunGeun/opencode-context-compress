@@ -1,4 +1,4 @@
-import { isMessageCompacted, getLastUserMessage } from "../shared-utils.js";
+import { isMessageCompacted } from "../shared-utils.js";
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js";
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js";
 import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js";
@@ -301,23 +301,14 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
         const block = blocksByAnchorId.get(msgId);
         if (block) {
             const summary = block.summary;
-            const userMessage = getLastUserMessage(rawMessages, i);
-            if (userMessage) {
-                const userInfo = userMessage.info;
-                const summaryContent = formatCompressBlockContent(block);
-                const syntheticMessage = createSyntheticUserMessage(userMessage, summaryContent, userInfo.variant, summary.anchorMessageId);
-                transformed.push(syntheticMessage);
-                syntheticMap.set(syntheticMessage.info.id, summary);
-                logger.info("Injected compress summary", {
-                    anchorMessageId: msgId,
-                    summaryLength: summary.summary.length,
-                });
-            }
-            else {
-                logger.warn("No user message found for compress summary", {
-                    anchorMessageId: msgId,
-                });
-            }
+            // Anchors identify transcript positions, including system events before any user.
+            const syntheticMessage = createSyntheticUserMessage(msg, formatCompressBlockContent(block), msg.info.variant, summary.anchorMessageId);
+            transformed.push(syntheticMessage);
+            syntheticMap.set(syntheticMessage.info.id, summary);
+            logger.info("Injected compress summary", {
+                anchorMessageId: msgId,
+                summaryLength: summary.summary.length,
+            });
         }
         const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId);
         if (retainedParts && !state.compressed.messageIds.has(msgId)) {

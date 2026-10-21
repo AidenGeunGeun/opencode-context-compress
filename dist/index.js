@@ -800,24 +800,24 @@ var COMPRESS_SUMMARY_PREFIX = `[Compressed conversation block]
 var generateUniqueId = (prefix) => `${prefix}_${ulid()}`;
 var generateStableId = (prefix, seed) => `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
 var createSyntheticUserMessage = (baseMessage, content, variant, stableSeed) => {
-  const userInfo = baseMessage.info;
-  const now = stableSeed ? userInfo.time.created : Date.now();
+  const info = baseMessage.info;
+  const now = stableSeed ? info.time.created : Date.now();
   const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg");
   const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt");
   return {
     info: {
       id: messageId,
-      sessionID: userInfo.sessionID,
+      sessionID: info.sessionID,
       role: "user",
-      agent: userInfo.agent,
-      model: userInfo.model,
+      agent: info.agent,
+      model: info.model,
       time: { created: now },
       ...variant !== undefined && { variant }
     },
     parts: [
       {
         id: partId,
-        sessionID: userInfo.sessionID,
+        sessionID: info.sessionID,
         messageID: messageId,
         type: "text",
         text: content
@@ -1714,22 +1714,13 @@ var transformMessagesForSearch = (rawMessages, state, logger) => {
     const block = blocksByAnchorId.get(msgId);
     if (block) {
       const summary = block.summary;
-      const userMessage = getLastUserMessage(rawMessages, i);
-      if (userMessage) {
-        const userInfo = userMessage.info;
-        const summaryContent = formatCompressBlockContent(block);
-        const syntheticMessage = createSyntheticUserMessage(userMessage, summaryContent, userInfo.variant, summary.anchorMessageId);
-        transformed.push(syntheticMessage);
-        syntheticMap.set(syntheticMessage.info.id, summary);
-        logger.info("Injected compress summary", {
-          anchorMessageId: msgId,
-          summaryLength: summary.summary.length
-        });
-      } else {
-        logger.warn("No user message found for compress summary", {
-          anchorMessageId: msgId
-        });
-      }
+      const syntheticMessage = createSyntheticUserMessage(msg, formatCompressBlockContent(block), msg.info.variant, summary.anchorMessageId);
+      transformed.push(syntheticMessage);
+      syntheticMap.set(syntheticMessage.info.id, summary);
+      logger.info("Injected compress summary", {
+        anchorMessageId: msgId,
+        summaryLength: summary.summary.length
+      });
     }
     const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId);
     if (retainedParts && !state.compressed.messageIds.has(msgId)) {
@@ -1888,6 +1879,8 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
   return messages.slice(protectedStart).map((message) => message.info.id);
 }
 function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
+  const latestCompactionIndex = rawHistory.findLastIndex(isCompletedNativeCompaction);
+  const preCompactionMessageIds = new Set(rawHistory.slice(0, Math.max(0, latestCompactionIndex)).map((message) => message.info.id));
   const search = transformMessagesForSearch(rawHistory, state, logger);
   const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
   const syntheticMap = search.syntheticMap;
@@ -1909,7 +1902,7 @@ function selectDeterministicCompressionSpan(rawHistory, state, logger, protected
     for (const messageId of summary.messageIds)
       existingBlockMessageIds.add(messageId);
   }
-  const candidates = transformed.slice(newestBlockIndex + 1).filter((message) => !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
+  const candidates = transformed.slice(newestBlockIndex + 1).filter((message) => !preCompactionMessageIds.has(message.info.id) && !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
   const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns);
   const protectedIds = new Set(protectedMessageIds);
   const messages = candidates.filter((message) => !protectedIds.has(message.info.id));
@@ -4083,6 +4076,7 @@ function createSquashTool(ctx) {
   };
 }
 // lib/plugin.ts
+var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction clears every compression block. Set `"compaction": { "auto": false }` ' + "in opencode.jsonc.";
 async function setup(context) {
   const client = pluginClient(context.session);
   const config = getConfig({ directory: context.location.directory });
@@ -4188,14 +4182,7 @@ async function setup(context) {
       await logger.saveContext(event.sessionID, transformed);
   };
   registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
-  const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, async (sessionID, event) => {
-    const ref = isRecord3(event) && isRecord3(event.location) ? event.location : undefined;
-    if (ref && typeof ref.directory === "string") {
-      return ref.directory === context.location.directory && ref.workspaceID === context.location.workspaceID;
-    }
-    const location = (await context.session.get({ sessionID })).location;
-    return location.directory === context.location.directory;
-  });
+  const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
   const events = context.event.subscribe()[Symbol.asyncIterator]();
   const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
   return async () => {
@@ -4225,15 +4212,8 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
       const event = isRecord3(item.value) ? item.value : {};
       const data = isRecord3(event.data) ? event.data : {};
       if (event.type === "session.forked" && typeof data.sessionID === "string") {
-        const location = isRecord3(event.location) ? event.location : undefined;
-        if (location && typeof location.directory === "string") {
-          if (location.directory !== context.location.directory || location.workspaceID !== context.location.workspaceID)
-            continue;
-        } else {
-          const child = await context.session.get({ sessionID: data.sessionID });
-          if (child.location.directory !== context.location.directory)
-            continue;
-        }
+        if (!await ownsSession(context, data.sessionID, event))
+          continue;
         const messages = await listSessionMessages(client, data.sessionID);
         await stateManager.runExclusive(data.sessionID, async () => {
           const state = stateManager.get(data.sessionID);
@@ -4244,7 +4224,19 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
         });
         continue;
       }
+      if (event.type === "session.compaction.started" && data.reason === "auto" && typeof data.sessionID === "string") {
+        if (!await ownsSession(context, data.sessionID, event))
+          continue;
+        await promptSession(client, {
+          sessionId: data.sessionID,
+          parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
+          noReply: true
+        });
+        continue;
+      }
       if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
+        continue;
+      if (!await ownsSession(context, data.sessionID, event))
         continue;
       const messages = await listSessionMessages(client, data.sessionID);
       await stateManager.runExclusive(data.sessionID, () => reconcileSessionLifecycle(stateManager.get(data.sessionID), data.sessionID, logger, messages));
@@ -4255,18 +4247,26 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
     }
   }
 }
+async function ownsSession(context, sessionID, event) {
+  const ref = isRecord3(event) && isRecord3(event.location) ? event.location : undefined;
+  if (ref && typeof ref.directory === "string") {
+    return ref.directory === context.location.directory && ref.workspaceID === context.location.workspaceID;
+  }
+  const location = (await context.session.get({ sessionID })).location;
+  return location.directory === context.location.directory;
+}
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // index.ts
-var context_compress_default = Plugin.define({
+var wt_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  context_compress_default as default
+  wt_default as default
 };
 
-//# debugId=C9D6F0303881A17264756E2164756E21
+//# debugId=5E9445E318FB79C464756E2164756E21
 //# sourceMappingURL=index.js.map
