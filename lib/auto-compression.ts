@@ -3,7 +3,8 @@ import type { Logger } from "./logger.js"
 import { stageManagementTurnWithinLock, type StagedManagementTurn } from "./commands/manage.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
-import { listSessionMessages, showToast } from "./sdk/client.js"
+import { type PluginClient, listSessionMessages, showToast } from "./sdk/client.js"
+import { isRecord } from "./shared-utils.js"
 import {
     reconcileSessionLifecycle,
     type SessionStateManager,
@@ -133,7 +134,7 @@ function formatThresholdReason(result: AutomaticCompressionThreshold, ratio: num
 }
 
 export function createAutomaticCompressionEventHandler(
-    client: any,
+    client: PluginClient,
     stateManager: SessionStateManager,
     logger: Logger,
     config: PluginConfig,
@@ -197,8 +198,7 @@ export function createAutomaticCompressionEventHandler(
         if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
         if (event.type !== "message.updated" && event.type !== "session.step.ended") return
         if (
-            !info ||
-            info.role !== "assistant" ||
+            info?.role !== "assistant" ||
             info.summary === true ||
             info.error ||
             !info.time?.completed
@@ -373,8 +373,4 @@ export function createAutomaticCompressionEventHandler(
             }
         }
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
 }

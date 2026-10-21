@@ -1,5 +1,5 @@
 import { ulid } from "ulid"
-import { createHash } from "crypto"
+import { createHash } from "node:crypto"
 import type { WithParts } from "../state/index.js"
 import type { UserMessage } from "../state/types.js"
 
@@ -102,7 +102,7 @@ export const isIgnoredUserMessage = (message: WithParts): boolean => {
     }
 
     for (const part of parts) {
-        if (!(part as any).ignored) {
+        if (!("ignored" in part) || !part.ignored) {
             return false
         }
     }

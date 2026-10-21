@@ -39,8 +39,8 @@ export interface ToolPart {
     state: {
         status: "streaming" | "running" | "completed" | "error"
         input: string | Record<string, unknown>
-        output?: string
-        error?: string
+        output?: unknown
+        error?: unknown
     }
 }
 

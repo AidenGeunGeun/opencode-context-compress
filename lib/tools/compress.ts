@@ -28,7 +28,7 @@ interface CompressionBoundary {
 function isVisibleUserMessage(message: WithParts): boolean {
     return (
         message.info.role === "user" &&
-        (message.info as any).sourceType !== "synthetic" &&
+        message.info.sourceType !== "synthetic" &&
         !isIgnoredUserMessage(message)
     )
 }
@@ -76,7 +76,7 @@ export function resolveCompressionBoundary(
         )
     }
 
-    const parentId = (executing.message.info as any).parentID
+    const parentId = executing.message.info.parentID
     if (typeof parentId !== "string" || parentId.length === 0) {
         throw new Error(
             "compress could not identify the visible user turn that owns this call. Nothing was compressed.",

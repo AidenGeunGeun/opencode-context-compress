@@ -9,6 +9,7 @@ import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.j
 import type { ModelMessage } from "./messages/v2-transform.js"
 import { transformV2Messages } from "./messages/v2-transform.js"
 import { renderPostCompressionNotice } from "./prompts/index.js"
+import { isRecord } from "./shared-utils.js"
 import {
     listSessionMessages,
     pluginClient,
@@ -269,8 +270,4 @@ async function ownsSession(
     }
     const location = (await context.session.get({ sessionID })).location
     return location.directory === context.location.directory
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
 }

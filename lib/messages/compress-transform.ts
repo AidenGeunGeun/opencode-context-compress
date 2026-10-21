@@ -1,4 +1,4 @@
-import type { SessionState, WithParts } from "../state/index.js"
+import type { SessionState, TextPart, WithParts } from "../state/index.js"
 import type { Logger } from "../logger.js"
 import { isMessageCompacted } from "../shared-utils.js"
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js"
@@ -40,7 +40,7 @@ interface V2CleanupPlan extends ManagementTurnSuppressionPlan {
 function isVisibleUserMessage(message: WithParts): boolean {
     return (
         message.info.role === "user" &&
-        (message.info as any).sourceType !== "synthetic" &&
+        message.info.sourceType !== "synthetic" &&
         !isIgnoredUserMessage(message)
     )
 }
@@ -319,7 +319,7 @@ export function stripV2MachineryForCompressionSelection(
 
 function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {
     const parts = Array.isArray(message.parts) ? message.parts : []
-    const textPart = parts.find((part) => part.type === "text") as any
+    const textPart = parts.find((part): part is TextPart => part.type === "text")
     const retainedPart = textPart
         ? { ...textPart, text: retainedText }
         : {

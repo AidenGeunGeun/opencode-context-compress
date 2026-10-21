@@ -43,7 +43,7 @@ export function extractMessageContent(msg: WithParts): string {
             case "text":
             case "reasoning":
                 if (typeof p.text === "string") {
-                    content += " " + p.text
+                    content += ` ${p.text}`
                 }
                 break
 
@@ -55,10 +55,10 @@ export function extractMessageContent(msg: WithParts): string {
                 if (state.status === "completed") {
                     const output = getCompletedToolOutputText(part, state.output)
                     if (typeof output === "string") {
-                        content += " " + output
+                        content += ` ${output}`
                     }
                 } else if (state.status === "error" && typeof state.error === "string") {
-                    content += " " + state.error
+                    content += ` ${state.error}`
                 }
 
                 // Include tool input
@@ -74,16 +74,16 @@ export function extractMessageContent(msg: WithParts): string {
 
             case "compaction":
                 if (typeof p.summary === "string") {
-                    content += " " + p.summary
+                    content += ` ${p.summary}`
                 }
                 break
 
             case "subtask":
                 if (typeof p.summary === "string") {
-                    content += " " + p.summary
+                    content += ` ${p.summary}`
                 }
                 if (typeof p.result === "string") {
-                    content += " " + p.result
+                    content += ` ${p.result}`
                 }
                 break
         }
@@ -128,7 +128,7 @@ export function collectContentInRange(
             if (part.type === "text") {
                 contents.push(part.text)
             } else if (part.type === "tool") {
-                const toolState = part.state as any
+                const toolState = part.state
                 if (toolState?.input) {
                     contents.push(
                         typeof toolState.input === "string"

@@ -1,4 +1,4 @@
-import type { WithParts } from "../state/index.js"
+import type { TextPart, WithParts } from "../state/index.js"
 import { isIgnoredUserMessage } from "./utils.js"
 
 /**
@@ -32,16 +32,15 @@ const EMBEDDED_USER_MESSAGE = /<user-message>\s*([\s\S]*?)\s*<\/user-message>/
 function getMessageText(message: WithParts): string {
     const parts = Array.isArray(message.parts) ? message.parts : []
     return parts
-        .filter((part: any) => part.type === "text" && typeof part.text === "string")
-        .map((part: any) => part.text as string)
+        .filter((part): part is TextPart => part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
         .join("\n")
 }
 
 function hasToolPart(message: WithParts, predicate: (tool: string) => boolean): boolean {
     const parts = Array.isArray(message.parts) ? message.parts : []
     return parts.some(
-        (part: any) =>
-            part.type === "tool" && typeof part.tool === "string" && predicate(part.tool),
+        (part) => part.type === "tool" && typeof part.tool === "string" && predicate(part.tool),
     )
 }
 

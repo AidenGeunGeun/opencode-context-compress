@@ -42,7 +42,7 @@ export function messageContainsCompressCall(message: WithParts | undefined): boo
 function isVisibleUserMessage(message: WithParts): boolean {
     return (
         message.info.role === "user" &&
-        (message.info as any).sourceType !== "synthetic" &&
+        message.info.sourceType !== "synthetic" &&
         !isIgnoredUserMessage(message)
     )
 }
@@ -106,7 +106,7 @@ function collectEligibleCooldownMessageIds(
 
     for (let i = anchorIndex + 1; i < messages.length; i++) {
         const message = messages[i]
-        const info = message.info as any
+        const info = message.info
         if (
             info.role !== "assistant" ||
             info.summary === true ||

@@ -1,3 +1,4 @@
+import { isRecord } from "../shared-utils.js"
 import type { WithParts } from "../state/types.js"
 
 type RecordValue = Record<string, unknown>
@@ -94,10 +95,10 @@ function user(
                 : undefined,
             variant: selection?.model?.variant,
             time: { created },
-        } as any,
+        },
         parts:
             typeof message.text === "string" && message.text.length > 0
-                ? [{ type: "text", text: message.text } as any]
+                ? [{ type: "text", text: message.text }]
                 : [],
     }
 }
@@ -122,7 +123,7 @@ function synthetic(
                 : undefined,
             variant: selection?.model?.variant,
             time: { created },
-        } as any,
+        },
         parts: [
             {
                 type: "text",
@@ -131,7 +132,7 @@ function synthetic(
                 ...(metadata["opencode.context-compress.ignored"] === true
                     ? { ignored: true }
                     : {}),
-            } as any,
+            },
         ],
     }
 }
@@ -164,11 +165,8 @@ function assistant(
             finish: typeof message.finish === "string" ? message.finish : undefined,
             error: message.error,
             tokens: adaptTokens(message.tokens),
-        } as any,
-        parts: [
-            { type: "step-start" } as any,
-            ...content.map((part) => adaptAssistantPart(id, part)),
-        ],
+        },
+        parts: [{ type: "step-start" }, ...content.map((part) => adaptAssistantPart(id, part))],
     }
 }
 
@@ -179,7 +177,7 @@ function adaptAssistantPart(messageID: string, value: unknown): WithParts["parts
         return {
             type,
             text: typeof part.text === "string" ? part.text : "",
-        } as WithParts["parts"][number]
+        }
     }
     if (type !== "tool") throw new Error(`Unsupported assistant content type: ${type}`)
     const state = requireRecord(part.state, `assistant tool ${String(part.id)} state`)
@@ -201,7 +199,7 @@ function adaptAssistantPart(messageID: string, value: unknown): WithParts["parts
             ...(status === "completed" ? { output: toolOutput(state.content) } : {}),
             ...(status === "error" ? { error: state.error } : {}),
         },
-    } as unknown as WithParts["parts"][number]
+    }
 }
 
 function compaction(
@@ -221,12 +219,12 @@ function compaction(
             finish: status === "completed" ? "stop" : undefined,
             error: status === "failed" ? message.error : undefined,
             time: { created, ...(status === "completed" ? { completed: created } : {}) },
-        } as any,
+        },
         parts: [
             {
                 type: "compaction",
                 summary: typeof message.summary === "string" ? message.summary : undefined,
-            } as any,
+            },
         ],
     }
 }
@@ -239,8 +237,8 @@ function system(
     text: string,
 ): WithParts {
     return {
-        info: { id, sessionID, role: "system", sourceType, time: { created } } as any,
-        parts: text ? [{ type: "text", text } as any] : [],
+        info: { id, sessionID, role: "system", sourceType, time: { created } },
+        parts: text ? [{ type: "text", text }] : [],
     }
 }
 
@@ -291,8 +289,4 @@ function requireNumber(value: unknown, label: string) {
 
 function numberOrZero(value: unknown) {
     return typeof value === "number" && Number.isFinite(value) ? value : 0
-}
-
-function isRecord(value: unknown): value is RecordValue {
-    return typeof value === "object" && value !== null && !Array.isArray(value)
 }
