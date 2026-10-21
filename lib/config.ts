@@ -33,15 +33,28 @@ export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     tokenThreshold: 432_000,
 }
 
+// One rule per numeric field, shared by validation warnings and layer merging.
+function isProtectedTurns(value: unknown): value is number {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0
+}
+
+function isContextWindowRatio(value: unknown): value is number {
+    return typeof value === "number" && value > 0 && value <= 1
+}
+
+function isTokenThreshold(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
 export function resolveProtectedTurnsSetting(
     layer: Record<string, unknown>,
     fallback = 3,
     hasExplicitTopLevel = false,
 ): number {
-    if (typeof layer.protectedTurns === "number") return layer.protectedTurns
+    if (isProtectedTurns(layer.protectedTurns)) return layer.protectedTurns
     if (hasExplicitTopLevel) return fallback
     const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {}
-    return typeof autoCompression.protectedTurns === "number"
+    return isProtectedTurns(autoCompression.protectedTurns)
         ? autoCompression.protectedTurns
         : fallback
 }
@@ -128,12 +141,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
     if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
         errors.push({ key: "dailyLog", expected: "boolean", actual: typeof config.dailyLog })
     }
-    if (
-        config.protectedTurns !== undefined &&
-        (typeof config.protectedTurns !== "number" ||
-            !Number.isInteger(config.protectedTurns) ||
-            config.protectedTurns < 0)
-    ) {
+    if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
         errors.push({
             key: "protectedTurns",
             expected: "non-negative integer",
@@ -171,9 +179,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             }
             if (
                 autoCompression.contextWindowRatio !== undefined &&
-                (typeof autoCompression.contextWindowRatio !== "number" ||
-                    autoCompression.contextWindowRatio <= 0 ||
-                    autoCompression.contextWindowRatio > 1)
+                !isContextWindowRatio(autoCompression.contextWindowRatio)
             ) {
                 errors.push({
                     key: "autoCompression.contextWindowRatio",
@@ -183,9 +189,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             }
             if (
                 autoCompression.tokenThreshold !== undefined &&
-                (typeof autoCompression.tokenThreshold !== "number" ||
-                    !Number.isFinite(autoCompression.tokenThreshold) ||
-                    autoCompression.tokenThreshold <= 0)
+                !isTokenThreshold(autoCompression.tokenThreshold)
             ) {
                 errors.push({
                     key: "autoCompression.tokenThreshold",
@@ -195,9 +199,7 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             }
             if (
                 autoCompression.protectedTurns !== undefined &&
-                (typeof autoCompression.protectedTurns !== "number" ||
-                    !Number.isInteger(autoCompression.protectedTurns) ||
-                    autoCompression.protectedTurns < 0)
+                !isProtectedTurns(autoCompression.protectedTurns)
             ) {
                 errors.push({
                     key: "autoCompression.protectedTurns",
@@ -448,14 +450,12 @@ function mergeAutoCompression(
 
     return {
         enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
-        contextWindowRatio:
-            typeof override.contextWindowRatio === "number"
-                ? override.contextWindowRatio
-                : base.contextWindowRatio,
-        tokenThreshold:
-            typeof override.tokenThreshold === "number"
-                ? override.tokenThreshold
-                : base.tokenThreshold,
+        contextWindowRatio: isContextWindowRatio(override.contextWindowRatio)
+            ? override.contextWindowRatio
+            : base.contextWindowRatio,
+        tokenThreshold: isTokenThreshold(override.tokenThreshold)
+            ? override.tokenThreshold
+            : base.tokenThreshold,
     }
 }
 
@@ -509,7 +509,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false)
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
-            hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number"
+            hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns)
         }
     } else {
         // No config exists, create default
@@ -528,7 +528,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
             showConfigValidationWarnings(configPaths.configDir, result.data, true)
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number"
+                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns)
         }
     }
 
@@ -544,7 +544,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
             showConfigValidationWarnings(configPaths.project, result.data, true)
             config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number"
+                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns)
         }
     }
 
