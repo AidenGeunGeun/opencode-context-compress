@@ -164,7 +164,12 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             errors.push({
                 key: "autoCompression",
                 expected: "object",
-                actual: Array.isArray(autoCompression) ? "array" : typeof autoCompression,
+                actual:
+                    autoCompression === null
+                        ? "null"
+                        : Array.isArray(autoCompression)
+                          ? "array"
+                          : typeof autoCompression,
             })
         } else {
             if (
@@ -225,7 +230,12 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
             errors.push({
                 key: "commands",
                 expected: "{ enabled: boolean }",
-                actual: typeof commands,
+                actual:
+                    commands === null
+                        ? "null"
+                        : Array.isArray(commands)
+                          ? "array"
+                          : typeof commands,
             })
         }
     }

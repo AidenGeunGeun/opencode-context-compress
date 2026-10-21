@@ -87,7 +87,7 @@ describe("getConfig layering", () => {
     })
 
     it("treats null sections as absent", async (t) => {
-        t.mock.method(console, "warn", () => undefined)
+        const warn = t.mock.method(console, "warn", () => undefined)
         const config = await loadLayers({
             global: { commands: { enabled: false }, tools: { compress: { permission: "ask" } } },
             project: { commands: null, autoCompression: null, tools: null },
@@ -95,6 +95,9 @@ describe("getConfig layering", () => {
         assert.equal(config.commands.enabled, false)
         assert.equal(config.tools.compress.permission, "ask")
         assert.deepEqual(config.autoCompression, DEFAULT_AUTO_COMPRESSION)
+        const message = warn.mock.calls[0]?.arguments[0]
+        assert.match(message, /autoCompression: expected object, got null/)
+        assert.match(message, /commands: expected \{ enabled: boolean \}, got null/)
     })
 
     it("falls back to the lower layer for mistyped and out-of-range values", async (t) => {
