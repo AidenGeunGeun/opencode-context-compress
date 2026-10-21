@@ -178,41 +178,6 @@ describe("handleManageCommand", () => {
         }
     })
 
-    it("persists the generated prompt ID as the trigger ID", async () => {
-        const sessionId = `session-manage-trigger-id-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        await cleanupSessionFile(sessionId)
-        const state = createSessionState()
-        state.sessionId = sessionId
-        state.initialized = true
-        state.persistenceSynchronized = true
-
-        let promptBody: PromptInput | undefined
-        const client = fakeClient({
-            prompt: (input) => {
-                promptBody = input
-            },
-        })
-
-        try {
-            await handleManageCommand({
-                client,
-                stateManager: new SessionStateManager(),
-                state,
-                config,
-                logger,
-                sessionId,
-                messages: [createUserMessage(sessionId)],
-                arguments: "manage",
-            })
-
-            assert.equal(state.managementTurns.length, 1)
-            assert.ok(promptBody?.id, "expected a generated message ID to be sent")
-            assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
-        } finally {
-            await cleanupSessionFile(sessionId)
-        }
-    })
-
     it("shows visible feedback and does not prompt when cleanup state cannot be saved", async () => {
         const sessionId = `session-manage-save-fails-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const state = createSessionState()

@@ -206,42 +206,34 @@ async function runEvents(
             await automatic(item.value)
             const event = isRecord(item.value) ? item.value : {}
             const data = isRecord(event.data) ? event.data : {}
-            if (event.type === "session.forked" && typeof data.sessionID === "string") {
-                if (!(await ownsSession(context, data.sessionID, event))) continue
-                const messages = await listSessionMessages(client, data.sessionID)
-                await stateManager.runExclusive(data.sessionID, async () => {
-                    const state = stateManager.get(data.sessionID as string)
+            const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
+            if (sessionID === undefined) continue
+            if (event.type === "session.forked") {
+                if (!(await ownsSession(context, sessionID, event))) continue
+                const messages = await listSessionMessages(client, sessionID)
+                await stateManager.runExclusive(sessionID, async () => {
+                    const state = stateManager.get(sessionID)
                     await checkSession(state, logger, messages)
                     if (!state.persistenceSynchronized || state.hasPersistedState) return
                     await inheritForkCompression(context.session, client, state, logger, messages)
                 })
                 continue
             }
-            if (
-                event.type === "session.compaction.started" &&
-                data.reason === "auto" &&
-                typeof data.sessionID === "string"
-            ) {
-                if (!(await ownsSession(context, data.sessionID, event))) continue
+            if (event.type === "session.compaction.started" && data.reason === "auto") {
+                if (!(await ownsSession(context, sessionID, event))) continue
                 await promptSession(client, {
-                    sessionId: data.sessionID,
+                    sessionId: sessionID,
                     parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
                     noReply: true,
-                    messageId: generateNativeCompactionNoticeId(data.sessionID, event),
+                    messageId: generateNativeCompactionNoticeId(sessionID, event),
                 })
                 continue
             }
-            if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
-                continue
-            if (!(await ownsSession(context, data.sessionID, event))) continue
-            const messages = await listSessionMessages(client, data.sessionID)
-            await stateManager.runExclusive(data.sessionID, () =>
-                reconcileSessionLifecycle(
-                    stateManager.get(data.sessionID as string),
-                    data.sessionID as string,
-                    logger,
-                    messages,
-                ),
+            if (event.type !== "session.compaction.ended") continue
+            if (!(await ownsSession(context, sessionID, event))) continue
+            const messages = await listSessionMessages(client, sessionID)
+            await stateManager.runExclusive(sessionID, () =>
+                reconcileSessionLifecycle(stateManager.get(sessionID), sessionID, logger, messages),
             )
         } catch (error) {
             logger.error("Context Compress event handling failed", {

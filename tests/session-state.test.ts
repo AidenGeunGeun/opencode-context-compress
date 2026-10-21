@@ -407,9 +407,6 @@ describe("saveSessionState", () => {
 
             const loadResult = await loadSessionState(sessionId, logger)
             assert.equal(loadResult.status, "loaded")
-            if (loadResult.status !== "loaded") {
-                throw new Error("Expected loaded state")
-            }
 
             assert.deepEqual(loadResult.state.compressed.toolIds, ["tool-1"])
             assert.deepEqual(loadResult.state.compressed.messageIds, ["m2", "m3"])
@@ -496,7 +493,6 @@ describe("saveSessionState", () => {
 
             const loadResult = await loadSessionState(sessionId, logger)
             assert.equal(loadResult.status, "loaded")
-            if (loadResult.status !== "loaded") throw new Error("Expected loaded state")
             assert.deepEqual(loadResult.state.managementTurns, [
                 {
                     triggerMessageId: "msg_compress_manage_legacy",
@@ -559,7 +555,6 @@ describe("saveSessionState", () => {
 
             const loaded = await loadSessionState(sessionId, logger)
             assert.equal(loaded.status, "loaded")
-            if (loaded.status !== "loaded") throw new Error("expected valid state")
             assert.equal("compressionMapSnapshot" in loaded.state, false)
             assert.equal(loaded.state.managementTurns.length, 1)
             assert.equal(loaded.state.managementTurns[0].cleanupVersion, 2)

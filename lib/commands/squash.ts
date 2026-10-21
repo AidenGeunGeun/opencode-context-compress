@@ -39,66 +39,69 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
         return
     }
 
-    const staged = (await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-        if (!ctx.state.persistenceSynchronized) {
-            return async () => {
-                await sendIgnoredMessage(
-                    ctx.client,
-                    ctx.sessionId,
-                    "Block squash could not start because saved session state could not be loaded.",
-                    ctx.logger,
-                )
-                return false
+    const staged = await ctx.stateManager.runExclusive(
+        ctx.sessionId,
+        async (): Promise<StagedManagementTurn | undefined> => {
+            if (!ctx.state.persistenceSynchronized) {
+                return async () => {
+                    await sendIgnoredMessage(
+                        ctx.client,
+                        ctx.sessionId,
+                        "Block squash could not start because saved session state could not be loaded.",
+                        ctx.logger,
+                    )
+                    return false
+                }
             }
-        }
 
-        const active = findActiveManagementTurn(ctx.state, ctx.messages)
-        if (active && active.turn.source !== "squash") {
-            return async () => {
-                await sendIgnoredMessage(
-                    ctx.client,
-                    ctx.sessionId,
-                    "Block squash could not start because a compression management turn is still active.",
-                    ctx.logger,
-                )
-                return false
+            const active = findActiveManagementTurn(ctx.state, ctx.messages)
+            if (active && active.turn.source !== "squash") {
+                return async () => {
+                    await sendIgnoredMessage(
+                        ctx.client,
+                        ctx.sessionId,
+                        "Block squash could not start because a compression management turn is still active.",
+                        ctx.logger,
+                    )
+                    return false
+                }
             }
-        }
 
-        let blockCount: number
-        try {
-            blockCount = orderCompressBlocks(ctx.messages, ctx.state.compressSummaries).length
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            return async () => {
-                await sendIgnoredMessage(
-                    ctx.client,
-                    ctx.sessionId,
-                    `Block squash could not start: ${message}`,
-                    ctx.logger,
-                )
-                return false
+            let blockCount: number
+            try {
+                blockCount = orderCompressBlocks(ctx.messages, ctx.state.compressSummaries).length
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                return async () => {
+                    await sendIgnoredMessage(
+                        ctx.client,
+                        ctx.sessionId,
+                        `Block squash could not start: ${message}`,
+                        ctx.logger,
+                    )
+                    return false
+                }
             }
-        }
-        if (blockCount < 2) {
-            return async () => {
-                await sendIgnoredMessage(
-                    ctx.client,
-                    ctx.sessionId,
-                    "Block squash requires at least two existing compressed blocks.",
-                    ctx.logger,
-                )
-                return false
+            if (blockCount < 2) {
+                return async () => {
+                    await sendIgnoredMessage(
+                        ctx.client,
+                        ctx.sessionId,
+                        "Block squash requires at least two existing compressed blocks.",
+                        ctx.logger,
+                    )
+                    return false
+                }
             }
-        }
 
-        return stageManagementTurnWithinLock({
-            ...ctx,
-            systemPrompt: renderSquashSystemPrompt(),
-            retainedText: extractSquashCommandResidual(ctx.arguments),
-            source: "squash",
-        })
-    })) as StagedManagementTurn | undefined
+            return stageManagementTurnWithinLock({
+                ...ctx,
+                systemPrompt: renderSquashSystemPrompt(),
+                retainedText: extractSquashCommandResidual(ctx.arguments),
+                source: "squash",
+            })
+        },
+    )
 
     if (staged) await staged()
 }
