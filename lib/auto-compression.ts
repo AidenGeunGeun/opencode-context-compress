@@ -5,11 +5,7 @@ import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
 import { type PluginClient, listSessionMessages } from "./sdk/client.js"
 import { isRecord } from "./shared-utils.js"
-import {
-    reconcileSessionLifecycle,
-    type SessionStateManager,
-    type WithParts,
-} from "./state/index.js"
+import { reconcileSessionLifecycle, type SessionStateManager } from "./state/index.js"
 import { sendIgnoredMessage } from "./ui/notification.js"
 import {
     isMessageWithinPostCompressionCooldown,
@@ -235,7 +231,7 @@ export function createAutomaticCompressionEventHandler(
 
         try {
             reserved = await stateManager.runExclusive(info.sessionID, async () => {
-                const messages = (await listSessionMessages(client, info.sessionID)) as WithParts[]
+                const messages = await listSessionMessages(client, info.sessionID)
                 if (messages.length === 0) {
                     logger.warn(
                         "Automatic compression skipped because session messages were unavailable",

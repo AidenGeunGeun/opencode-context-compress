@@ -92,7 +92,7 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
         response = AUTO_USAGE
     } else {
         response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-            const messages = (await listSessionMessages(ctx.client, ctx.sessionId)) as WithParts[]
+            const messages = await listSessionMessages(ctx.client, ctx.sessionId)
             await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages)
 
             if (!ctx.state.persistenceSynchronized) {

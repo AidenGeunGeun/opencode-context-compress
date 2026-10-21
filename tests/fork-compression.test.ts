@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import type { WithParts } from "../lib/state/types.ts"
-import { fakeClient, fakeSession, hostContext, sessionInfo } from "./helpers.ts"
+import { fakeClient, sessionInfo } from "./helpers.ts"
 
 function forkHost(
     fork: { sessionID: string; boundary: { type: "before" | "through"; messageID: string } },
@@ -15,9 +15,7 @@ function forkHost(
     const context = async ({ sessionID }: { sessionID: string }) =>
         sessionID === "parent" ? parent : child
     return {
-        session: hostContext({
-            session: { ...fakeSession({ context }), get: async () => sessionInfo({ fork }) },
-        }).session,
+        session: { get: async () => sessionInfo({ fork }) },
         client: fakeClient({ context }),
     }
 }

@@ -153,7 +153,7 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 let rawMessages: WithParts[]
                 try {
-                    rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
+                    rawMessages = await listSessionMessages(client, sessionId)
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
                     throw new Error(

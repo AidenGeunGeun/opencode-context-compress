@@ -6,7 +6,7 @@ import type { SessionState, WithParts } from "./types.js"
 
 /** Carry compression blocks into a V2 fork before its first model request. */
 export async function inheritForkCompression(
-    session: Plugin.Context["session"],
+    session: Pick<Plugin.Context["session"], "get">,
     client: PluginClient,
     state: SessionState,
     logger: Logger,
@@ -16,7 +16,7 @@ export async function inheritForkCompression(
     const child = await session.get({ sessionID: state.sessionId })
     if (!child.fork) return
 
-    const parentMessages = (await listSessionMessages(client, child.fork.sessionID)) as WithParts[]
+    const parentMessages = await listSessionMessages(client, child.fork.sessionID)
     const parentState = await loadSessionState(child.fork.sessionID, logger, parentMessages)
     if (parentState.status === "error")
         throw new Error("Cannot read parent compression state for fork")

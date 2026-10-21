@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin"
 import type { ModelMessage } from "../lib/messages/v2-transform.ts"
-import type { PluginClient } from "../lib/sdk/client.ts"
+import { type PluginClient, pluginClient } from "../lib/sdk/client.ts"
 import type { Part, WithParts } from "../lib/state/types.ts"
 
 type Session = PluginClient["session"]
@@ -53,7 +53,7 @@ export function fakeSession(fake: SessionFake = {}): Session {
 }
 
 export function fakeClient(fake: SessionFake = {}): PluginClient {
-    return { kind: "promise-plugin", selections: new Map(), session: fakeSession(fake) }
+    return pluginClient(fakeSession(fake))
 }
 
 type Registration = Awaited<ReturnType<Plugin.Context["command"]["transform"]>>

@@ -17,12 +17,7 @@ import {
     promptSession,
     setSessionSelection,
 } from "./sdk/client.js"
-import {
-    checkSession,
-    reconcileSessionLifecycle,
-    SessionStateManager,
-    type WithParts,
-} from "./state/index.js"
+import { checkSession, reconcileSessionLifecycle, SessionStateManager } from "./state/index.js"
 import { inheritForkCompression } from "./state/fork.js"
 import { createCompressTool, createSquashTool } from "./tools/index.js"
 
@@ -110,7 +105,7 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 variant: event.model.variant,
             },
         })
-        const messages = (await listSessionMessages(client, event.sessionID)) as WithParts[]
+        const messages = await listSessionMessages(client, event.sessionID)
         if (messages.length === 0) return
         const state = stateManager.get(event.sessionID)
         const modelContext = await resolveModelContext(context, event.model)
@@ -215,7 +210,7 @@ async function runEvents(
             const data = isRecord(event.data) ? event.data : {}
             if (event.type === "session.forked" && typeof data.sessionID === "string") {
                 if (!(await ownsSession(context, data.sessionID, event))) continue
-                const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
+                const messages = await listSessionMessages(client, data.sessionID)
                 await stateManager.runExclusive(data.sessionID, async () => {
                     const state = stateManager.get(data.sessionID as string)
                     await checkSession(state, logger, messages)
@@ -241,7 +236,7 @@ async function runEvents(
             if (event.type !== "session.compaction.ended" || typeof data.sessionID !== "string")
                 continue
             if (!(await ownsSession(context, data.sessionID, event))) continue
-            const messages = (await listSessionMessages(client, data.sessionID)) as WithParts[]
+            const messages = await listSessionMessages(client, data.sessionID)
             await stateManager.runExclusive(data.sessionID, () =>
                 reconcileSessionLifecycle(
                     stateManager.get(data.sessionID as string),

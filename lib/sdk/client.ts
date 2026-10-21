@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin"
 import { adaptProjectedMessages, type V2SessionSelection } from "../messages/v2-adapter.js"
+import type { WithParts } from "../state/types.js"
 
 export interface SessionPromptInput {
     sessionId: string
@@ -15,7 +16,7 @@ export interface PluginClient {
     readonly session: Pick<Plugin.Context["session"], "context" | "prompt" | "synthetic">
 }
 
-export function pluginClient(session: Plugin.Context["session"]): PluginClient {
+export function pluginClient(session: PluginClient["session"]): PluginClient {
     return { kind: "promise-plugin", selections: new Map(), session }
 }
 
@@ -27,18 +28,19 @@ export function setSessionSelection(
     client.selections.set(sessionID, selection)
 }
 
+function isAdaptedTranscript(values: readonly unknown[]): values is WithParts[] {
+    return values.every(
+        (value) =>
+            typeof value === "object" && value !== null && "info" in value && "parts" in value,
+    )
+}
+
 export async function listSessionMessages(
     client: PluginClient,
     sessionId: string,
-): Promise<unknown[]> {
+): Promise<WithParts[]> {
     const values = await client.session.context({ sessionID: sessionId })
-    if (
-        values.every(
-            (value) =>
-                typeof value === "object" && value !== null && "info" in value && "parts" in value,
-        )
-    )
-        return values
+    if (isAdaptedTranscript(values)) return values
     return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId))
 }
 

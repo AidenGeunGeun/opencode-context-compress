@@ -84,7 +84,7 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 let rawMessages: WithParts[]
                 try {
-                    rawMessages = (await listSessionMessages(client, sessionId)) as WithParts[]
+                    rawMessages = await listSessionMessages(client, sessionId)
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error)
                     throw new Error(

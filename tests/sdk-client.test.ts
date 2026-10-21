@@ -1,7 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { listSessionMessages, promptSession, setSessionSelection } from "../lib/sdk/client.ts"
-import type { WithParts } from "../lib/state/types.ts"
 import { fakeClient } from "./helpers.ts"
 
 describe("beta Promise session adapter", () => {
@@ -26,7 +25,7 @@ describe("beta Promise session adapter", () => {
             model: { providerID: "openai", id: "gpt-test", variant: "high" },
         })
 
-        const messages = (await listSessionMessages(client, "session")) as WithParts[]
+        const messages = await listSessionMessages(client, "session")
         assert.deepEqual(
             messages.map((message) => message.info.id),
             ["user", "assistant"],

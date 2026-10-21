@@ -1,11 +1,7 @@
 import type { PluginConfig } from "../config.js"
 import type { Logger } from "../logger.js"
 import { listSessionMessages, type PluginClient } from "../sdk/client.js"
-import {
-    reconcileSessionLifecycle,
-    type SessionStateManager,
-    type WithParts,
-} from "../state/index.js"
+import { reconcileSessionLifecycle, type SessionStateManager } from "../state/index.js"
 import { handleAutoCommand } from "./auto.js"
 import { handleContextCommand } from "./context.js"
 import { handleHelpCommand } from "./help.js"
@@ -27,7 +23,7 @@ export async function handleCompressCommand(
     const { client, stateManager, logger, config } = dependencies
     const state = stateManager.get(input.sessionID)
     const messages = await stateManager.runExclusive(input.sessionID, async () => {
-        const currentMessages = (await listSessionMessages(client, input.sessionID)) as WithParts[]
+        const currentMessages = await listSessionMessages(client, input.sessionID)
         await reconcileSessionLifecycle(state, input.sessionID, logger, currentMessages)
         return currentMessages
     })
