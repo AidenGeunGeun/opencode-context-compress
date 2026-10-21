@@ -6,9 +6,6 @@ export interface SessionPromptInput {
     parts: Array<Record<string, unknown>>
     noReply?: boolean
     messageId?: string
-    agent?: string
-    model?: { providerID: string; modelID: string }
-    variant?: string
     metadata?: { "opencode.context-compress.management": true }
 }
 
@@ -74,8 +71,4 @@ export async function promptSession(
         delivery: "steer",
         resume: true,
     })
-}
-
-export async function showToast(..._args: unknown[]): Promise<boolean> {
-    return false
 }

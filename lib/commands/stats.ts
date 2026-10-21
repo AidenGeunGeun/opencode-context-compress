@@ -5,18 +5,16 @@
 
 import type { Logger } from "../logger.js"
 import type { PluginClient } from "../sdk/client.js"
-import type { SessionState, WithParts } from "../state/index.js"
+import type { SessionState } from "../state/index.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { formatTokenCount } from "../ui/utils.js"
 import { loadAllSessionStats, type AggregatedStats } from "../state/persistence.js"
-import { getCurrentParams } from "../token-utils.js"
 
 export interface StatsCommandContext {
     client: PluginClient
     state: SessionState
     logger: Logger
     sessionId: string
-    messages: WithParts[]
 }
 
 function formatStatsMessage(
@@ -44,7 +42,7 @@ function formatStatsMessage(
 }
 
 export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void> {
-    const { client, state, logger, sessionId, messages } = ctx
+    const { client, state, logger, sessionId } = ctx
 
     // Session stats from in-memory state
     const sessionTokens = state.stats.totalCompressTokens
@@ -56,8 +54,7 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
 
     const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime)
 
-    const params = getCurrentParams(state, messages, logger)
-    await sendIgnoredMessage(client, sessionId, message, params, logger)
+    await sendIgnoredMessage(client, sessionId, message, logger)
 
     logger.info("Stats command executed", {
         sessionTokens,

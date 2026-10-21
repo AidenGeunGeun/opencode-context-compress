@@ -41,7 +41,6 @@ const config: PluginConfig = {
     enabled: true,
     debug: false,
     notification: "off",
-    notificationType: "chat",
     protectedTurns: 3,
     commands: {
         enabled: true,
@@ -179,19 +178,14 @@ describe("handleManageCommand", () => {
         }
     })
 
-    it("persists the generated trigger ID even when the prompt result's parentID points at a later notification", async () => {
-        // Reproduces the `Slice 3 dashboard shell handoff` failure pattern: the assistant
-        // reply's parentID ends up pointing at a mid-turn ignored status notification
-        // instead of the actual manage prompt that started the turn. The generated
-        // messageID we pass through must remain the source of truth regardless.
-        const sessionId = `session-manage-slice3-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    it("persists the generated prompt ID as the trigger ID", async () => {
+        const sessionId = `session-manage-trigger-id-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFile(sessionId)
         const state = createSessionState()
         state.sessionId = sessionId
         state.initialized = true
         state.persistenceSynchronized = true
 
-        const misleadingNotificationId = "msg_01900000000000000000000099"
         let promptBody: PromptInput | undefined
         const client = fakeClient({
             prompt: (input) => {
@@ -214,7 +208,6 @@ describe("handleManageCommand", () => {
             assert.equal(state.managementTurns.length, 1)
             assert.ok(promptBody?.id, "expected a generated message ID to be sent")
             assert.equal(state.managementTurns[0].triggerMessageId, promptBody.id)
-            assert.notEqual(state.managementTurns[0].triggerMessageId, misleadingNotificationId)
         } finally {
             await cleanupSessionFile(sessionId)
         }

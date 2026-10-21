@@ -279,12 +279,6 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                     estimatedCompressedTokens,
                     storedBlockId: storedBlock.label,
                     continueTask: boundary.managementTurn?.source === "automatic",
-                    currentParams: {
-                        providerId: state.modelContext?.providerId,
-                        modelId: state.modelContext?.modelId,
-                        agent: toolCtx.agent,
-                        variant: state.variant,
-                    },
                 }
             })
 
@@ -305,7 +299,6 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                 { messageIndex: 0 },
                 { messageIndex: outcome.selectedMessageCount - 1 },
                 outcome.visibleHistoryCount,
-                outcome.currentParams,
                 outcome.estimatedCompressedTokens,
             )
 

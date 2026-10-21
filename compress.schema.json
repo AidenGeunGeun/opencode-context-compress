@@ -30,12 +30,6 @@
             "default": "detailed",
             "description": "Level of notification shown when compression occurs"
         },
-        "notificationType": {
-            "type": "string",
-            "enum": ["chat", "toast"],
-            "default": "chat",
-            "description": "Where to display compression notifications (chat message or toast notification)"
-        },
         "protectedTurns": {
             "type": "integer",
             "minimum": 0,

@@ -272,5 +272,5 @@ export async function handleContextCommand(ctx: ContextCommandContext): Promise<
     const breakdown = analyzeTokens(state, messages, params.providerId)
 
     const message = formatContextMessage(breakdown)
-    await sendIgnoredMessage(client, sessionId, message, params, logger)
+    await sendIgnoredMessage(client, sessionId, message, logger)
 }

@@ -47,7 +47,6 @@ export function resolveProtectedTurnsSetting(
 }
 
 const NOTIFICATIONS = ["off", "minimal", "detailed"] as const
-const NOTIFICATION_TYPES = ["chat", "toast"] as const
 const PERMISSIONS = ["ask", "allow", "deny"] as const
 
 function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
@@ -60,7 +59,6 @@ export interface PluginConfig {
     /** Daily activity log. Follows `debug` when left unset. */
     dailyLog?: boolean
     notification: "off" | "minimal" | "detailed"
-    notificationType: "chat" | "toast"
     protectedTurns: number
     commands: Commands
     autoCompression: AutoCompression
@@ -75,6 +73,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "debug",
     "dailyLog",
     "notification",
+    // Retired with toasts; still accepted so older configs load without warnings.
     "notificationType",
     "protectedTurns",
     "autoCompression",
@@ -147,16 +146,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
                 key: "notification",
                 expected: '"off" | "minimal" | "detailed"',
                 actual: JSON.stringify(config.notification),
-            })
-        }
-    }
-
-    if (config.notificationType !== undefined) {
-        if (!isOneOf(NOTIFICATION_TYPES, config.notificationType)) {
-            errors.push({
-                key: "notificationType",
-                expected: '"chat" | "toast"',
-                actual: JSON.stringify(config.notificationType),
             })
         }
     }
@@ -305,7 +294,6 @@ const defaultConfig: PluginConfig = {
     enabled: true,
     debug: false,
     notification: "detailed",
-    notificationType: "chat",
     protectedTurns: 3,
     commands: {
         enabled: true,
@@ -483,9 +471,6 @@ function mergeConfigLayer(
         notification: isOneOf(NOTIFICATIONS, data.notification)
             ? data.notification
             : config.notification,
-        notificationType: isOneOf(NOTIFICATION_TYPES, data.notificationType)
-            ? data.notificationType
-            : config.notificationType,
         protectedTurns: resolveProtectedTurnsSetting(
             data,
             config.protectedTurns,

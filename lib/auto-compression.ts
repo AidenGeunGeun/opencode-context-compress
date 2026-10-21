@@ -3,7 +3,7 @@ import type { Logger } from "./logger.js"
 import { stageManagementTurnWithinLock, type StagedManagementTurn } from "./commands/manage.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { renderAutomaticSystemPrompt } from "./prompts/index.js"
-import { type PluginClient, listSessionMessages, showToast } from "./sdk/client.js"
+import { type PluginClient, listSessionMessages } from "./sdk/client.js"
 import { isRecord } from "./shared-utils.js"
 import {
     reconcileSessionLifecycle,
@@ -32,7 +32,6 @@ export interface AssistantMessageInfo {
     id: string
     sessionID: string
     role: "assistant"
-    agent?: string
     providerID?: string
     modelID?: string
     summary?: boolean
@@ -140,10 +139,7 @@ export function createAutomaticCompressionEventHandler(
     config: PluginConfig,
     acceptsSession: (sessionID: string, event: unknown) => Promise<boolean> = async () => true,
 ) {
-    const started = new Map<
-        string,
-        { sessionID: string; agent?: string; providerID?: string; modelID?: string }
-    >()
+    const started = new Map<string, { sessionID: string; providerID?: string; modelID?: string }>()
     return async (input: unknown) => {
         const outer = isRecord(input) && isRecord(input.event) ? input.event : input
         const event = isRecord(outer) ? outer : {}
@@ -153,7 +149,6 @@ export function createAutomaticCompressionEventHandler(
             if (typeof data.assistantMessageID === "string" && typeof data.sessionID === "string") {
                 started.set(data.assistantMessageID, {
                     sessionID: data.sessionID,
-                    agent: typeof data.agent === "string" ? data.agent : undefined,
                     providerID: typeof model.providerID === "string" ? model.providerID : undefined,
                     modelID: typeof model.id === "string" ? model.id : undefined,
                 })
@@ -176,7 +171,6 @@ export function createAutomaticCompressionEventHandler(
                   id: data.assistantMessageID as string,
                   sessionID: projected.sessionID,
                   role: "assistant",
-                  agent: projected.agent,
                   providerID: projected.providerID,
                   modelID: projected.modelID,
                   time: { completed: Date.now() },
@@ -347,26 +341,12 @@ export function createAutomaticCompressionEventHandler(
                 messageId: info.id,
                 error: message,
             })
-            const shown = await showToast(client, {
-                title: "Automatic Compression",
-                message: `Could not start automatic compression: ${message}`,
-                variant: "error",
-                duration: 8000,
-            })
-            if (!shown) {
-                await sendIgnoredMessage(
-                    client,
-                    info.sessionID,
-                    `Could not start automatic compression: ${message}`,
-                    {
-                        agent: info.agent,
-                        providerId: info.providerID,
-                        modelId: info.modelID,
-                        variant: state.variant,
-                    },
-                    logger,
-                )
-            }
+            await sendIgnoredMessage(
+                client,
+                info.sessionID,
+                `Could not start automatic compression: ${message}`,
+                logger,
+            )
         } finally {
             if (attemptedStart) {
                 state.autoCompressionStarting = false

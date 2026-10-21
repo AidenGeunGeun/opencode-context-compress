@@ -22,7 +22,6 @@ const config: PluginConfig = {
     enabled: true,
     debug: false,
     notification: "off",
-    notificationType: "chat",
     protectedTurns: 0,
     commands: { enabled: true },
     autoCompression: { enabled: true, contextWindowRatio: 0.9, tokenThreshold: 1 },

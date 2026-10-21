@@ -19,7 +19,6 @@ const config: PluginConfig = {
     enabled: true,
     debug: false,
     notification: "off",
-    notificationType: "chat",
     protectedTurns: 3,
     commands: { enabled: true },
     autoCompression: { ...DEFAULT_AUTO_COMPRESSION },

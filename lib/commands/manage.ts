@@ -5,12 +5,11 @@ import type { SessionStateManager } from "../state/state.js"
 import { commitDurableSessionState } from "../state/state.js"
 import type { PluginConfig } from "../config.js"
 import { renderSystemPrompt } from "../prompts/index.js"
-import { type CurrentParams, getCurrentParams } from "../token-utils.js"
 import { saveSessionState } from "../state/persistence.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js"
 import { isRecord } from "../shared-utils.js"
-import { type PluginClient, promptSession, showToast } from "../sdk/client.js"
+import { type PluginClient, promptSession } from "../sdk/client.js"
 
 export interface ManageCommandContext {
     client: PluginClient
@@ -135,43 +134,14 @@ export function generateAutomaticPromptMessageId(
     )}`
 }
 
-/**
- * Best-effort sanity check only. The generated trigger ID passed via `messageID` on the
- * prompt call is the source of truth for cleanup anchoring - the assistant response's
- * `parentID` is not trusted, since OpenCode can bind it to whatever user message was most
- * recently created in the session (e.g. a mid-turn ignored status notification), not
- * necessarily the message that actually started this turn.
- */
-function extractPromptParentIdForLogging(promptResult: unknown): string | undefined {
-    const result = isRecord(promptResult) ? (promptResult.data ?? promptResult) : undefined
-    const info = isRecord(result) ? result.info : undefined
-    if (!isRecord(info)) {
-        return undefined
-    }
-
-    return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined
-}
-
 export async function sendManageFailureFeedback(
     client: PluginClient,
     logger: Logger,
     sessionId: string,
     message: string,
-    params: Partial<CurrentParams>,
 ): Promise<void> {
-    if (
-        await showToast(client, {
-            title: "Compression Management",
-            message,
-            variant: "error",
-            duration: 8000,
-        })
-    ) {
-        return
-    }
-
     if (typeof client?.session?.prompt === "function") {
-        await sendIgnoredMessage(client, sessionId, message, params, logger)
+        await sendIgnoredMessage(client, sessionId, message, logger)
         return
     }
 
@@ -185,7 +155,6 @@ export async function handleManageCommand(ctx: ManageCommandContext): Promise<vo
             ctx.logger,
             ctx.sessionId,
             "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.",
-            getCurrentParams(ctx.state, ctx.messages, ctx.logger),
         )
         return
     }
@@ -208,7 +177,6 @@ export async function stageManagementTurnWithinLock(
 ): Promise<StagedManagementTurn | undefined> {
     const { client, stateManager, state, logger, sessionId, messages } = ctx
 
-    const currentParams = getCurrentParams(state, messages, logger)
     if (!state.persistenceSynchronized) {
         return async () => {
             await sendManageFailureFeedback(
@@ -216,7 +184,6 @@ export async function stageManagementTurnWithinLock(
                 logger,
                 sessionId,
                 "Compression management could not start because saved session state could not be loaded.",
-                currentParams,
             )
             return false
         }
@@ -288,29 +255,16 @@ export async function stageManagementTurnWithinLock(
                 logger,
                 sessionId,
                 "Compression management could not start: cleanup state could not be saved.",
-                currentParams,
             )
             return false
         }
     }
     commitDurableSessionState(state, candidateState)
 
-    const model =
-        currentParams.providerId && currentParams.modelId
-            ? {
-                  providerID: currentParams.providerId,
-                  modelID: currentParams.modelId,
-              }
-            : undefined
-
     return async () => {
-        let promptResult: unknown
         try {
-            promptResult = await promptSession(client, {
+            await promptSession(client, {
                 sessionId,
-                agent: currentParams.agent,
-                model,
-                variant: currentParams.variant,
                 parts: messageParts,
                 messageId: triggerMessageId,
                 metadata: { "opencode.context-compress.management": true },
@@ -361,21 +315,8 @@ export async function stageManagementTurnWithinLock(
                     : rollbackResult === "removed"
                       ? `Compression management could not start: ${errorMessage || "the prompt failed."}`
                       : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`,
-                currentParams,
             )
             return false
-        }
-
-        const returnedParentId = extractPromptParentIdForLogging(promptResult)
-        if (returnedParentId && returnedParentId !== triggerMessageId) {
-            logger.warn(
-                "Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor",
-                {
-                    sessionId,
-                    triggerMessageId,
-                    returnedParentId,
-                },
-            )
         }
 
         logger.info("Sent compression context to agent", {

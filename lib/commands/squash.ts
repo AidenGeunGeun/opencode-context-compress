@@ -6,7 +6,6 @@ import type { SessionStateManager } from "../state/state.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import { orderCompressBlocks } from "../messages/blocks.js"
 import { renderSquashSystemPrompt } from "../prompts/index.js"
-import { getCurrentParams } from "../token-utils.js"
 import {
     sendManageFailureFeedback,
     stageManagementTurnWithinLock,
@@ -33,14 +32,12 @@ export function extractSquashCommandResidual(args: string | undefined): string |
 }
 
 export async function handleSquashCommand(ctx: SquashCommandContext): Promise<void> {
-    const currentParams = getCurrentParams(ctx.state, ctx.messages, ctx.logger)
     if (ctx.config.tools.compress.permission === "deny") {
         await sendManageFailureFeedback(
             ctx.client,
             ctx.logger,
             ctx.sessionId,
             "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.",
-            currentParams,
         )
         return
     }
@@ -53,7 +50,6 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
                     ctx.logger,
                     ctx.sessionId,
                     "Block squash could not start because saved session state could not be loaded.",
-                    currentParams,
                 )
                 return false
             }
@@ -67,7 +63,6 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
                     ctx.logger,
                     ctx.sessionId,
                     "Block squash could not start because a compression management turn is still active.",
-                    currentParams,
                 )
                 return false
             }
@@ -84,7 +79,6 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
                     ctx.logger,
                     ctx.sessionId,
                     `Block squash could not start: ${message}`,
-                    currentParams,
                 )
                 return false
             }
@@ -96,7 +90,6 @@ export async function handleSquashCommand(ctx: SquashCommandContext): Promise<vo
                     ctx.logger,
                     ctx.sessionId,
                     "Block squash requires at least two existing compressed blocks.",
-                    currentParams,
                 )
                 return false
             }

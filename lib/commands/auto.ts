@@ -11,7 +11,6 @@ import {
     type SessionStateManager,
 } from "../state/state.js"
 import { saveSessionState } from "../state/persistence.js"
-import { getCurrentParams } from "../token-utils.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
 import { listSessionMessages, type PluginClient } from "../sdk/client.js"
 
@@ -22,7 +21,6 @@ export interface AutoCommandContext {
     config: PluginConfig
     logger: Logger
     sessionId: string
-    messages: WithParts[]
     arguments: string[]
 }
 
@@ -161,6 +159,5 @@ export async function handleAutoCommand(ctx: AutoCommandContext): Promise<void> 
         })
     }
 
-    const params = getCurrentParams(ctx.state, ctx.messages, ctx.logger)
-    await sendIgnoredMessage(ctx.client, ctx.sessionId, response, params, ctx.logger)
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger)
 }

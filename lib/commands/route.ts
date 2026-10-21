@@ -39,7 +39,7 @@ export async function handleCompressCommand(
         return true
     }
     if (subcommand === "stats") {
-        await handleStatsCommand({ client, state, logger, sessionId: input.sessionID, messages })
+        await handleStatsCommand({ client, state, logger, sessionId: input.sessionID })
         return true
     }
     if (subcommand === "manage") {
@@ -76,12 +76,11 @@ export async function handleCompressCommand(
             config,
             logger,
             sessionId: input.sessionID,
-            messages,
             arguments: args.slice(1),
         })
         return true
     }
 
-    await handleHelpCommand({ client, state, logger, sessionId: input.sessionID, messages })
+    await handleHelpCommand({ client, logger, sessionId: input.sessionID })
     return true
 }

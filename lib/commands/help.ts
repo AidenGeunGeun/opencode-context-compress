@@ -5,16 +5,12 @@
 
 import type { Logger } from "../logger.js"
 import type { PluginClient } from "../sdk/client.js"
-import type { SessionState, WithParts } from "../state/index.js"
 import { sendIgnoredMessage } from "../ui/notification.js"
-import { getCurrentParams } from "../token-utils.js"
 
 export interface HelpCommandContext {
     client: PluginClient
-    state: SessionState
     logger: Logger
     sessionId: string
-    messages: WithParts[]
 }
 
 function formatHelpMessage(): string {
@@ -43,12 +39,11 @@ function formatHelpMessage(): string {
 }
 
 export async function handleHelpCommand(ctx: HelpCommandContext): Promise<void> {
-    const { client, state, logger, sessionId, messages } = ctx
+    const { client, logger, sessionId } = ctx
 
     const message = formatHelpMessage()
 
-    const params = getCurrentParams(state, messages, logger)
-    await sendIgnoredMessage(client, sessionId, message, params, logger)
+    await sendIgnoredMessage(client, sessionId, message, logger)
 
     logger.info("Help command executed")
 }
