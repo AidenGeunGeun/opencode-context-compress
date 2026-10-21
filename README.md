@@ -10,6 +10,15 @@ veto native compaction, so the plugin posts a warning in the session if auto-com
 Manual `/compact` is a deliberate reset: OpenCode replaces the history with its own summary, and the
 plugin clears every compression block. To merge blocks without a reset, use `/compress squash`.
 
+## In practice
+
+From the maintainer's own OpenCode use, August to October 2026, with native compaction off:
+
+- The longest session ran 25 days and 8,000+ model turns, about 2B tokens processed (mostly
+  cache reads), without a single native compaction.
+- 126 sessions were compressed into 411 blocks, up to 40 in one session; `/compress squash`
+  merges old blocks so long sessions stay compact.
+
 ## Install
 
 Requires OpenCode 2; the plugin is built against the `2.0.13` plugin API. OpenCode 1.x needs the
