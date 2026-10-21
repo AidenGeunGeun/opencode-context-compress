@@ -30,6 +30,11 @@
             "default": "detailed",
             "description": "Level of notification shown when compression occurs"
         },
+        "notificationType": {
+            "type": "string",
+            "enum": ["chat", "toast"],
+            "description": "Deprecated and ignored; toast notifications were removed"
+        },
         "protectedTurns": {
             "type": "integer",
             "minimum": 0,
