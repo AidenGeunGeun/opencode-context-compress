@@ -17,7 +17,9 @@
         "declaration": true,
         "declarationMap": true,
         "sourceMap": true,
-        "types": ["node"]
+        "types": ["node"],
+        "noUnusedLocals": true,
+        "noUnusedParameters": true
     },
     "include": ["index.ts", "lib/**/*"],
     "exclude": ["node_modules", "dist", "logs"]

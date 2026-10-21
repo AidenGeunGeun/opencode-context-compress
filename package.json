@@ -16,8 +16,11 @@
         "prebuild": "npm run generate:prompts",
         "build": "npm run clean && tsc && bun build index.ts --outdir dist --entry-naming index.js --target bun --format esm --packages external --sourcemap=linked",
         "dev": "opencode",
-        "typecheck": "npm run generate:prompts && tsc --noEmit",
-        "test": "npm run build && node --import tsx --test tests/*.test.ts"
+        "typecheck": "npm run generate:prompts && tsc --noEmit && tsc -p tsconfig.test.json",
+        "test": "npm run build && node --import tsx --test tests/*.test.ts",
+        "lint": "biome check --error-on-warnings",
+        "fix": "biome check --write",
+        "check": "npm run lint && npm run typecheck"
     },
     "author": "Aiden Kim",
     "license": "MIT",
@@ -45,6 +48,7 @@
         "zod": "4.1.8"
     },
     "devDependencies": {
+        "@biomejs/biome": "2.5.15",
         "@opencode/cli": "2.0.13",
         "@types/node": "^25.1.0",
         "tsx": "^4.21.0",
