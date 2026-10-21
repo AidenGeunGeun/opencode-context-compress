@@ -6,6 +6,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { setTimeout } from "node:timers/promises"
 
+type PluginInventory = { data: Array<{ id: string; state: { status: string } }> }
+
 test("OpenCode 2.0.13 activates compression and registers its command", {
     timeout: 20_000,
 }, async () => {
@@ -63,11 +65,11 @@ test("OpenCode 2.0.13 activates compression and registers its command", {
         const headers = {
             authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
         }
-        let inventory: { data: Array<{ id: string; state: { status: string } }> } = { data: [] }
+        let inventory: PluginInventory = { data: [] }
         for (let attempt = 0; attempt < 100; attempt++) {
             const plugins = await fetch(`${url}/api/plugin`, { headers })
             assert.equal(plugins.status, 200)
-            inventory = await plugins.json()
+            inventory = (await plugins.json()) as PluginInventory
             if (
                 inventory.data.some(
                     (plugin) =>
@@ -87,9 +89,9 @@ test("OpenCode 2.0.13 activates compression and registers its command", {
         )
         const commands = await fetch(`${url}/api/command`, { headers })
         assert.equal(commands.status, 200)
-        const registered = await commands.json()
+        const registered = (await commands.json()) as { data: Array<{ name: string }> }
         assert.ok(
-            registered.data.some((command: { name: string }) => command.name === "compress"),
+            registered.data.some((command) => command.name === "compress"),
             JSON.stringify(registered),
         )
     } finally {

@@ -1,12 +1,14 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
+import { Logger } from "../lib/logger.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { createSessionState } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
 
-const logger = { info: () => {}, warn: () => {} } as any
+const logger = new Logger({ daily: false, context: false })
 
-function message(id: string, role: "user" | "assistant", stepStart = false) {
+function message(id: string, role: "user" | "assistant", stepStart = false): WithParts {
     return {
         info: {
             id,
@@ -14,8 +16,11 @@ function message(id: string, role: "user" | "assistant", stepStart = false) {
             sessionID: "selection-session",
             time: { created: Date.now() },
         },
-        parts: [...(stepStart ? [{ type: "step-start" }] : []), { type: "text", text: id }],
-    } as any
+        parts: [
+            ...(stepStart ? [{ type: "step-start" as const }] : []),
+            { type: "text", text: id },
+        ],
+    }
 }
 
 describe("deterministic compression selection", () => {

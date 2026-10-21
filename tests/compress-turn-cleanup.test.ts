@@ -11,7 +11,8 @@ import { applyCompressTransforms } from "../lib/messages/compress-transform.ts"
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { saveSessionState } from "../lib/state/persistence.ts"
 import { createSessionState, SessionStateManager } from "../lib/state/state.ts"
-import type { SessionState, WithParts } from "../lib/state/types.ts"
+import type { Part, SessionState, TextPart, ToolPart, WithParts } from "../lib/state/types.ts"
+import { partText } from "./helpers.ts"
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -22,7 +23,8 @@ const textMessage = (
     sessionID: string,
     text: string,
     role: "user" | "assistant" = "user",
-) => ({
+    flags: Pick<TextPart, "synthetic"> = {},
+): WithParts => ({
     info: {
         id,
         role,
@@ -34,10 +36,10 @@ const textMessage = (
         },
         time: { created: timeCounter++ },
     },
-    parts: [{ id: `part-${id}`, sessionID, messageID: id, type: "text", text }],
+    parts: [{ id: `part-${id}`, sessionID, messageID: id, type: "text", text, ...flags }],
 })
 
-const ignoredUserMessage = (id: string, sessionID: string, text: string) => ({
+const ignoredUserMessage = (id: string, sessionID: string, text: string): WithParts => ({
     info: {
         id,
         role: "user" as const,
@@ -59,7 +61,7 @@ const toolMessage = (
     output: string,
     callID: string = `call-${id}`,
     status: "completed" | "error" = "completed",
-) => ({
+): WithParts => ({
     info: {
         id,
         role: "assistant" as const,
@@ -73,9 +75,6 @@ const toolMessage = (
     },
     parts: [
         {
-            id: `part-${id}`,
-            sessionID,
-            messageID: id,
             type: "tool",
             tool,
             callID,
@@ -96,6 +95,17 @@ const toolMessage = (
 })
 
 const cloneMessages = <T>(value: T): T => structuredClone(value)
+
+function toolPart(part: Part | undefined): ToolPart {
+    if (part?.type !== "tool") throw new Error("expected a tool part")
+    return part
+}
+
+function toolInput(part: Part | undefined): Record<string, unknown> {
+    const { input } = toolPart(part).state
+    if (typeof input === "string") throw new Error("expected structured tool input")
+    return input
+}
 
 const createState = (sessionId: string): SessionState => {
     const state = createSessionState()
@@ -172,13 +182,13 @@ describe("compress-turn machinery cleanup", () => {
             ),
             textMessage("manage-close", sessionId, "Compressed into one block", "assistant"),
             textMessage("next-user", sessionId, "Next normal request"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
         assert.equal(messages.length, 2)
-        assert.equal(messages[0].parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
-        assert.match(messages[0].parts[0].text, /Durable block summary\./)
+        assert.equal(partText(messages[0].parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX), true)
+        assert.match(partText(messages[0].parts[0]) ?? "", /Durable block summary\./)
         assert.equal(messages[1].info.id, "next-user")
 
         const serialized = messageTexts(messages)
@@ -209,7 +219,7 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>noop</compress-context-map>",
             ),
             textMessage("normal-after", sessionId, "Normal context after"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -244,7 +254,7 @@ describe("compress-turn machinery cleanup", () => {
             ),
             textMessage("failed-close", sessionId, "I could not finish compression", "assistant"),
             textMessage("post", sessionId, "After failure"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -258,7 +268,7 @@ describe("compress-turn machinery cleanup", () => {
     it("preserves inter-compress conversation across many management turns without residue", () => {
         const sessionId = "session-cleanup-many"
         const state = createState(sessionId)
-        const messages: any[] = []
+        const messages: WithParts[] = []
 
         for (let i = 0; i < 8; i++) {
             const workUser = `work-u-${i}`
@@ -312,7 +322,7 @@ describe("compress-turn machinery cleanup", () => {
         const serialized = messageTexts(messages)
         assert.equal(
             messages.filter((message: WithParts) =>
-                message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX),
+                partText(message.parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
             ).length,
             8,
         )
@@ -341,7 +351,7 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>current</compress-context-map>",
             ),
             ignoredUserMessage("current-notification", sessionId, "Ignored in-turn notification"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -374,7 +384,7 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>mixed</compress-context-map>",
             ),
             textMessage("next", sessionId, "Next turn"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -383,7 +393,7 @@ describe("compress-turn machinery cleanup", () => {
             ["manage-mixed", "next"],
         )
         assert.equal(messages[0].parts.length, 1)
-        assert.equal(messages[0].parts[0].text, "Keep this product decision verbatim.")
+        assert.equal(partText(messages[0].parts[0]), "Keep this product decision verbatim.")
         assert.doesNotMatch(messageTexts(messages), /system-reminder|compress-context-map/)
     })
 
@@ -415,12 +425,12 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>cache</compress-context-map>",
             ),
             textMessage("tail-u-1", sessionId, "First active-tail user"),
-        ] as any
+        ]
         const laterMessages = [
             ...cloneMessages(baseMessages),
             textMessage("tail-a-1", sessionId, "First active-tail assistant", "assistant"),
             textMessage("tail-u-2", sessionId, "Second active-tail user"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, baseMessages)
         applyCompressTransforms(state, logger, laterMessages)
@@ -454,15 +464,14 @@ describe("compress-turn machinery cleanup", () => {
                     "<compress-context-map>reload</compress-context-map>",
                 ),
                 textMessage("after", sessionId, "After reload"),
-            ] as any
+            ]
             const manager = new SessionStateManager()
             const handler = createChatMessageTransformHandler(
                 { session: { get: async () => ({ data: {} }) } },
                 manager,
                 logger,
-                "/tmp/reload",
             )
-            const output = { messages: cloneMessages(messages) as any }
+            const output = { messages: cloneMessages(messages) }
 
             await handler({}, output)
 
@@ -506,13 +515,12 @@ describe("compress-turn machinery cleanup", () => {
                 "<compress-context-map>sub</compress-context-map>",
             ),
             textMessage("sub-next", sessionId, "Subagent next content"),
-        ] as any
-        const output = { messages: cloneMessages(messages) as any }
+        ]
+        const output = { messages: cloneMessages(messages) }
         const handler = createChatMessageTransformHandler(
             { session: { get: async () => ({ data: { parentID: "parent-session" } }) } },
             manager,
             logger,
-            "/tmp/subagent",
         )
 
         await handler({}, output)
@@ -569,7 +577,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("slice3-close", sessionId, "Compression complete.", "assistant"),
             statusNotificationMessage("slice3-notification", sessionId, "12.0K tokens"),
             textMessage("slice3-next", sessionId, "Continue with the next dashboard task"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -611,7 +619,7 @@ describe("legacy residue repair by content signature", () => {
                 "<compress-context-map>stale</compress-context-map>",
             ),
             textMessage("legacy-mixed-next", sessionId, "Continue with the launch checklist"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -620,7 +628,7 @@ describe("legacy residue repair by content signature", () => {
             ["legacy-mixed-manage", "legacy-mixed-next"],
         )
         assert.equal(messages[0].parts.length, 1)
-        assert.equal(messages[0].parts[0].text, "The launch window is June.")
+        assert.equal(partText(messages[0].parts[0]), "The launch window is June.")
         const serialized = messageTexts(messages)
         assert.doesNotMatch(
             serialized,
@@ -657,7 +665,7 @@ describe("legacy residue repair by content signature", () => {
                 "<compress-context-map>stale</compress-context-map>",
             ),
             textMessage("legacy-incomplete-next", sessionId, "Continue with the launch checklist"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -666,7 +674,7 @@ describe("legacy residue repair by content signature", () => {
             ["legacy-incomplete-manage", "legacy-incomplete-next"],
         )
         assert.equal(messages[0].parts.length, 1)
-        assert.equal(messages[0].parts[0].text, "The launch window is June.")
+        assert.equal(partText(messages[0].parts[0]), "The launch window is June.")
         const serialized = messageTexts(messages)
         assert.doesNotMatch(
             serialized,
@@ -699,7 +707,7 @@ describe("legacy residue repair by content signature", () => {
             ),
             statusNotificationMessage("wips-notification", sessionId, "4.0K tokens"),
             textMessage("wips-next", sessionId, "Continue phase 1A work"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -732,7 +740,7 @@ describe("legacy residue repair by content signature", () => {
                 "compress",
                 "Compressed range\n\n<compress-context-map>updated</compress-context-map>",
             ),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -770,7 +778,7 @@ describe("legacy residue repair by content signature", () => {
                 "assistant",
             ),
             textMessage("neg-user-3", sessionId, "Compress again."),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -815,7 +823,7 @@ describe("legacy residue repair by content signature", () => {
                 "assistant",
             ),
             textMessage("normal-next-user", sessionId, "Now add the follow-up"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -837,7 +845,7 @@ describe("legacy residue repair by content signature", () => {
     it("prevents residue drift across repeated cycles even when managementTurns bookkeeping is wrong or missing", () => {
         const sessionId = "session-cleanup-many-legacy"
         const state = createState(sessionId)
-        const messages: any[] = []
+        const messages: WithParts[] = []
 
         for (let i = 0; i < 5; i++) {
             const workUser = `legacy-work-u-${i}`
@@ -896,7 +904,7 @@ describe("legacy residue repair by content signature", () => {
         const serialized = messageTexts(messages)
         assert.equal(
             messages.filter((message: WithParts) =>
-                message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX),
+                partText(message.parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
             ).length,
             5,
         )
@@ -947,17 +955,17 @@ describe("atomic compress completion cleanup", () => {
                 "call-compress-1",
             ),
             statusNotificationMessage("notif-1", sessionId, "5.0K tokens"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
         assert.equal(messages.length, 2)
-        assert.equal(messages[0].parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX), true)
+        assert.equal(partText(messages[0].parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX), true)
         assert.equal(messages[1].info.id, "compress-msg-1")
 
-        const compressPart = messages[1].parts[0]
+        const compressPart = toolPart(messages[1].parts[0])
         assert.equal(compressPart.callID, "call-compress-1")
-        assert.equal(compressPart.state.input.summary, "summary")
+        assert.equal(toolInput(compressPart).summary, "summary")
         assert.equal(compressPart.state.output, 'Compression complete. Stored [b1] "New Work".')
 
         const serialized = messageTexts(messages)
@@ -998,7 +1006,7 @@ describe("atomic compress completion cleanup", () => {
                 "All set! Let me know what's next.",
                 "assistant",
             ),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1006,7 +1014,7 @@ describe("atomic compress completion cleanup", () => {
             messages.map((message: WithParts) => message.info.id),
             ["pre", "compress-msg-2", "final-reply-2"],
         )
-        assert.equal(messages[1].parts[0].state.input.summary, "summary")
+        assert.equal(toolInput(messages[1].parts[0]).summary, "summary")
         assert.match(messageTexts(messages), /All set! Let me know what's next\./)
         assert.doesNotMatch(
             messageTexts(messages),
@@ -1048,7 +1056,7 @@ describe("atomic compress completion cleanup", () => {
                 "call-new-compress",
             ),
             statusNotificationMessage("new-notif", sessionId, "2.0K tokens"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1062,7 +1070,7 @@ describe("atomic compress completion cleanup", () => {
                 "new-compress-msg",
             ],
         )
-        assert.equal(messages[4].parts[0].state.input.summary, "summary")
+        assert.equal(toolInput(messages[4].parts[0]).summary, "summary")
         const serialized = messageTexts(messages)
         assert.doesNotMatch(
             serialized,
@@ -1094,8 +1102,8 @@ describe("atomic compress completion cleanup", () => {
                 'Compression complete. Stored [b0] "Kept Input".',
                 "call-keep-input",
             ),
-        ] as any
-        messages[2].parts[0].state.input.summary = submittedSummary
+        ]
+        toolInput(messages[2].parts[0]).summary = submittedSummary
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1103,7 +1111,7 @@ describe("atomic compress completion cleanup", () => {
             messages.map((message: WithParts) => message.info.id),
             ["pre", "compress-keep-input"],
         )
-        assert.equal(messages[1].parts[0].state.input.summary, submittedSummary)
+        assert.equal(toolInput(messages[1].parts[0]).summary, submittedSummary)
         assert.doesNotMatch(
             messageTexts(messages),
             /summary content stored|transcript copy omitted|placeholder/i,
@@ -1129,12 +1137,7 @@ describe("prospective Version 2 cleanup", () => {
                 completedMessageId: "compress-v2-b",
             },
         ]
-        const firstCompletion = toolMessage(
-            "compress-v2-a",
-            sessionId,
-            "compress",
-            "first receipt",
-        ) as any
+        const firstCompletion = toolMessage("compress-v2-a", sessionId, "compress", "first receipt")
         firstCompletion.parts.unshift({
             id: "before-first-tool",
             sessionID: sessionId,
@@ -1154,11 +1157,18 @@ describe("prospective Version 2 cleanup", () => {
             sessionId,
             "compress",
             "second receipt",
-        ) as any
-        const synthetic = textMessage("synthetic-v2-b", sessionId, "synthetic continuation") as any
+        )
+        const synthetic = textMessage(
+            "synthetic-v2-b",
+            sessionId,
+            "synthetic continuation",
+            "user",
+            {
+                synthetic: true,
+            },
+        )
         synthetic.info.sourceType = "synthetic"
-        synthetic.parts[0].synthetic = true
-        const system = textMessage("system-v2-b", sessionId, "system update") as any
+        const system = textMessage("system-v2-b", sessionId, "system update")
         system.info.role = "system"
 
         const messages = [
@@ -1182,7 +1192,7 @@ describe("prospective Version 2 cleanup", () => {
             system,
             toolMessage("work-tool-v2-b", sessionId, "read", "tool evidence"),
             textMessage("user-v2-b", sessionId, "second user boundary"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1202,7 +1212,7 @@ describe("prospective Version 2 cleanup", () => {
         ])
         const compressionTools = messages
             .flatMap((message: WithParts) => message.parts)
-            .filter((part: any) => part.type === "tool" && part.tool === "compress")
+            .filter((part): part is ToolPart => part.type === "tool" && part.tool === "compress")
         assert.equal(compressionTools.length, 1)
         assert.equal(compressionTools[0].state.output, "second receipt")
         assert.match(messageTexts(messages), /assistant text before first compress/)
@@ -1240,7 +1250,7 @@ describe("prospective Version 2 cleanup", () => {
                 topic: "Older V2",
             },
         ]
-        const older = toolMessage("compress-old-v2", sessionId, "compress", "old receipt") as any
+        const older = toolMessage("compress-old-v2", sessionId, "compress", "old receipt")
         older.parts.push({
             id: "old-retained-text",
             sessionID: sessionId,
@@ -1254,7 +1264,7 @@ describe("prospective Version 2 cleanup", () => {
             textMessage("user-old-v2", sessionId, "old boundary"),
             textMessage("manage-new-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
             toolMessage("compress-new-v2", sessionId, "compress", "new receipt"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1263,7 +1273,7 @@ describe("prospective Version 2 cleanup", () => {
                 (message: WithParts) =>
                     message.info.id === "compress-old-v2" &&
                     message.parts.some(
-                        (part: any) => part.text === "raw text that must stay compressed",
+                        (part) => partText(part) === "raw text that must stay compressed",
                     ),
             ),
             false,
@@ -1272,7 +1282,7 @@ describe("prospective Version 2 cleanup", () => {
         assert.equal(
             messages
                 .flatMap((message: WithParts) => message.parts)
-                .filter((part: any) => part.tool === "compress").length,
+                .filter((part) => part.type === "tool" && part.tool === "compress").length,
             1,
         )
     })
@@ -1303,7 +1313,7 @@ describe("prospective Version 2 cleanup", () => {
                 "work performed during compression",
                 "assistant",
             ),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1314,7 +1324,7 @@ describe("prospective Version 2 cleanup", () => {
         assert.equal(
             messages
                 .flatMap((message: WithParts) => message.parts)
-                .some((part: any) => part.tool === "compress"),
+                .some((part) => part.type === "tool" && part.tool === "compress"),
             false,
         )
         assert.match(
@@ -1333,8 +1343,8 @@ describe("prospective Version 2 cleanup", () => {
                 cleanupVersion: 2,
             },
         ]
-        const failed = toolMessage("failed-compress-v2", sessionId, "compress", "unused") as any
-        failed.parts[0].state = { status: "error", error: "nothing eligible" }
+        const failed = toolMessage("failed-compress-v2", sessionId, "compress", "unused")
+        toolPart(failed.parts[0]).state = { status: "error", input: {}, error: "nothing eligible" }
         failed.parts.push({
             id: "failed-sibling-work",
             sessionID: sessionId,
@@ -1346,7 +1356,7 @@ describe("prospective Version 2 cleanup", () => {
             textMessage("manage-failed-v2", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
             failed,
             textMessage("user-after-failed-v2", sessionId, "continue after failure"),
-        ] as any
+        ]
 
         applyCompressTransforms(state, logger, messages)
 
@@ -1355,7 +1365,7 @@ describe("prospective Version 2 cleanup", () => {
             ["failed-compress-v2", "user-after-failed-v2"],
         )
         assert.equal(
-            messages[0].parts.some((part: any) => part.tool === "compress"),
+            messages[0].parts.some((part) => part.type === "tool" && part.tool === "compress"),
             false,
         )
         assert.match(

@@ -5,20 +5,18 @@ import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { transformMessagesForSearch } from "../lib/messages/compress-transform.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { backfillCompressSummaryMessageIds } from "../lib/state/persistence.ts"
-import type { CompressSummary, SessionState } from "../lib/state/types.ts"
+import { Logger } from "../lib/logger.ts"
+import type { CompressSummary, SessionState, WithParts } from "../lib/state/types.ts"
 
-const logger = {
-    info: () => {},
-    warn: () => {},
-} as any
+const logger = new Logger({ daily: false, context: false })
 
-const textMessage = (id: string, text: string, role: "user" | "assistant" = "user") => ({
+const textMessage = (id: string, text: string, role: "user" | "assistant" = "user"): WithParts => ({
     info: {
         id,
         role,
         sessionID: "session-test",
         agent: "agent-test",
-        model: "model-test",
+        model: { providerID: "provider-test", modelID: "model-test" },
         time: { created: Date.now() },
     },
     parts: [{ type: "text", text }],
@@ -30,6 +28,7 @@ const createState = (
 ): SessionState => ({
     sessionId: "session-test",
     initialized: true,
+    persistenceSynchronized: true,
     hasPersistedState: false,
     persistedLastUpdated: null,
     compressed: {
@@ -59,17 +58,14 @@ describe("compressed message transformation", () => {
             summary: "legacy block summary with needle",
         }
         const state = createState(["m2", "m3"], [summary])
-        const { transformed, syntheticMap } = transformMessagesForSearch(
-            rawMessages as any,
-            state,
-            logger,
-        )
+        const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger)
 
         assert.equal(transformed.length, 2)
         assert.equal(syntheticMap.size, 1)
         assert.equal(transformed[0].info.id, "m1")
+        const [summaryPart] = transformed[1].parts
         assert.equal(
-            (transformed[1] as any).parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX),
+            summaryPart.type === "text" && summaryPart.text.startsWith(COMPRESS_SUMMARY_PREFIX),
             true,
         )
     })
@@ -84,16 +80,12 @@ describe("compressed message transformation", () => {
                 completedMessageId: "compress-v2",
             },
         ]
-        const completion = textMessage(
-            "compress-v2",
-            "reasoning before compression",
-            "assistant",
-        ) as any
+        const completion = textMessage("compress-v2", "reasoning before compression", "assistant")
         completion.parts.push({
             type: "tool",
             tool: "compress",
             callID: "call-v2",
-            state: { status: "completed" },
+            state: { status: "completed", input: {} },
         })
         completion.parts.push({ type: "text", text: "work after compression" })
         const rawMessages = [
@@ -104,13 +96,13 @@ describe("compressed message transformation", () => {
             textMessage("user-v2", "next request"),
         ]
 
-        const span = selectDeterministicCompressionSpan(rawMessages as any, state, logger, 0)
+        const span = selectDeterministicCompressionSpan(rawMessages, state, logger, 0)
 
         assert.deepEqual(span.messageIds, ["before-v2", "compress-v2", "after-v2", "user-v2"])
         assert.equal(
             span.messages
                 .flatMap((message) => message.parts)
-                .some((part: any) => part.tool === "compress"),
+                .some((part) => "tool" in part && part.tool === "compress"),
             false,
         )
         assert.match(
@@ -123,7 +115,7 @@ describe("compressed message transformation", () => {
 
 describe("compress summary maintenance", () => {
     it("backfills missing messageIds from anchor and compressed message run", () => {
-        const summaries = [{ anchorMessageId: "m2", summary: "legacy" }] as CompressSummary[]
+        const summaries = [{ anchorMessageId: "m2", summary: "legacy" }]
         const messages = [
             textMessage("m1", "pre"),
             textMessage("m2", "start"),
@@ -134,7 +126,7 @@ describe("compress summary maintenance", () => {
 
         const result = backfillCompressSummaryMessageIds(
             summaries,
-            messages as any,
+            messages,
             new Set(["m2", "m3", "m4"]),
         )
 

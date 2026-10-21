@@ -10,13 +10,25 @@ import { Logger } from "../lib/logger.ts"
 import { renderPostCompressionNotice } from "../lib/prompts/index.ts"
 import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
-import type { WithParts } from "../lib/state/types.ts"
+import type {
+    MarkerPart,
+    Message,
+    Part,
+    TextPart,
+    ToolPart,
+    WithParts,
+} from "../lib/state/types.ts"
 
 const logger = new Logger({ daily: false, context: false })
 
 let timeCounter = 1_800_000_000_000
 
-const userMessage = (id: string, sessionID: string, text: string): any => ({
+const userMessage = (
+    id: string,
+    sessionID: string,
+    text: string,
+    flags: Pick<TextPart, "ignored" | "synthetic"> = {},
+): WithParts => ({
     info: {
         id,
         role: "user",
@@ -25,31 +37,23 @@ const userMessage = (id: string, sessionID: string, text: string): any => ({
         model: { providerID: "openai", modelID: "gpt-5.4" },
         time: { created: timeCounter++ },
     },
-    parts: [{ id: `part-${id}`, sessionID, messageID: id, type: "text", text }],
+    parts: [{ id: `part-${id}`, sessionID, messageID: id, type: "text", text, ...flags }],
 })
 
-const ignoredUserMessage = (id: string, sessionID: string, text: string): any => {
-    const message = userMessage(id, sessionID, text)
-    message.parts[0].ignored = true
-    return message
-}
+const ignoredUserMessage = (id: string, sessionID: string, text: string): WithParts =>
+    userMessage(id, sessionID, text, { ignored: true })
 
-const syntheticContinuationMessage = (id: string, sessionID: string): any => {
-    const message = userMessage(
-        id,
-        sessionID,
-        "Continue the current task from the latest durable state.",
-    )
-    message.parts[0].synthetic = true
-    return message
-}
+const syntheticContinuationMessage = (id: string, sessionID: string): WithParts =>
+    userMessage(id, sessionID, "Continue the current task from the latest durable state.", {
+        synthetic: true,
+    })
 
 const assistantMessage = (
     id: string,
     sessionID: string,
-    parts: any[],
-    info: Record<string, unknown> = {},
-): any => ({
+    parts: Part[],
+    info: Partial<Message> = {},
+): WithParts => ({
     info: {
         id,
         role: "assistant",
@@ -66,7 +70,7 @@ const assistantMessage = (
     })),
 })
 
-const compressPart = () => ({
+const compressPart = (): ToolPart => ({
     type: "tool",
     tool: "compress",
     callID: "call-compress",
@@ -77,9 +81,9 @@ const compressPart = () => ({
     },
 })
 
-const textPart = (text: string) => ({ type: "text", text })
+const textPart = (text: string): TextPart => ({ type: "text", text })
 
-const stepFinishPart = () => ({ type: "step-finish" })
+const stepFinishPart = (): MarkerPart => ({ type: "step-finish" })
 
 const getSessionFilePath = (sessionId: string) =>
     join(
@@ -101,15 +105,12 @@ const cleanupSessionFile = async (sessionId: string) => {
 const NOTICE = /CONTEXT WAS COMPRESSED/
 
 const noticeText = (message: WithParts | undefined): string =>
-    (message?.parts ?? [])
-        .filter((part: any) => part.type === "text")
-        .map((part: any) => part.text)
-        .join("\n")
+    (message?.parts ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
 
 interface Harness {
     sessionId: string
     manager: SessionStateManager
-    run: (transcript: any[]) => Promise<WithParts[]>
+    run: (transcript: WithParts[]) => Promise<WithParts[]>
 }
 
 const createHarness = async (label: string): Promise<Harness> => {
@@ -133,16 +134,15 @@ const createHarness = async (label: string): Promise<Harness> => {
         },
         manager,
         logger,
-        "/tmp/notice",
     )
 
     return {
         sessionId,
         manager,
-        run: async (transcript: any[]) => {
-            const output = { messages: structuredClone(transcript) as any }
+        run: async (transcript: WithParts[]) => {
+            const output = { messages: structuredClone(transcript) }
             await handler({}, output)
-            return output.messages as WithParts[]
+            return output.messages
         },
     }
 }
@@ -187,7 +187,7 @@ describe("post-compression notice", () => {
 
             assert.equal(isIgnoredUserMessage(notice), false)
             assert.equal(
-                (notice.parts as any[]).some((part) => part.ignored === true),
+                notice.parts.some((part) => "ignored" in part && part.ignored === true),
                 false,
             )
             // The notice exists only in the request: it is a message the transcript never had,
@@ -306,7 +306,7 @@ describe("post-compression notice", () => {
         const harness = await createHarness("failed-with-work")
         try {
             harness.manager.get(harness.sessionId).compressionCooldownAfterMessageId = "a-compress"
-            const readPart = {
+            const readPart: ToolPart = {
                 type: "tool",
                 tool: "read",
                 callID: "call-read",

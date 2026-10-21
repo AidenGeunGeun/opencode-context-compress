@@ -2,37 +2,37 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
+import type { Part, WithParts } from "../lib/state/types.ts"
 import { getCompletedToolOutputText } from "../lib/tools/utils.ts"
+
+const userMessage = (id: string, parts: Part[]): WithParts => ({
+    info: { id, sessionID: "session", role: "user", time: { created: 0 } },
+    parts,
+})
 
 describe("isIgnoredUserMessage", () => {
     it("returns true for empty parts", () => {
-        const msg = { info: { id: "test-1" }, parts: [] } as any
+        const msg = userMessage("test-1", [])
         assert.equal(isIgnoredUserMessage(msg), true)
     })
 
     it("returns true when all parts are ignored", () => {
-        const msg = {
-            info: { id: "test-2" },
-            parts: [{ type: "text", text: "hello", ignored: true }],
-        } as any
+        const msg = userMessage("test-2", [{ type: "text", text: "hello", ignored: true }])
 
         assert.equal(isIgnoredUserMessage(msg), true)
     })
 
     it("returns false for a normal text part", () => {
-        const msg = { info: { id: "test-3" }, parts: [{ type: "text", text: "hello" }] } as any
+        const msg = userMessage("test-3", [{ type: "text", text: "hello" }])
 
         assert.equal(isIgnoredUserMessage(msg), false)
     })
 
     it("returns false for mixed ignored and non-ignored parts", () => {
-        const msg = {
-            info: { id: "test-4" },
-            parts: [
-                { type: "text", text: "hidden", ignored: true },
-                { type: "text", text: "visible" },
-            ],
-        } as any
+        const msg = userMessage("test-4", [
+            { type: "text", text: "hidden", ignored: true },
+            { type: "text", text: "visible" },
+        ])
 
         assert.equal(isIgnoredUserMessage(msg), false)
     })
@@ -80,9 +80,9 @@ describe("getCompletedToolOutputText", () => {
     })
 
     it("keeps generated-image placeholders short when callIDs are very long", () => {
-        const part = { tool: "image_generation", callID: "call-" + "x".repeat(200) }
+        const part = { tool: "image_generation", callID: `call-${"x".repeat(200)}` }
 
-        const placeholder = getCompletedToolOutputText(part, "")!
+        const placeholder = getCompletedToolOutputText(part, "") ?? ""
         assert.ok(placeholder.startsWith("[generated image: call-"))
         assert.ok(placeholder.endsWith("...]"))
         assert.ok(placeholder.length <= 80)

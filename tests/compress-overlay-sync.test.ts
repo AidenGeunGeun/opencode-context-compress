@@ -10,6 +10,8 @@ import { Logger } from "../lib/logger.ts"
 import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { saveSessionState } from "../lib/state/persistence.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
+import { partText } from "./helpers.ts"
 
 const logger = new Logger({ daily: false, context: false })
 
@@ -19,7 +21,7 @@ const client = {
     },
 }
 
-const createMessage = (id: string, sessionID: string, role: "user" | "assistant") => ({
+const createMessage = (id: string, sessionID: string, role: "user" | "assistant"): WithParts => ({
     info: {
         id,
         role,
@@ -64,17 +66,12 @@ describe("session-scoped compress overlay", () => {
 
             const managerA = new SessionStateManager()
             const managerB = new SessionStateManager()
-            const handlerB = createChatMessageTransformHandler(
-                client,
-                managerB,
-                logger,
-                "/tmp/instance-b",
-            )
+            const handlerB = createChatMessageTransformHandler(client, managerB, logger)
 
-            const firstOutput = { messages: cloneMessages(rawMessages) as any }
+            const firstOutput = { messages: cloneMessages(rawMessages) }
             await handlerB({}, firstOutput)
             assert.deepEqual(
-                firstOutput.messages.map((message: any) => message.info.id),
+                firstOutput.messages.map((message) => message.info.id),
                 ["m1", "m2", "m3"],
             )
 
@@ -89,15 +86,15 @@ describe("session-scoped compress overlay", () => {
             ]
             await saveSessionState(stateA, logger)
 
-            const secondOutput = { messages: cloneMessages(rawMessages) as any }
+            const secondOutput = { messages: cloneMessages(rawMessages) }
             await handlerB({}, secondOutput)
 
             assert.deepEqual(
-                secondOutput.messages.map((message: any) => message.info.id),
+                secondOutput.messages.map((message) => message.info.id),
                 ["m1", secondOutput.messages[1].info.id],
             )
             assert.equal(
-                secondOutput.messages[1].parts[0].text.startsWith(COMPRESS_SUMMARY_PREFIX),
+                partText(secondOutput.messages[1].parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
                 true,
             )
         } finally {
@@ -137,21 +134,16 @@ describe("session-scoped compress overlay", () => {
             await saveSessionState(stateA, logger)
 
             const recreatedManager = new SessionStateManager()
-            const handler = createChatMessageTransformHandler(
-                client,
-                recreatedManager,
-                logger,
-                "/tmp/recreated-instance",
-            )
-            const output = { messages: cloneMessages(rawMessages) as any }
+            const handler = createChatMessageTransformHandler(client, recreatedManager, logger)
+            const output = { messages: cloneMessages(rawMessages) }
             await handler({}, output)
 
-            const summaryMessages = output.messages.filter((message: any) =>
-                message.parts[0]?.text?.startsWith(COMPRESS_SUMMARY_PREFIX),
+            const summaryMessages = output.messages.filter((message) =>
+                partText(message.parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
             )
             assert.equal(summaryMessages.length, 2)
             assert.deepEqual(
-                output.messages.map((message: any) => message.info.role),
+                output.messages.map((message) => message.info.role),
                 ["user", "user", "user", "user"],
             )
         } finally {
@@ -169,13 +161,8 @@ describe("session-scoped compress overlay", () => {
                 createMessage("m2", sessionId, "assistant"),
             ]
             const manager = new SessionStateManager()
-            const handler = createChatMessageTransformHandler(
-                client,
-                manager,
-                logger,
-                "/tmp/clean-instance",
-            )
-            const output = { messages: cloneMessages(rawMessages) as any }
+            const handler = createChatMessageTransformHandler(client, manager, logger)
+            const output = { messages: cloneMessages(rawMessages) }
 
             await handler({}, output)
 

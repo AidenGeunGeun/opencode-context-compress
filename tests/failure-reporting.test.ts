@@ -8,11 +8,12 @@ import { dirname, join } from "node:path"
 import { createChatMessageTransformHandler } from "./transform-harness.ts"
 import { Logger, describeError } from "../lib/logger.ts"
 import { SessionStateManager } from "../lib/state/state.ts"
+import type { WithParts } from "../lib/state/types.ts"
 
 function createSpyLogger() {
     const logger = new Logger({ daily: false, context: false })
-    const errors: Array<{ message: string; data: any }> = []
-    ;(logger as any).error = async (message: string, data: any) => {
+    const errors: Array<{ message: string; data?: Record<string, unknown> }> = []
+    logger.error = async (message: string, data?: Record<string, unknown>) => {
         errors.push({ message, data })
     }
     return { logger, errors }
@@ -41,8 +42,7 @@ describe("describeError", () => {
     })
 
     it("keeps an error code", () => {
-        const error: any = new Error("request failed")
-        error.code = "ECONNREFUSED"
+        const error = Object.assign(new Error("request failed"), { code: "ECONNREFUSED" })
 
         assert.match(describeError(error), /ECONNREFUSED/)
     })
@@ -52,7 +52,7 @@ describe("describeError", () => {
     })
 
     it("survives a circular value", () => {
-        const circular: any = { name: "loop" }
+        const circular: { name: string; self?: unknown } = { name: "loop" }
         circular.self = circular
 
         assert.match(describeError(circular), /loop/)
@@ -73,7 +73,7 @@ describe("unsynchronized session state", () => {
                 new SessionStateManager(),
                 logger,
             )
-            const output = {
+            const output: { messages: WithParts[] } = {
                 messages: [
                     {
                         info: {
@@ -84,16 +84,16 @@ describe("unsynchronized session state", () => {
                         },
                         parts: [{ type: "text", text: "hello" }],
                     },
-                ] as any,
+                ],
             }
 
             await handler({}, output)
 
             assert.equal(errors.length, 1)
             assert.match(errors[0].message, /untransformed transcript/)
-            assert.equal(errors[0].data.sessionID, sessionId)
+            assert.equal(errors[0].data?.sessionID, sessionId)
             assert.deepEqual(
-                output.messages.map((message: any) => message.info.id),
+                output.messages.map((message) => message.info.id),
                 ["m1"],
             )
         } finally {

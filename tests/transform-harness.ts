@@ -19,7 +19,7 @@ export function createChatMessageTransformHandler(
     stateManager: SessionStateManager,
     logger: Logger,
 ) {
-    return async (_input: {}, output: { messages: WithParts[] }) => {
+    return async (_input: unknown, output: { messages: WithParts[] }) => {
         const sessionID = getLastUserSessionId(output.messages)
         if (!sessionID) return
         const noticeBaseMessage = getLastUserMessage(output.messages)
