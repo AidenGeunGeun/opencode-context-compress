@@ -46,8 +46,8 @@ export interface ToolPart {
     state: {
         status: "streaming" | "running" | "completed" | "error";
         input: string | Record<string, unknown>;
-        output?: string;
-        error?: string;
+        output?: unknown;
+        error?: unknown;
     };
 }
 export interface MarkerPart {
@@ -104,7 +104,7 @@ export interface SessionState {
     compressed: Compressed;
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
-    /** Ignored legacy field retained only so old in-memory state can be cleared safely. */
+    /** Legacy persisted field: read from older state files and cleared on the next save. */
     compressionMapSnapshot?: unknown;
     stats: SessionStats;
     /** Session-local override. Missing inherits the process-level auto setting. */
@@ -117,10 +117,7 @@ export interface SessionState {
     compressionCooldownAfterMessageId?: string;
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number;
-    variant: string | undefined;
-    /** Runtime-only agent identity supplied by hosts that omit it from projected user messages. */
-    currentAgent?: string;
-    /** Runtime-only model metadata captured from the latest chat.params hook. */
+    /** Runtime-only model metadata resolved from the host model list on each model request. */
     modelContext?: {
         providerId: string;
         modelId: string;
@@ -128,7 +125,7 @@ export interface SessionState {
     };
     /** Runtime-only lock preventing duplicate threshold events from starting two turns. */
     autoCompressionStarting?: boolean;
-    /** Runtime-only deduplication marker for repeated message.updated events. */
+    /** Runtime-only deduplication marker for repeated step ends of the last triggering message. */
     lastAutoTriggeredMessageId?: string;
 }
 //# sourceMappingURL=types.d.ts.map

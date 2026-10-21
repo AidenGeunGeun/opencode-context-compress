@@ -37,9 +37,10 @@
  *   belong with "Assistant" since reasoning IS assistant-generated content.
  */
 import type { Logger } from "../logger.js";
+import type { PluginClient } from "../sdk/client.js";
 import type { SessionState, WithParts } from "../state/index.js";
 export interface ContextCommandContext {
-    client: any;
+    client: PluginClient;
     state: SessionState;
     logger: Logger;
     sessionId: string;

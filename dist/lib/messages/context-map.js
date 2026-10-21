@@ -1,4 +1,3 @@
-import { isCompletedNativeCompaction } from "../state/utils.js";
 import { stripV2MachineryForCompressionSelection, transformMessagesForSearch, } from "./compress-transform.js";
 function deriveProtectedTailMessageIds(messages, protectedTurns) {
     if (protectedTurns <= 0 || messages.length === 0)
@@ -22,10 +21,6 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
  * preserving the configured newest execution steps verbatim.
  */
 export function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
-    // History before the latest native compaction is already summarized by the host.
-    // Folding it would make lifecycle reconciliation retire the new block at once.
-    const latestCompactionIndex = rawHistory.findLastIndex(isCompletedNativeCompaction);
-    const preCompactionMessageIds = new Set(rawHistory.slice(0, Math.max(0, latestCompactionIndex)).map((message) => message.info.id));
     const search = transformMessagesForSearch(rawHistory, state, logger);
     const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
     const syntheticMap = search.syntheticMap;
@@ -49,9 +44,7 @@ export function selectDeterministicCompressionSpan(rawHistory, state, logger, pr
     }
     const candidates = transformed
         .slice(newestBlockIndex + 1)
-        .filter((message) => !preCompactionMessageIds.has(message.info.id) &&
-        !syntheticMap.has(message.info.id) &&
-        !existingBlockMessageIds.has(message.info.id));
+        .filter((message) => !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
     const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns);
     const protectedIds = new Set(protectedMessageIds);
     const messages = candidates.filter((message) => !protectedIds.has(message.info.id));

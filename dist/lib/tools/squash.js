@@ -42,7 +42,10 @@ export function createSquashTool(ctx) {
         args: {
             from: { type: "string", description: "Inclusive current block label, for example b1" },
             to: { type: "string", description: "Inclusive current block label, for example b12" },
-            summary: { type: "string", description: "Truthful replacement for only the selected blocks" },
+            summary: {
+                type: "string",
+                description: "Truthful replacement for only the selected blocks",
+            },
             topic: { type: "string", description: "Short replacement block title" },
         },
         async execute(args, toolCtx) {
@@ -61,7 +64,7 @@ export function createSquashTool(ctx) {
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 let rawMessages;
                 try {
-                    rawMessages = (await listSessionMessages(client, sessionId));
+                    rawMessages = await listSessionMessages(client, sessionId);
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
@@ -80,8 +83,7 @@ export function createSquashTool(ctx) {
                 if (fromIndex > toIndex) {
                     throw new Error("squash requires from to precede or equal to to. Nothing changed.");
                 }
-                if (fromIndex >= orderedBlocks.length ||
-                    toIndex >= orderedBlocks.length) {
+                if (fromIndex >= orderedBlocks.length || toIndex >= orderedBlocks.length) {
                     throw new Error("squash block range does not exist in the current block ordering. Nothing changed.");
                 }
                 if (toIndex - fromIndex + 1 < 2) {

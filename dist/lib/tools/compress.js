@@ -22,9 +22,7 @@ function findExecutingToolMessage(rawMessages, messageId, callId) {
         .filter(({ message }) => message.info.id === messageId);
     if (matches.length !== 1 || matches[0].message.info.role !== "assistant")
         return undefined;
-    const hasExecutingCall = matches[0].message.parts.some((part) => part.type === "tool" &&
-        part.tool === "compress" &&
-        (!callId || part.callID === callId));
+    const hasExecutingCall = matches[0].message.parts.some((part) => part.type === "tool" && part.tool === "compress" && (!callId || part.callID === callId));
     return hasExecutingCall ? matches[0] : undefined;
 }
 export function resolveCompressionBoundary(rawMessages, state, toolMessageId, callId) {
@@ -84,7 +82,10 @@ export function createCompressTool(ctx) {
     return {
         description: COMPRESS_TOOL_DESCRIPTION,
         args: {
-            summary: { type: "string", description: "Compact structured continuation handoff described by this tool's instructions" },
+            summary: {
+                type: "string",
+                description: "Compact structured continuation handoff described by this tool's instructions",
+            },
             topic: { type: "string", description: "Short block title, usually 3-5 words" },
         },
         async execute(args, toolCtx) {
@@ -101,7 +102,7 @@ export function createCompressTool(ctx) {
             const outcome = await stateManager.runExclusive(sessionId, async () => {
                 let rawMessages;
                 try {
-                    rawMessages = (await listSessionMessages(client, sessionId));
+                    rawMessages = await listSessionMessages(client, sessionId);
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
@@ -186,18 +187,12 @@ export function createCompressTool(ctx) {
                     estimatedCompressedTokens,
                     storedBlockId: storedBlock.label,
                     continueTask: boundary.managementTurn?.source === "automatic",
-                    currentParams: {
-                        providerId: state.modelContext?.providerId,
-                        modelId: state.modelContext?.modelId,
-                        agent: toolCtx.agent,
-                        variant: state.variant,
-                    },
                 };
             });
             if (outcome.kind === "empty") {
                 return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
             }
-            await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
+            await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.estimatedCompressedTokens);
             const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
             return receipt;
         },

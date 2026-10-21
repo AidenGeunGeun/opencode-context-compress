@@ -17,20 +17,19 @@ export interface AutoCompression {
     tokenThreshold: number;
 }
 export declare const DEFAULT_AUTO_COMPRESSION: AutoCompression;
-export declare function resolveProtectedTurnsSetting(layer: Record<string, any>, fallback?: number, hasExplicitTopLevel?: boolean): number;
+export declare function resolveProtectedTurnsSetting(layer: Record<string, unknown>, fallback?: number, hasExplicitTopLevel?: boolean): number;
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
     /** Daily activity log. Follows `debug` when left unset. */
     dailyLog?: boolean;
     notification: "off" | "minimal" | "detailed";
-    notificationType: "chat" | "toast";
     protectedTurns: number;
     commands: Commands;
     autoCompression: AutoCompression;
     tools: Tools;
 }
 export declare const VALID_CONFIG_KEYS: Set<string>;
-export declare function getInvalidConfigKeys(userConfig: Record<string, any>): string[];
+export declare function getInvalidConfigKeys(userConfig: Record<string, unknown>): string[];
 export declare function getConfig(ctx: ConfigContext): PluginConfig;
 //# sourceMappingURL=config.d.ts.map

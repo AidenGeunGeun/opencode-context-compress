@@ -1,10 +1,3 @@
-/**
- * Errors have to reach `formatData` already flattened into one line: it drops any object
- * whose JSON exceeds 50 characters, `JSON.stringify` on an Error yields `{}`, and a log
- * entry is a single line. `inspect` keeps the stack, `cause`, and any error code, and
- * survives circular references, so nothing here can throw from inside a catch block.
- */
-export declare function describeError(error: unknown): string;
 export declare class Logger {
     private logDir;
     private dailyEnabled;
@@ -17,10 +10,10 @@ export declare class Logger {
     private formatData;
     private getCallerFile;
     private write;
-    info(message: string, data?: any): Promise<void>;
-    debug(message: string, data?: any): Promise<void>;
-    warn(message: string, data?: any): Promise<void>;
-    error(message: string, data?: any): Promise<void>;
+    info(message: string, data?: Record<string, unknown>): Promise<void>;
+    debug(message: string, data?: Record<string, unknown>): Promise<void>;
+    warn(message: string, data?: Record<string, unknown>): Promise<void>;
+    error(message: string, data?: Record<string, unknown>): Promise<void>;
     /**
      * Strips unnecessary metadata from messages for cleaner debug logs.
      *
@@ -37,6 +30,6 @@ export declare class Logger {
      * - tool calls with: tool, callID, input, output
      */
     private minimizeForDebug;
-    saveContext(sessionId: string, messages: any[]): Promise<void>;
+    saveContext(sessionId: string, messages: readonly unknown[]): Promise<void>;
 }
 //# sourceMappingURL=logger.d.ts.map

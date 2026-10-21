@@ -12,7 +12,7 @@ export async function handleCompressCommand(input, dependencies) {
     const { client, stateManager, logger, config } = dependencies;
     const state = stateManager.get(input.sessionID);
     const messages = await stateManager.runExclusive(input.sessionID, async () => {
-        const currentMessages = (await listSessionMessages(client, input.sessionID));
+        const currentMessages = await listSessionMessages(client, input.sessionID);
         await reconcileSessionLifecycle(state, input.sessionID, logger, currentMessages);
         return currentMessages;
     });
@@ -23,7 +23,7 @@ export async function handleCompressCommand(input, dependencies) {
         return true;
     }
     if (subcommand === "stats") {
-        await handleStatsCommand({ client, state, logger, sessionId: input.sessionID, messages });
+        await handleStatsCommand({ client, state, logger, sessionId: input.sessionID });
         return true;
     }
     if (subcommand === "manage") {
@@ -60,12 +60,11 @@ export async function handleCompressCommand(input, dependencies) {
             config,
             logger,
             sessionId: input.sessionID,
-            messages,
             arguments: args.slice(1),
         });
         return true;
     }
-    await handleHelpCommand({ client, state, logger, sessionId: input.sessionID, messages });
+    await handleHelpCommand({ client, logger, sessionId: input.sessionID });
     return true;
 }
 //# sourceMappingURL=route.js.map

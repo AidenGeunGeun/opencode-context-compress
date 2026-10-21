@@ -3,7 +3,6 @@
  * Shows available compression commands and their descriptions.
  */
 import { sendIgnoredMessage } from "../ui/notification.js";
-import { getCurrentParams } from "../token-utils.js";
 function formatHelpMessage() {
     const lines = [];
     lines.push("**Compress commands**");
@@ -19,10 +18,9 @@ function formatHelpMessage() {
     return lines.join("\n");
 }
 export async function handleHelpCommand(ctx) {
-    const { client, state, logger, sessionId, messages } = ctx;
+    const { client, logger, sessionId } = ctx;
     const message = formatHelpMessage();
-    const params = getCurrentParams(state, messages, logger);
-    await sendIgnoredMessage(client, sessionId, message, params, logger);
+    await sendIgnoredMessage(client, sessionId, message, logger);
     logger.info("Help command executed");
 }
 //# sourceMappingURL=help.js.map

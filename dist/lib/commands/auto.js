@@ -1,7 +1,6 @@
 import { getPostCompressionCooldownRemaining, resolveEffectiveAutoCompressionPolicy, } from "../auto-policy.js";
 import { commitDurableSessionState, reconcileSessionLifecycle, } from "../state/state.js";
 import { saveSessionState } from "../state/persistence.js";
-import { getCurrentParams } from "../token-utils.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { listSessionMessages } from "../sdk/client.js";
 const AUTO_USAGE = [
@@ -58,7 +57,7 @@ export async function handleAutoCommand(ctx) {
     }
     else {
         response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-            const messages = (await listSessionMessages(ctx.client, ctx.sessionId));
+            const messages = await listSessionMessages(ctx.client, ctx.sessionId);
             await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
             if (!ctx.state.persistenceSynchronized) {
                 return "Automatic compression settings are unavailable because saved session state could not be loaded. No session setting was changed.";
@@ -113,7 +112,6 @@ export async function handleAutoCommand(ctx) {
             return successMessage;
         });
     }
-    const params = getCurrentParams(ctx.state, ctx.messages, ctx.logger);
-    await sendIgnoredMessage(ctx.client, ctx.sessionId, response, params, ctx.logger);
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
 }
 //# sourceMappingURL=auto.js.map

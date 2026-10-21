@@ -3,10 +3,10 @@
  * Persists compressed tool IDs across sessions so they survive OpenCode restarts.
  * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
  */
-import * as fs from "fs/promises";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 const STORAGE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "opencode", "storage", "plugin", "compress");
 /** Legacy storage dir from before the context-compress rebrand */
 const LEGACY_STORAGE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "opencode", "storage", "plugin", "dcp");
@@ -46,12 +46,12 @@ async function readJsonFile(filePath) {
         };
     }
     catch (error) {
-        if (error?.code === "ENOENT") {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
             return { status: "missing" };
         }
         return {
             status: "error",
-            error,
+            error: error instanceof Error ? error.message : String(error),
         };
     }
 }
@@ -89,7 +89,9 @@ function normalizeManagementTurns(turns) {
     const normalized = [];
     const seen = new Set();
     for (const turn of turns) {
-        if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
+        if (!turn ||
+            typeof turn.triggerMessageId !== "string" ||
+            turn.triggerMessageId.length === 0) {
             continue;
         }
         if (seen.has(turn.triggerMessageId)) {
@@ -111,7 +113,8 @@ function normalizeManagementTurns(turns) {
             ...(turn.source === "automatic" || turn.source === "squash"
                 ? { source: turn.source }
                 : {}),
-            ...(typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0
+            ...(typeof turn.triggeredByMessageId === "string" &&
+                turn.triggeredByMessageId.length > 0
                 ? { triggeredByMessageId: turn.triggeredByMessageId }
                 : {}),
             ...(Array.isArray(turn.protectedMessageIds)
@@ -218,7 +221,7 @@ export async function saveSessionState(sessionState, logger, sessionName) {
     catch (error) {
         logger.error("Failed to save session state", {
             sessionId: sessionState.sessionId,
-            error: error?.message,
+            error: error instanceof Error ? error.message : String(error),
         });
         return false;
     }
@@ -235,7 +238,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         logger.warn("Failed to load session state", {
             sessionId,
             path: filePath,
-            error: primaryResult.error?.message,
+            error: primaryResult.error,
         });
         return { status: "error" };
     }
@@ -249,7 +252,7 @@ export async function loadSessionState(sessionId, logger, messages) {
             logger.warn("Failed to load legacy session state", {
                 sessionId,
                 path: legacyPath,
-                error: legacyResult.error?.message,
+                error: legacyResult.error,
             });
             return { status: "error" };
         }
@@ -257,7 +260,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         state = remapLegacyState(legacyResult.data);
         migrated = true;
     }
-    if (!state || !state.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+    if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
         logger.warn("Invalid session state file, preserving in-memory state", {
             sessionId,
             path: migrated ? getLegacySessionFilePath(sessionId) : filePath,
@@ -349,7 +352,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         catch (saveError) {
             logger.warn("Failed to save migrated state (will retry next load)", {
                 sessionId,
-                error: saveError?.message,
+                error: saveError instanceof Error ? saveError.message : String(saveError),
             });
         }
     }
@@ -387,10 +390,12 @@ export async function loadAllSessionStats(logger) {
                 // Skip invalid files
             }
         }
-        logger.debug("Loaded all-time stats", result);
+        logger.debug("Loaded all-time stats", { ...result });
     }
     catch (error) {
-        logger.warn("Failed to load all-time stats", { error: error?.message });
+        logger.warn("Failed to load all-time stats", {
+            error: error instanceof Error ? error.message : String(error),
+        });
     }
     return result;
 }

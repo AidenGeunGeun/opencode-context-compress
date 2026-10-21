@@ -1,7 +1,10 @@
+import { isRecord } from "../shared-utils.js";
 export function adaptProjectedMessages(sessionID, values, selection) {
     const seen = new Set();
     let parentID;
-    return values.filter((value) => !isRecord(value) || value.type !== "idle").map((value) => {
+    return values
+        .filter((value) => !isRecord(value) || value.type !== "idle")
+        .map((value) => {
         const message = requireRecord(value, "session message");
         const id = requireString(message.id, "session message id");
         if (seen.has(id))
@@ -24,14 +27,18 @@ export function adaptProjectedMessages(sessionID, values, selection) {
             return system(sessionID, id, created, type, typeof message.text === "string" ? message.text : "");
         }
         if (type === "shell") {
-            const output = isRecord(message.output) && typeof message.output.output === "string" ? message.output.output : "";
+            const output = isRecord(message.output) && typeof message.output.output === "string"
+                ? message.output.output
+                : "";
             const entry = system(sessionID, id, created, type, `The following shell command was executed by the user:\n\nCommand:\n${String(message.command ?? "")}\n\nOutput:\n${output}`);
             entry.info.finish = message.status === "running" ? undefined : "stop";
             return entry;
         }
         if (type === "location-switched") {
             const location = isRecord(message.location) ? message.location.directory : undefined;
-            return system(sessionID, id, created, type, typeof location === "string" ? `The working directory has been changed to ${location}.` : "");
+            return system(sessionID, id, created, type, typeof location === "string"
+                ? `The working directory has been changed to ${location}.`
+                : "");
         }
         if (type === "agent-switched" || type === "model-switched")
             return system(sessionID, id, created, type, "");
@@ -52,7 +59,9 @@ function user(sessionID, id, created, message, selection) {
             variant: selection?.model?.variant,
             time: { created },
         },
-        parts: typeof message.text === "string" && message.text.length > 0 ? [{ type: "text", text: message.text }] : [],
+        parts: typeof message.text === "string" && message.text.length > 0
+            ? [{ type: "text", text: message.text }]
+            : [],
     };
 }
 function synthetic(sessionID, id, created, message, selection) {
@@ -75,7 +84,9 @@ function synthetic(sessionID, id, created, message, selection) {
                 type: "text",
                 text: typeof message.text === "string" ? message.text : "",
                 synthetic: true,
-                ...(metadata["opencode.context-compress.ignored"] === true ? { ignored: true } : {}),
+                ...(metadata["opencode.context-compress.ignored"] === true
+                    ? { ignored: true }
+                    : {}),
             },
         ],
     };
@@ -109,13 +120,20 @@ function adaptAssistantPart(messageID, value) {
     const part = requireRecord(value, `assistant message ${messageID} content`);
     const type = requireString(part.type, `assistant message ${messageID} content type`);
     if (type === "text" || type === "reasoning") {
-        return { type, text: typeof part.text === "string" ? part.text : "" };
+        return {
+            type,
+            text: typeof part.text === "string" ? part.text : "",
+        };
     }
     if (type !== "tool")
         throw new Error(`Unsupported assistant content type: ${type}`);
     const state = requireRecord(part.state, `assistant tool ${String(part.id)} state`);
     const status = requireToolStatus(state.status);
-    const input = status === "streaming" ? String(state.input ?? "") : isRecord(state.input) ? state.input : {};
+    const input = status === "streaming"
+        ? String(state.input ?? "")
+        : isRecord(state.input)
+            ? state.input
+            : {};
     return {
         type: "tool",
         callID: requireString(part.id, "assistant tool id"),
@@ -142,7 +160,12 @@ function compaction(sessionID, id, created, message) {
             error: status === "failed" ? message.error : undefined,
             time: { created, ...(status === "completed" ? { completed: created } : {}) },
         },
-        parts: [{ type: "compaction", summary: typeof message.summary === "string" ? message.summary : undefined }],
+        parts: [
+            {
+                type: "compaction",
+                summary: typeof message.summary === "string" ? message.summary : undefined,
+            },
+        ],
     };
 }
 function system(sessionID, id, created, sourceType, text) {
@@ -165,7 +188,10 @@ function adaptTokens(value) {
 function toolOutput(value) {
     if (!Array.isArray(value))
         return value;
-    if (value.length === 1 && isRecord(value[0]) && value[0].type === "text" && typeof value[0].text === "string") {
+    if (value.length === 1 &&
+        isRecord(value[0]) &&
+        value[0].type === "text" &&
+        typeof value[0].text === "string") {
         return value[0].text;
     }
     return value;
@@ -192,8 +218,5 @@ function requireNumber(value, label) {
 }
 function numberOrZero(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-function isRecord(value) {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 //# sourceMappingURL=v2-adapter.js.map

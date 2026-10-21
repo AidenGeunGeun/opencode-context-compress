@@ -14,23 +14,8 @@ export function isAnthropicProvider(providerId) {
         return false;
     return providerId.toLowerCase().includes("anthropic");
 }
-export function getCurrentParams(state, messages, logger) {
-    const userMsg = getLastUserMessage(messages);
-    if (!userMsg) {
-        logger.debug("No user message found when determining current params");
-        return {
-            providerId: state.modelContext?.providerId,
-            modelId: state.modelContext?.modelId,
-            agent: state.currentAgent,
-            variant: state.variant,
-        };
-    }
-    const userInfo = userMsg.info;
-    const agent = userInfo.agent ?? state.currentAgent;
-    const providerId = userInfo.model?.providerID ?? state.modelContext?.providerId;
-    const modelId = userInfo.model?.modelID ?? state.modelContext?.modelId;
-    const variant = state.variant ?? userInfo.variant;
-    return { providerId, modelId, agent, variant };
+export function getCurrentProviderId(state, messages) {
+    return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
 }
 export function countTokens(text, providerId) {
     if (!text)

@@ -143,10 +143,13 @@ function buildV2CleanupPlan(state, rawMessages) {
             return false;
         return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage);
     });
-    const newestCompleted = [...turns].reverse().find((turn) => turn.completedAt && turn.completedMessageId);
-    const visibleAnchors = turns.flatMap((turn) => [indexByMessageId.get(turn.triggerMessageId), turn.completedMessageId
-            ? indexByMessageId.get(turn.completedMessageId)
-            : undefined].filter((index) => index !== undefined));
+    const newestCompleted = [...turns]
+        .reverse()
+        .find((turn) => turn.completedAt && turn.completedMessageId);
+    const visibleAnchors = turns.flatMap((turn) => [
+        indexByMessageId.get(turn.triggerMessageId),
+        turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined,
+    ].filter((index) => index !== undefined));
     const firstV2Index = visibleAnchors.length > 0 ? Math.min(...visibleAnchors) : undefined;
     // Once Version 2 is visible, the legacy content scanner must never reinterpret later
     // conversation. V2 removes only persisted plugin-owned IDs and metadata below.
@@ -301,7 +304,8 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
         const block = blocksByAnchorId.get(msgId);
         if (block) {
             const summary = block.summary;
-            // Anchors identify transcript positions, including system events before any user.
+            // An anchor can precede every user message (e.g. the compaction entry that starts
+            // OpenCode 2's `session.context`), so build the block message from the anchor itself.
             const syntheticMessage = createSyntheticUserMessage(msg, formatCompressBlockContent(block), msg.info.variant, summary.anchorMessageId);
             transformed.push(syntheticMessage);
             syntheticMap.set(syntheticMessage.info.id, summary);

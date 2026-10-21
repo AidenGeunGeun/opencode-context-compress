@@ -129,7 +129,9 @@ export function buildLegacyResidueSuppressionPlan(rawMessages) {
         }
         for (let k = start; k <= end; k++) {
             const candidate = rawMessages[k];
-            const embeddedText = isManagePromptMessage(candidate) ? extractEmbeddedUserText(candidate) : undefined;
+            const embeddedText = isManagePromptMessage(candidate)
+                ? extractEmbeddedUserText(candidate)
+                : undefined;
             if (embeddedText) {
                 retainedTextByMessageId.set(candidate.info.id, embeddedText);
                 continue;

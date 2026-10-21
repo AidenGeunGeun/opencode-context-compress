@@ -40,7 +40,7 @@ import { sendIgnoredMessage } from "../ui/notification.js";
 import { formatTokenCount } from "../ui/utils.js";
 import { isMessageCompacted } from "../shared-utils.js";
 import { isIgnoredUserMessage } from "../messages/utils.js";
-import { countTokens, getCurrentParams } from "../token-utils.js";
+import { countTokens, getCurrentProviderId } from "../token-utils.js";
 function analyzeTokens(state, messages, providerId) {
     const breakdown = {
         system: 0,
@@ -57,7 +57,8 @@ function analyzeTokens(state, messages, providerId) {
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
             const assistantInfo = msg.info;
-            if ((assistantInfo.tokens?.input ?? 0) > 0 || (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
+            if ((assistantInfo.tokens?.input ?? 0) > 0 ||
+                (assistantInfo.tokens?.cache?.read ?? 0) > 0) {
                 firstAssistant = assistantInfo;
                 break;
             }
@@ -199,9 +200,8 @@ function formatContextMessage(breakdown) {
 }
 export async function handleContextCommand(ctx) {
     const { client, state, logger, sessionId, messages } = ctx;
-    const params = getCurrentParams(state, messages, logger);
-    const breakdown = analyzeTokens(state, messages, params.providerId);
+    const breakdown = analyzeTokens(state, messages, getCurrentProviderId(state, messages));
     const message = formatContextMessage(breakdown);
-    await sendIgnoredMessage(client, sessionId, message, params, logger);
+    await sendIgnoredMessage(client, sessionId, message, logger);
 }
 //# sourceMappingURL=context.js.map

@@ -51,7 +51,10 @@ export function transformV2Messages(raw, state, logger, modelMessages) {
             if (message.info.role === "assistant")
                 return transformToolPair(messages, message, state);
             if (message.info.role === "user" && text(message) !== text(source)) {
-                return messages.map((item) => ({ ...item, content: [{ type: "text", text: text(message) }] }));
+                return messages.map((item) => ({
+                    ...item,
+                    content: [{ type: "text", text: text(message) }],
+                }));
             }
             return messages;
         }),
@@ -84,7 +87,8 @@ function transformToolPair(messages, target, state) {
     const tools = new Map(target.parts.filter((part) => part.type === "tool").map((part) => [part.callID, part]));
     return messages.flatMap((message) => {
         const content = message.content.flatMap((part) => {
-            if ((part.type !== "tool-call" && part.type !== "tool-result") || typeof part.id !== "string")
+            if ((part.type !== "tool-call" && part.type !== "tool-result") ||
+                typeof part.id !== "string")
                 return [part];
             const tool = tools.get(part.id);
             if (!tool)
@@ -98,7 +102,9 @@ function transformToolPair(messages, target, state) {
                 tool.tool !== "question" &&
                 tool.tool !== "edit" &&
                 tool.tool !== "write") {
-                return [{ ...part, result: { type: "text", value: String(tool.state.output ?? "") } }];
+                return [
+                    { ...part, result: { type: "text", value: String(tool.state.output ?? "") } },
+                ];
             }
             return [part];
         });

@@ -7,7 +7,7 @@ export async function inheritForkCompression(session, client, state, logger, chi
     const child = await session.get({ sessionID: state.sessionId });
     if (!child.fork)
         return;
-    const parentMessages = (await listSessionMessages(client, child.fork.sessionID));
+    const parentMessages = await listSessionMessages(client, child.fork.sessionID);
     const parentState = await loadSessionState(child.fork.sessionID, logger, parentMessages);
     if (parentState.status === "error")
         throw new Error("Cannot read parent compression state for fork");
@@ -60,16 +60,24 @@ export async function inheritForkCompression(session, client, state, logger, chi
     const turns = parentState.state.managementTurns.filter((turn) => {
         if (!mapped.has(turn.triggerMessageId))
             return false;
-        return [turn.triggeredByMessageId, turn.completedMessageId, ...turn.protectedMessageIds ?? []]
-            .every((id) => !id || mapped.has(id));
+        return [
+            turn.triggeredByMessageId,
+            turn.completedMessageId,
+            ...(turn.protectedMessageIds ?? []),
+        ].every((id) => !id || mapped.has(id));
     });
     // A fork inside a block retains that span as raw history; only complete blocks stay compressed.
     const compressedMessages = new Set(summaries.flatMap((summary) => summary.messageIds.map(messageID)));
-    const childTools = new Set(childMessages.slice(0, parentPrefix.length).filter((message) => compressedMessages.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
+    const childTools = new Set(childMessages
+        .slice(0, parentPrefix.length)
+        .filter((message) => compressedMessages.has(message.info.id))
+        .flatMap((message) => message.parts.flatMap((part) => (part.type === "tool" ? [part.callID] : []))));
     const candidate = {
         ...state,
         compressed: {
-            messageIds: new Set(parentState.state.compressed.messageIds.filter((id) => mapped.has(id) && compressedMessages.has(messageID(id))).map(messageID)),
+            messageIds: new Set(parentState.state.compressed.messageIds
+                .filter((id) => mapped.has(id) && compressedMessages.has(messageID(id)))
+                .map(messageID)),
             toolIds: new Set(parentState.state.compressed.toolIds.filter((id) => childTools.has(id))),
         },
         compressSummaries: summaries.map((summary) => ({
@@ -80,9 +88,15 @@ export async function inheritForkCompression(session, client, state, logger, chi
         managementTurns: turns.map((turn) => ({
             ...turn,
             triggerMessageId: messageID(turn.triggerMessageId),
-            ...(turn.triggeredByMessageId ? { triggeredByMessageId: messageID(turn.triggeredByMessageId) } : {}),
-            ...(turn.completedMessageId ? { completedMessageId: messageID(turn.completedMessageId) } : {}),
-            ...(turn.protectedMessageIds ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) } : {}),
+            ...(turn.triggeredByMessageId
+                ? { triggeredByMessageId: messageID(turn.triggeredByMessageId) }
+                : {}),
+            ...(turn.completedMessageId
+                ? { completedMessageId: messageID(turn.completedMessageId) }
+                : {}),
+            ...(turn.protectedMessageIds
+                ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) }
+                : {}),
         })),
         stats: { ...parentState.state.stats },
         autoCompressionEnabledOverride: parentState.state.autoCompressionEnabledOverride,
@@ -94,7 +108,7 @@ export async function inheritForkCompression(session, client, state, logger, chi
             : undefined,
         lastCompaction: parentState.state.lastCompaction ?? 0,
     };
-    if (!await saveSessionState(candidate, logger))
+    if (!(await saveSessionState(candidate, logger)))
         throw new Error("Cannot persist fork compression state");
 }
 //# sourceMappingURL=fork.js.map

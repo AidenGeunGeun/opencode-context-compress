@@ -18,4 +18,7 @@ export const getLastUserMessage = (messages, startIndex) => {
     }
     return null;
 };
+export function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 //# sourceMappingURL=shared-utils.js.map

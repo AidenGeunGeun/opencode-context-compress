@@ -29,7 +29,7 @@ export function extractMessageContent(msg) {
             case "text":
             case "reasoning":
                 if (typeof p.text === "string") {
-                    content += " " + p.text;
+                    content += ` ${p.text}`;
                 }
                 break;
             case "tool": {
@@ -40,11 +40,11 @@ export function extractMessageContent(msg) {
                 if (state.status === "completed") {
                     const output = getCompletedToolOutputText(part, state.output);
                     if (typeof output === "string") {
-                        content += " " + output;
+                        content += ` ${output}`;
                     }
                 }
                 else if (state.status === "error" && typeof state.error === "string") {
-                    content += " " + state.error;
+                    content += ` ${state.error}`;
                 }
                 // Include tool input
                 if (state.input) {
@@ -58,15 +58,15 @@ export function extractMessageContent(msg) {
             }
             case "compaction":
                 if (typeof p.summary === "string") {
-                    content += " " + p.summary;
+                    content += ` ${p.summary}`;
                 }
                 break;
             case "subtask":
                 if (typeof p.summary === "string") {
-                    content += " " + p.summary;
+                    content += ` ${p.summary}`;
                 }
                 if (typeof p.result === "string") {
-                    content += " " + p.result;
+                    content += ` ${p.result}`;
                 }
                 break;
         }

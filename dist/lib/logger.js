@@ -1,17 +1,8 @@
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { inspect } from "node:util";
-/**
- * Errors have to reach `formatData` already flattened into one line: it drops any object
- * whose JSON exceeds 50 characters, `JSON.stringify` on an Error yields `{}`, and a log
- * entry is a single line. `inspect` keeps the stack, `cause`, and any error code, and
- * survives circular references, so nothing here can throw from inside a catch block.
- */
-export function describeError(error) {
-    return inspect(error, { depth: 3, breakLength: Infinity }).replace(/\s*\n\s*/g, " ");
-}
+import { writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { isRecord } from "./shared-utils.js";
 export class Logger {
     logDir;
     dailyEnabled;
@@ -81,7 +72,7 @@ export class Logger {
             await this.ensureLogDir();
             const timestamp = new Date().toISOString();
             const dataStr = this.formatData(data);
-            const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? " | " + dataStr : ""}\n`;
+            const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? ` | ${dataStr}` : ""}\n`;
             const dailyLogDir = join(this.logDir, "daily");
             if (!existsSync(dailyLogDir)) {
                 await mkdir(dailyLogDir, { recursive: true });
@@ -126,25 +117,29 @@ export class Logger {
      * - tool calls with: tool, callID, input, output
      */
     minimizeForDebug(messages) {
-        return messages.map((msg) => {
+        return messages.map((message) => {
+            const msg = isRecord(message) ? message : {};
+            const info = isRecord(msg.info) ? msg.info : {};
+            const time = isRecord(info.time) ? info.time : {};
             const minimized = {
-                role: msg.info?.role ?? msg.role,
+                role: info.role ?? msg.role,
             };
-            if (msg.info?.time?.created) {
-                minimized.time = msg.info.time.created;
+            if (time.created) {
+                minimized.time = time.created;
             }
-            if (msg.info?.tokens) {
+            if (isRecord(info.tokens)) {
                 minimized.tokens = {
-                    input: msg.info.tokens.input,
-                    output: msg.info.tokens.output,
-                    reasoning: msg.info.tokens.reasoning,
-                    cache: msg.info.tokens.cache,
+                    input: info.tokens.input,
+                    output: info.tokens.output,
+                    reasoning: info.tokens.reasoning,
+                    cache: info.tokens.cache,
                 };
             }
             const parts = msg.parts ?? msg.content;
-            if (parts) {
+            if (Array.isArray(parts)) {
                 minimized.parts = parts
-                    .map((part) => {
+                    .map((item) => {
+                    const part = isRecord(item) ? item : {};
                     if (part.type === "step-start" || part.type === "step-finish") {
                         return null;
                     }
@@ -160,22 +155,23 @@ export class Logger {
                         };
                     }
                     if (part.type === "tool") {
+                        const state = isRecord(part.state) ? part.state : {};
                         const toolPart = {
                             type: "tool",
                             tool: part.tool,
                             callID: part.callID,
                         };
-                        if (part.state?.status) {
-                            toolPart.status = part.state.status;
+                        if (state.status) {
+                            toolPart.status = state.status;
                         }
-                        if (part.state?.input) {
-                            toolPart.input = part.state.input;
+                        if (state.input) {
+                            toolPart.input = state.input;
                         }
-                        if (part.state?.output) {
-                            toolPart.output = part.state.output;
+                        if (state.output) {
+                            toolPart.output = state.output;
                         }
-                        if (part.state?.error) {
-                            toolPart.error = part.state.error;
+                        if (state.error) {
+                            toolPart.error = state.error;
                         }
                         return toolPart;
                     }

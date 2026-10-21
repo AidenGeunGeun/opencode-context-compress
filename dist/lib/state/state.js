@@ -7,8 +7,7 @@ export function commitDurableSessionState(state, candidate) {
     state.compressionMapSnapshot = candidate.compressionMapSnapshot;
     state.stats = candidate.stats;
     state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
-    state.autoCompressionTokenThresholdOverride =
-        candidate.autoCompressionTokenThresholdOverride;
+    state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
     state.autoCompressionContextWindowRatioOverride =
         candidate.autoCompressionContextWindowRatioOverride;
     state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId;
@@ -17,7 +16,7 @@ export function commitDurableSessionState(state, candidate) {
     state.persistedLastUpdated = candidate.persistedLastUpdated;
 }
 function applyPersistedState(state, persisted) {
-    if (!persisted || persisted.status !== "loaded") {
+    if (persisted?.status !== "loaded") {
         return;
     }
     const persistedState = persisted.state;
@@ -162,8 +161,7 @@ export async function reconcileSessionLifecycle(state, sessionId, logger, messag
         : getCompressionStateCompactionOrder(state, messages, compactionIndex);
     const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction;
     const requiresCompactionReset = compactionIndex !== -1 &&
-        (compactionOrder === "before" ||
-            (compactionOrder === "unknown" && unresolvedNewCompaction));
+        (compactionOrder === "before" || (compactionOrder === "unknown" && unresolvedNewCompaction));
     const hasLegacyCompressionSnapshot = state.compressionMapSnapshot !== undefined;
     if (requiresCompactionReset || unresolvedNewCompaction || hasLegacyCompressionSnapshot) {
         const candidate = {
@@ -179,9 +177,7 @@ export async function reconcileSessionLifecycle(state, sessionId, logger, messag
                 }
                 : {}),
             ...(hasLegacyCompressionSnapshot ? { compressionMapSnapshot: undefined } : {}),
-            ...(unresolvedNewCompaction
-                ? { lastCompaction: compactionTimestamp }
-                : {}),
+            ...(unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}),
         };
         const persisted = await saveSessionState(candidate, logger);
         if (!persisted) {
@@ -255,7 +251,9 @@ export const checkSession = async (state, logger, messages) => {
         return await reconcileSessionLifecycle(state, state.sessionId, logger, messages);
     }
     catch (err) {
-        logger.error("Failed to initialize session state", { error: err.message });
+        logger.error("Failed to initialize session state", {
+            error: err instanceof Error ? err.message : String(err),
+        });
         return unreconciled;
     }
 };
@@ -282,8 +280,6 @@ export function createSessionState() {
         autoCompressionContextWindowRatioOverride: undefined,
         compressionCooldownAfterMessageId: undefined,
         lastCompaction: 0,
-        variant: undefined,
-        currentAgent: undefined,
         autoCompressionStarting: false,
         lastAutoTriggeredMessageId: undefined,
     };

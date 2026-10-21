@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 export const COMPRESS_SUMMARY_PREFIX = "[Compressed conversation block]\n\n";
 const generateUniqueId = (prefix) => `${prefix}_${ulid()}`;
 const generateStableId = (prefix, seed) => `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
@@ -76,7 +76,7 @@ export const isIgnoredUserMessage = (message) => {
         return true;
     }
     for (const part of parts) {
-        if (!part.ignored) {
+        if (!("ignored" in part) || !part.ignored) {
             return false;
         }
     }

@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { createAutomaticCompressionEventHandler } from "./auto-compression.js";
 import { getConfig } from "./config.js";
+import { generateNativeCompactionNoticeId } from "./commands/manage.js";
 import { handleCompressCommand } from "./commands/route.js";
 import { Logger } from "./logger.js";
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js";
 import { transformV2Messages } from "./messages/v2-transform.js";
 import { renderPostCompressionNotice } from "./prompts/index.js";
+import { isRecord } from "./shared-utils.js";
 import { listSessionMessages, pluginClient, promptSession, setSessionSelection, } from "./sdk/client.js";
 import { checkSession, reconcileSessionLifecycle, SessionStateManager } from "./state/index.js";
 import { inheritForkCompression } from "./state/fork.js";
@@ -13,8 +15,8 @@ import { createCompressTool, createSquashTool } from "./tools/index.js";
 // The plugin API cannot veto native auto-compaction, so flag the misconfiguration when it runs.
 // Manual /compact is a deliberate reset and gets no notice.
 const NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
-    "this compaction clears every compression block. Set `\"compaction\": { \"auto\": false }` " +
-    "in opencode.jsonc.";
+    'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' +
+    "in your OpenCode config.";
 export async function setup(context) {
     const client = pluginClient(context.session);
     const config = getConfig({ directory: context.location.directory });
@@ -80,15 +82,13 @@ export async function setup(context) {
                 variant: event.model.variant,
             },
         });
-        const messages = (await listSessionMessages(client, event.sessionID));
+        const messages = await listSessionMessages(client, event.sessionID);
         if (messages.length === 0)
             return;
         const state = stateManager.get(event.sessionID);
         const modelContext = await resolveModelContext(context, event.model);
         let transformed;
         await stateManager.runExclusive(event.sessionID, async () => {
-            state.currentAgent = event.agent;
-            state.variant = event.model.variant;
             if (modelContext)
                 state.modelContext = modelContext;
             let syncResult = await checkSession(state, logger, messages);
@@ -152,7 +152,7 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
             if (event.type === "session.forked" && typeof data.sessionID === "string") {
                 if (!(await ownsSession(context, data.sessionID, event)))
                     continue;
-                const messages = (await listSessionMessages(client, data.sessionID));
+                const messages = await listSessionMessages(client, data.sessionID);
                 await stateManager.runExclusive(data.sessionID, async () => {
                     const state = stateManager.get(data.sessionID);
                     await checkSession(state, logger, messages);
@@ -171,6 +171,7 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
                     sessionId: data.sessionID,
                     parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
                     noReply: true,
+                    messageId: generateNativeCompactionNoticeId(data.sessionID, event),
                 });
                 continue;
             }
@@ -178,7 +179,7 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
                 continue;
             if (!(await ownsSession(context, data.sessionID, event)))
                 continue;
-            const messages = (await listSessionMessages(client, data.sessionID));
+            const messages = await listSessionMessages(client, data.sessionID);
             await stateManager.runExclusive(data.sessionID, () => reconcileSessionLifecycle(stateManager.get(data.sessionID), data.sessionID, logger, messages));
         }
         catch (error) {
@@ -191,13 +192,10 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
 async function ownsSession(context, sessionID, event) {
     const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined;
     if (ref && typeof ref.directory === "string") {
-        return ref.directory === context.location.directory &&
-            ref.workspaceID === context.location.workspaceID;
+        return (ref.directory === context.location.directory &&
+            ref.workspaceID === context.location.workspaceID);
     }
     const location = (await context.session.get({ sessionID })).location;
     return location.directory === context.location.directory;
-}
-function isRecord(value) {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 //# sourceMappingURL=plugin.js.map

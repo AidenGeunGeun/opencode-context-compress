@@ -4,9 +4,9 @@ export function formatStatsHeader(totalTokensSaved, compressTokenCounter) {
 }
 export function formatTokenCount(tokens) {
     if (tokens >= 1000) {
-        return `${(tokens / 1000).toFixed(1)}K`.replace(".0K", "K") + " tokens";
+        return `${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}K tokens`;
     }
-    return tokens.toString() + " tokens";
+    return `${tokens} tokens`;
 }
 export function formatProgressBar(total, start, end, width = 20) {
     if (total <= 0)

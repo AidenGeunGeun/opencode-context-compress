@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 import { commitDurableSessionState } from "../state/state.js";
 import { renderSystemPrompt } from "../prompts/index.js";
-import { getCurrentParams } from "../token-utils.js";
 import { saveSessionState } from "../state/persistence.js";
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { deriveAutomaticProtectedTail } from "../messages/context-map.js";
-import { promptSession, showToast } from "../sdk/client.js";
+import { isRecord } from "../shared-utils.js";
+import { promptSession } from "../sdk/client.js";
 const COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i;
 const LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i;
 const LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i;
 function trimCommandBoundary(text) {
-    return text.replace(/^[\s:;,.|\-]+/, "").replace(/\s+$/, "");
+    return text.replace(/^[\s:;,.|-]+/, "").replace(/\s+$/, "");
 }
 export function extractManageCommandResidual(args) {
     const withoutSubcommand = (args || "").replace(/^\s*manage\b/i, "");
@@ -47,49 +47,26 @@ function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity) {
     const time = Array.from({ length: 6 }, (_, index) => Number((value >> BigInt(40 - 8 * index)) & 0xffn)
         .toString(16)
         .padStart(2, "0")).join("");
-    const random = identity ? createHash("sha256").update(identity).digest("hex").slice(0, 14) : Array.from({ length: 14 }, () => ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)]).join("");
+    const random = identity
+        ? createHash("sha256").update(identity).digest("hex").slice(0, 14)
+        : Array.from({ length: 14 }, () => ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)]).join("");
     return time + random;
 }
 export function generateManagePromptMessageId() {
     return `msg_${generateLiveOrderedMessageIdSuffix()}`;
 }
+export function generateNativeCompactionNoticeId(sessionId, event) {
+    if (typeof event.id !== "string" || typeof event.created !== "number")
+        return undefined;
+    return `msg_${generateLiveOrderedMessageIdSuffix(event.created, JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
+}
 export function generateAutomaticPromptMessageId(sessionId, trigger) {
     // The host deduplicates prompt admission by ID, including across plugin instances.
     return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
 }
-/**
- * Best-effort sanity check only. The generated trigger ID passed via `messageID` on the
- * prompt call is the source of truth for cleanup anchoring - the assistant response's
- * `parentID` is not trusted, since OpenCode can bind it to whatever user message was most
- * recently created in the session (e.g. a mid-turn ignored status notification), not
- * necessarily the message that actually started this turn.
- */
-function extractPromptParentIdForLogging(promptResult) {
-    const result = promptResult?.data ?? promptResult;
-    const info = result?.info;
-    if (!info || typeof info !== "object") {
-        return undefined;
-    }
-    return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined;
-}
-export async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
-    if (await showToast(client, {
-        title: "Compression Management",
-        message,
-        variant: "error",
-        duration: 8000,
-    })) {
-        return;
-    }
-    if (typeof client?.session?.prompt === "function") {
-        await sendIgnoredMessage(client, sessionId, message, params, logger);
-        return;
-    }
-    logger.error("Unable to surface compression management error to user", { sessionId, message });
-}
 export async function handleManageCommand(ctx) {
     if (ctx.config.tools.compress.permission === "deny") {
-        await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.", getCurrentParams(ctx.state, ctx.messages, ctx.logger));
+        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.", ctx.logger);
         return;
     }
     await startManagementTurn({
@@ -106,18 +83,16 @@ export async function handleManageCommand(ctx) {
 /** Persists the turn marker; the caller must hold this session's mutation lock. */
 export async function stageManagementTurnWithinLock(ctx) {
     const { client, stateManager, state, logger, sessionId, messages } = ctx;
-    const currentParams = getCurrentParams(state, messages, logger);
     if (!state.persistenceSynchronized) {
         return async () => {
-            await sendManageFailureFeedback(client, logger, sessionId, "Compression management could not start because saved session state could not be loaded.", currentParams);
+            await sendIgnoredMessage(client, sessionId, "Compression management could not start because saved session state could not be loaded.", logger);
             return false;
         };
     }
     const automaticTail = ctx.source === "automatic"
         ? deriveAutomaticProtectedTail(messages, state, logger, ctx.protectedTurns ?? 0)
         : undefined;
-    if (ctx.source === "automatic" &&
-        !automaticTail?.hasSelectableMessages) {
+    if (ctx.source === "automatic" && !automaticTail?.hasSelectableMessages) {
         logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
             sessionId,
             protectedTurns: ctx.protectedTurns ?? 0,
@@ -150,7 +125,9 @@ export async function stageManagementTurnWithinLock(ctx) {
         ...(ctx.source ? { source: ctx.source } : {}),
         ...(ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {}),
         ...(typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {}),
-        ...(typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}),
+        ...(typeof ctx.thresholdTokens === "number"
+            ? { thresholdTokens: ctx.thresholdTokens }
+            : {}),
     };
     const candidateState = {
         ...state,
@@ -164,31 +141,22 @@ export async function stageManagementTurnWithinLock(ctx) {
             triggerMessageId,
         });
         return async () => {
-            await sendManageFailureFeedback(client, logger, sessionId, "Compression management could not start: cleanup state could not be saved.", currentParams);
+            await sendIgnoredMessage(client, sessionId, "Compression management could not start: cleanup state could not be saved.", logger);
             return false;
         };
     }
     commitDurableSessionState(state, candidateState);
-    const model = currentParams.providerId && currentParams.modelId
-        ? {
-            providerID: currentParams.providerId,
-            modelID: currentParams.modelId,
-        }
-        : undefined;
     return async () => {
-        let promptResult;
         try {
-            promptResult = await promptSession(client, {
+            await promptSession(client, {
                 sessionId,
-                agent: currentParams.agent,
-                model,
-                variant: currentParams.variant,
                 parts: messageParts,
                 messageId: triggerMessageId,
                 metadata: { "opencode.context-compress.management": true },
             });
         }
         catch (err) {
+            const errorMessage = isRecord(err) && typeof err.message === "string" ? err.message : undefined;
             const rollbackResult = await stateManager.runExclusive(sessionId, async () => {
                 const currentTurn = state.managementTurns.find((turn) => turn.triggerMessageId === triggerMessageId);
                 if (!currentTurn)
@@ -205,7 +173,7 @@ export async function stageManagementTurnWithinLock(ctx) {
                 commitDurableSessionState(state, rollbackState);
                 return "removed";
             });
-            logger.error("Manage command failed", { error: err?.message });
+            logger.error("Manage command failed", { error: errorMessage });
             if (rollbackResult === "completed") {
                 logger.warn("Manage prompt failed after compression completed; preserving the completed turn marker", {
                     sessionId,
@@ -218,20 +186,12 @@ export async function stageManagementTurnWithinLock(ctx) {
                     triggerMessageId,
                 });
             }
-            await sendManageFailureFeedback(client, logger, sessionId, rollbackResult === "completed"
-                ? `The compression management prompt reported an error after compression completed: ${err?.message || "the prompt failed."} The completed state was preserved.`
+            await sendIgnoredMessage(client, sessionId, rollbackResult === "completed"
+                ? `The compression management prompt reported an error after compression completed: ${errorMessage || "the prompt failed."} The completed state was preserved.`
                 : rollbackResult === "removed"
-                    ? `Compression management could not start: ${err?.message || "the prompt failed."}`
-                    : `Compression management could not start: ${err?.message || "the prompt failed."} Its saved cleanup marker could not be removed.`, currentParams);
+                    ? `Compression management could not start: ${errorMessage || "the prompt failed."}`
+                    : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`, logger);
             return false;
-        }
-        const returnedParentId = extractPromptParentIdForLogging(promptResult);
-        if (returnedParentId && returnedParentId !== triggerMessageId) {
-            logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
-                sessionId,
-                triggerMessageId,
-                returnedParentId,
-            });
         }
         logger.info("Sent compression context to agent", {
             sessionId,

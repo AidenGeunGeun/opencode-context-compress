@@ -1,18 +1,27 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
-import { join, dirname } from "path";
-import { homedir } from "os";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { parse } from "jsonc-parser";
+import { isRecord } from "./shared-utils.js";
 export const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
     tokenThreshold: 432_000,
 };
 export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-    if (layer.protectedTurns !== undefined)
+    if (typeof layer.protectedTurns === "number")
         return layer.protectedTurns;
     if (hasExplicitTopLevel)
         return fallback;
-    return layer.autoCompression?.protectedTurns ?? fallback;
+    const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
+    return typeof autoCompression.protectedTurns === "number"
+        ? autoCompression.protectedTurns
+        : fallback;
+}
+const NOTIFICATIONS = ["off", "minimal", "detailed"];
+const PERMISSIONS = ["ask", "allow", "deny"];
+function isOneOf(values, value) {
+    return values.some((candidate) => candidate === value);
 }
 // Valid config keys for validation against user config
 export const VALID_CONFIG_KEYS = new Set([
@@ -22,6 +31,7 @@ export const VALID_CONFIG_KEYS = new Set([
     "debug",
     "dailyLog",
     "notification",
+    // Retired with toasts; still accepted so older configs load without warnings.
     "notificationType",
     "protectedTurns",
     "autoCompression",
@@ -39,11 +49,11 @@ export const VALID_CONFIG_KEYS = new Set([
 // Extract all key paths from a config object for validation
 function getConfigKeyPaths(obj, prefix = "") {
     const keys = [];
-    for (const key of Object.keys(obj)) {
+    for (const [key, value] of Object.entries(obj)) {
         const fullKey = prefix ? `${prefix}.${key}` : key;
         keys.push(fullKey);
-        if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
-            keys.push(...getConfigKeyPaths(obj[key], fullKey));
+        if (isRecord(value)) {
+            keys.push(...getConfigKeyPaths(value, fullKey));
         }
     }
     return keys;
@@ -76,8 +86,7 @@ function validateConfigTypes(config) {
         });
     }
     if (config.notification !== undefined) {
-        const validValues = ["off", "minimal", "detailed"];
-        if (!validValues.includes(config.notification)) {
+        if (!isOneOf(NOTIFICATIONS, config.notification)) {
             errors.push({
                 key: "notification",
                 expected: '"off" | "minimal" | "detailed"',
@@ -85,19 +94,9 @@ function validateConfigTypes(config) {
             });
         }
     }
-    if (config.notificationType !== undefined) {
-        const validValues = ["chat", "toast"];
-        if (!validValues.includes(config.notificationType)) {
-            errors.push({
-                key: "notificationType",
-                expected: '"chat" | "toast"',
-                actual: JSON.stringify(config.notificationType),
-            });
-        }
-    }
     const autoCompression = config.autoCompression;
     if (autoCompression !== undefined) {
-        if (!autoCompression || typeof autoCompression !== "object" || Array.isArray(autoCompression)) {
+        if (!isRecord(autoCompression)) {
             errors.push({
                 key: "autoCompression",
                 expected: "object",
@@ -148,7 +147,7 @@ function validateConfigTypes(config) {
     // Commands validator
     const commands = config.commands;
     if (commands !== undefined) {
-        if (typeof commands === "object") {
+        if (isRecord(commands)) {
             if (commands.enabled !== undefined && typeof commands.enabled !== "boolean") {
                 errors.push({
                     key: "commands.enabled",
@@ -167,26 +166,24 @@ function validateConfigTypes(config) {
     }
     // Tools validators
     const tools = config.tools;
-    if (tools) {
-        if (tools.compress) {
-            if (tools.compress.permission !== undefined) {
-                const validValues = ["ask", "allow", "deny"];
-                if (!validValues.includes(tools.compress.permission)) {
-                    errors.push({
-                        key: "tools.compress.permission",
-                        expected: '"ask" | "allow" | "deny"',
-                        actual: JSON.stringify(tools.compress.permission),
-                    });
-                }
-            }
-            if (tools.compress.showCompression !== undefined &&
-                typeof tools.compress.showCompression !== "boolean") {
+    if (isRecord(tools) && isRecord(tools.compress)) {
+        const compress = tools.compress;
+        if (compress.permission !== undefined) {
+            if (!isOneOf(PERMISSIONS, compress.permission)) {
                 errors.push({
-                    key: "tools.compress.showCompression",
-                    expected: "boolean",
-                    actual: typeof tools.compress.showCompression,
+                    key: "tools.compress.permission",
+                    expected: '"ask" | "allow" | "deny"',
+                    actual: JSON.stringify(compress.permission),
                 });
             }
+        }
+        if (compress.showCompression !== undefined &&
+            typeof compress.showCompression !== "boolean") {
+            errors.push({
+                key: "tools.compress.showCompression",
+                expected: "boolean",
+                actual: typeof compress.showCompression,
+            });
         }
     }
     return errors;
@@ -219,7 +216,6 @@ const defaultConfig = {
     enabled: true,
     debug: false,
     notification: "detailed",
-    notificationType: "chat",
     protectedTurns: 3,
     commands: {
         enabled: true,
@@ -295,7 +291,7 @@ function createDefaultConfig() {
         mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
     }
     const configContent = `{
-  "$schema": "compress.schema.json"
+  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json"
 }
 `;
     writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
@@ -311,39 +307,65 @@ function loadConfigFile(configPath) {
     }
     try {
         const parsed = parse(fileContent);
-        if (parsed === undefined || parsed === null) {
+        if (!isRecord(parsed)) {
             return { data: null, parseError: "Config file is empty or invalid" };
         }
         return { data: parsed };
     }
     catch (error) {
-        return { data: null, parseError: error.message || "Failed to parse config" };
+        return {
+            data: null,
+            parseError: error instanceof Error && error.message ? error.message : "Failed to parse config",
+        };
     }
 }
 function mergeTools(base, override) {
-    if (!override)
+    if (!isRecord(override))
         return base;
+    const compress = isRecord(override.compress) ? override.compress : {};
     return {
         compress: {
-            permission: override.compress?.permission ?? base.compress.permission,
-            showCompression: override.compress?.showCompression ?? base.compress.showCompression,
+            permission: isOneOf(PERMISSIONS, compress.permission)
+                ? compress.permission
+                : base.compress.permission,
+            showCompression: typeof compress.showCompression === "boolean"
+                ? compress.showCompression
+                : base.compress.showCompression,
         },
     };
 }
 function mergeCommands(base, override) {
-    if (override === undefined)
+    if (!isRecord(override))
         return base;
     return {
-        enabled: override.enabled ?? base.enabled,
+        enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
     };
 }
 function mergeAutoCompression(base, override) {
-    if (override === undefined)
+    if (!isRecord(override))
         return base;
     return {
-        enabled: override.enabled ?? base.enabled,
-        contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
-        tokenThreshold: override.tokenThreshold ?? base.tokenThreshold,
+        enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
+        contextWindowRatio: typeof override.contextWindowRatio === "number"
+            ? override.contextWindowRatio
+            : base.contextWindowRatio,
+        tokenThreshold: typeof override.tokenThreshold === "number"
+            ? override.tokenThreshold
+            : base.tokenThreshold,
+    };
+}
+function mergeConfigLayer(config, data, hasExplicitProtectedTurns) {
+    return {
+        enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
+        debug: typeof data.debug === "boolean" ? data.debug : config.debug,
+        dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
+        notification: isOneOf(NOTIFICATIONS, data.notification)
+            ? data.notification
+            : config.notification,
+        protectedTurns: resolveProtectedTurnsSetting(data, config.protectedTurns, hasExplicitProtectedTurns),
+        commands: mergeCommands(config.commands, data.commands),
+        autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
+        tools: mergeTools(config.tools, data.tools),
     };
 }
 function deepCloneConfig(config) {
@@ -369,18 +391,8 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false);
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-                commands: mergeCommands(config.commands, result.data.commands),
-                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                tools: mergeTools(config.tools, result.data.tools),
-            };
-            hasExplicitProtectedTurns = result.data.protectedTurns !== undefined;
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
+            hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number";
         }
     }
     else {
@@ -396,19 +408,9 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true);
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-                commands: mergeCommands(config.commands, result.data.commands),
-                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                tools: mergeTools(config.tools, result.data.tools),
-            };
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
+                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
         }
     }
     // Load and merge project config (overrides global)
@@ -420,19 +422,9 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true);
-            config = {
-                enabled: result.data.enabled ?? config.enabled,
-                debug: result.data.debug ?? config.debug,
-                dailyLog: result.data.dailyLog ?? config.dailyLog,
-                notification: result.data.notification ?? config.notification,
-                notificationType: result.data.notificationType ?? config.notificationType,
-                protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-                commands: mergeCommands(config.commands, result.data.commands),
-                autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-                tools: mergeTools(config.tools, result.data.tools),
-            };
+            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
             hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
+                hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
         }
     }
     return config;

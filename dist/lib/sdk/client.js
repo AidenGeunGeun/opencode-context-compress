@@ -5,12 +5,12 @@ export function pluginClient(session) {
 export function setSessionSelection(client, sessionID, selection) {
     client.selections.set(sessionID, selection);
 }
+function isAdaptedTranscript(values) {
+    return values.every((value) => typeof value === "object" && value !== null && "info" in value && "parts" in value);
+}
 export async function listSessionMessages(client, sessionId) {
     const values = await client.session.context({ sessionID: sessionId });
-    if (values.every((value) => typeof value === "object" &&
-        value !== null &&
-        "info" in value &&
-        "parts" in value))
+    if (isAdaptedTranscript(values))
         return values;
     return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId));
 }
@@ -24,6 +24,7 @@ export async function promptSession(client, input) {
     if (input.noReply) {
         return client.session.synthetic({
             sessionID: input.sessionId,
+            id: input.messageId,
             text,
             description: text,
             metadata: { "opencode.context-compress.ignored": true },
@@ -38,8 +39,5 @@ export async function promptSession(client, input) {
         delivery: "steer",
         resume: true,
     });
-}
-export async function showToast(..._args) {
-    return false;
 }
 //# sourceMappingURL=client.js.map

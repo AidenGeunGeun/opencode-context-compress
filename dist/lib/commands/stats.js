@@ -5,7 +5,6 @@
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { formatTokenCount } from "../ui/utils.js";
 import { loadAllSessionStats } from "../state/persistence.js";
-import { getCurrentParams } from "../token-utils.js";
 function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime) {
     const lines = [];
     lines.push("**Compress statistics**");
@@ -23,7 +22,7 @@ function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTim
     return lines.join("\n");
 }
 export async function handleStatsCommand(ctx) {
-    const { client, state, logger, sessionId, messages } = ctx;
+    const { client, state, logger, sessionId } = ctx;
     // Session stats from in-memory state
     const sessionTokens = state.stats.totalCompressTokens;
     const sessionTools = state.compressed.toolIds.size;
@@ -31,8 +30,7 @@ export async function handleStatsCommand(ctx) {
     // All-time stats from storage files
     const allTime = await loadAllSessionStats(logger);
     const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime);
-    const params = getCurrentParams(state, messages, logger);
-    await sendIgnoredMessage(client, sessionId, message, params, logger);
+    await sendIgnoredMessage(client, sessionId, message, logger);
     logger.info("Stats command executed", {
         sessionTokens,
         sessionTools,

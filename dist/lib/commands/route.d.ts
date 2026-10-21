@@ -1,12 +1,13 @@
 import type { PluginConfig } from "../config.js";
 import type { Logger } from "../logger.js";
-import { SessionStateManager } from "../state/index.js";
+import { type PluginClient } from "../sdk/client.js";
+import { type SessionStateManager } from "../state/index.js";
 export declare function handleCompressCommand(input: {
     command: string;
     sessionID: string;
     arguments: string;
 }, dependencies: {
-    client: any;
+    client: PluginClient;
     stateManager: SessionStateManager;
     logger: Logger;
     config: PluginConfig;

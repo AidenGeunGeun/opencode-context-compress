@@ -50,12 +50,12 @@ async function readJsonFile(filePath) {
       data: JSON.parse(content)
     };
   } catch (error) {
-    if (error?.code === "ENOENT") {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return { status: "missing" };
     }
     return {
       status: "error",
-      error
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 }
@@ -190,7 +190,7 @@ async function saveSessionState(sessionState, logger, sessionName) {
   } catch (error) {
     logger.error("Failed to save session state", {
       sessionId: sessionState.sessionId,
-      error: error?.message
+      error: error instanceof Error ? error.message : String(error)
     });
     return false;
   }
@@ -206,7 +206,7 @@ async function loadSessionState(sessionId, logger, messages) {
     logger.warn("Failed to load session state", {
       sessionId,
       path: filePath,
-      error: primaryResult.error?.message
+      error: primaryResult.error
     });
     return { status: "error" };
   } else {
@@ -219,7 +219,7 @@ async function loadSessionState(sessionId, logger, messages) {
       logger.warn("Failed to load legacy session state", {
         sessionId,
         path: legacyPath,
-        error: legacyResult.error?.message
+        error: legacyResult.error
       });
       return { status: "error" };
     }
@@ -227,7 +227,7 @@ async function loadSessionState(sessionId, logger, messages) {
     state = remapLegacyState(legacyResult.data);
     migrated = true;
   }
-  if (!state || !state.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+  if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
     logger.warn("Invalid session state file, preserving in-memory state", {
       sessionId,
       path: migrated ? getLegacySessionFilePath(sessionId) : filePath
@@ -291,7 +291,7 @@ async function loadSessionState(sessionId, logger, messages) {
     } catch (saveError) {
       logger.warn("Failed to save migrated state (will retry next load)", {
         sessionId,
-        error: saveError?.message
+        error: saveError instanceof Error ? saveError.message : String(saveError)
       });
     }
   }
@@ -326,9 +326,11 @@ async function loadAllSessionStats(logger) {
         }
       } catch {}
     }
-    logger.debug("Loaded all-time stats", result);
+    logger.debug("Loaded all-time stats", { ...result });
   } catch (error) {
-    logger.warn("Failed to load all-time stats", { error: error?.message });
+    logger.warn("Failed to load all-time stats", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
   return result;
 }
@@ -373,7 +375,7 @@ function commitDurableSessionState(state, candidate) {
   state.persistedLastUpdated = candidate.persistedLastUpdated;
 }
 function applyPersistedState(state, persisted) {
-  if (!persisted || persisted.status !== "loaded") {
+  if (persisted?.status !== "loaded") {
     return;
   }
   const persistedState = persisted.state;
@@ -594,7 +596,9 @@ var checkSession = async (state, logger, messages) => {
   try {
     return await reconcileSessionLifecycle(state, state.sessionId, logger, messages);
   } catch (err) {
-    logger.error("Failed to initialize session state", { error: err.message });
+    logger.error("Failed to initialize session state", {
+      error: err instanceof Error ? err.message : String(err)
+    });
     return unreconciled;
   }
 };
@@ -621,8 +625,6 @@ function createSessionState() {
     autoCompressionContextWindowRatioOverride: undefined,
     compressionCooldownAfterMessageId: undefined,
     lastCompaction: 0,
-    variant: undefined,
-    currentAgent: undefined,
     autoCompressionStarting: false,
     lastAutoTriggeredMessageId: undefined
   };
@@ -791,6 +793,34 @@ function loadPrompt(name, vars) {
   return content;
 }
 
+// lib/ui/utils.ts
+function formatStatsHeader(totalTokensSaved, compressTokenCounter) {
+  const totalTokensSavedStr = `~${formatTokenCount(totalTokensSaved + compressTokenCounter)}`;
+  return [`\u25A3 Context Compress | ${totalTokensSavedStr} saved total`].join(`
+`);
+}
+function formatTokenCount(tokens) {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}K tokens`;
+  }
+  return `${tokens} tokens`;
+}
+function formatProgressBar(total, start, end, width = 20) {
+  if (total <= 0)
+    return `\u2502${" ".repeat(width)}\u2502`;
+  const startIdx = Math.floor(start / total * width);
+  const endIdx = Math.min(width - 1, Math.floor(end / total * width));
+  let bar = "";
+  for (let i = 0;i < width; i++) {
+    if (i >= startIdx && i <= endIdx) {
+      bar += "\u2591";
+    } else {
+      bar += "\u2588";
+    }
+  }
+  return `\u2502${bar}\u2502`;
+}
+
 // lib/messages/utils.ts
 import { ulid } from "ulid";
 import { createHash } from "crypto";
@@ -831,7 +861,7 @@ var isIgnoredUserMessage = (message) => {
     return true;
   }
   for (const part of parts) {
-    if (!part.ignored) {
+    if (!("ignored" in part) || !part.ignored) {
       return false;
     }
   }
@@ -858,84 +888,8 @@ var getLastUserMessage = (messages, startIndex) => {
   }
   return null;
 };
-
-// lib/token-utils.ts
-import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
-import { encodingForModel } from "js-tiktoken";
-var _tiktokenEncoder = null;
-function getTiktokenEncoder() {
-  if (!_tiktokenEncoder) {
-    _tiktokenEncoder = encodingForModel("gpt-4o");
-  }
-  return _tiktokenEncoder;
-}
-function isAnthropicProvider(providerId) {
-  if (!providerId)
-    return false;
-  return providerId.toLowerCase().includes("anthropic");
-}
-function getCurrentParams(state, messages, logger) {
-  const userMsg = getLastUserMessage(messages);
-  if (!userMsg) {
-    logger.debug("No user message found when determining current params");
-    return {
-      providerId: state.modelContext?.providerId,
-      modelId: state.modelContext?.modelId,
-      agent: state.currentAgent,
-      variant: state.variant
-    };
-  }
-  const userInfo = userMsg.info;
-  const agent = userInfo.agent ?? state.currentAgent;
-  const providerId = userInfo.model?.providerID ?? state.modelContext?.providerId;
-  const modelId = userInfo.model?.modelID ?? state.modelContext?.modelId;
-  const variant = state.variant ?? userInfo.variant;
-  return { providerId, modelId, agent, variant };
-}
-function countTokens(text, providerId) {
-  if (!text)
-    return 0;
-  try {
-    if (isAnthropicProvider(providerId)) {
-      return anthropicCountTokens(text);
-    }
-    return getTiktokenEncoder().encode(text).length;
-  } catch {
-    return Math.ceil(text.length / 4);
-  }
-}
-function estimateTokensBatch(texts, providerId) {
-  if (texts.length === 0)
-    return 0;
-  return countTokens(texts.join(" "), providerId);
-}
-
-// lib/ui/utils.ts
-function formatStatsHeader(totalTokensSaved, compressTokenCounter) {
-  const totalTokensSavedStr = `~${formatTokenCount(totalTokensSaved + compressTokenCounter)}`;
-  return [`\u25A3 Context Compress | ${totalTokensSavedStr} saved total`].join(`
-`);
-}
-function formatTokenCount(tokens) {
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}K`.replace(".0K", "K") + " tokens";
-  }
-  return tokens.toString() + " tokens";
-}
-function formatProgressBar(total, start, end, width = 20) {
-  if (total <= 0)
-    return `\u2502${" ".repeat(width)}\u2502`;
-  const startIdx = Math.floor(start / total * width);
-  const endIdx = Math.min(width - 1, Math.floor(end / total * width));
-  let bar = "";
-  for (let i = 0;i < width; i++) {
-    if (i >= startIdx && i <= endIdx) {
-      bar += "\u2591";
-    } else {
-      bar += "\u2588";
-    }
-  }
-  return `\u2502${bar}\u2502`;
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // lib/messages/v2-adapter.ts
@@ -1052,7 +1006,10 @@ function adaptAssistantPart(messageID, value) {
   const part = requireRecord(value, `assistant message ${messageID} content`);
   const type = requireString(part.type, `assistant message ${messageID} content type`);
   if (type === "text" || type === "reasoning") {
-    return { type, text: typeof part.text === "string" ? part.text : "" };
+    return {
+      type,
+      text: typeof part.text === "string" ? part.text : ""
+    };
   }
   if (type !== "tool")
     throw new Error(`Unsupported assistant content type: ${type}`);
@@ -1085,7 +1042,12 @@ function compaction(sessionID, id, created, message) {
       error: status === "failed" ? message.error : undefined,
       time: { created, ...status === "completed" ? { completed: created } : {} }
     },
-    parts: [{ type: "compaction", summary: typeof message.summary === "string" ? message.summary : undefined }]
+    parts: [
+      {
+        type: "compaction",
+        summary: typeof message.summary === "string" ? message.summary : undefined
+      }
+    ]
   };
 }
 function system(sessionID, id, created, sourceType, text) {
@@ -1136,9 +1098,6 @@ function requireNumber(value, label) {
 function numberOrZero(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 // lib/sdk/client.ts
 function pluginClient(session) {
@@ -1147,9 +1106,12 @@ function pluginClient(session) {
 function setSessionSelection(client, sessionID, selection) {
   client.selections.set(sessionID, selection);
 }
+function isAdaptedTranscript(values) {
+  return values.every((value) => typeof value === "object" && value !== null && ("info" in value) && ("parts" in value));
+}
 async function listSessionMessages(client, sessionId) {
   const values = await client.session.context({ sessionID: sessionId });
-  if (values.every((value) => typeof value === "object" && value !== null && ("info" in value) && ("parts" in value)))
+  if (isAdaptedTranscript(values))
     return values;
   return adaptProjectedMessages(sessionId, values, client.selections.get(sessionId));
 }
@@ -1162,6 +1124,7 @@ async function promptSession(client, input) {
   if (input.noReply) {
     return client.session.synthetic({
       sessionID: input.sessionId,
+      id: input.messageId,
       text,
       description: text,
       metadata: { "opencode.context-compress.ignored": true },
@@ -1176,9 +1139,6 @@ async function promptSession(client, input) {
     delivery: "steer",
     resume: true
   });
-}
-async function showToast(..._args) {
-  return false;
 }
 
 // lib/ui/notification.ts
@@ -1195,37 +1155,7 @@ async function sendSquashNotification(client, logger, config, sessionId, outcome
     ...config.notification === "detailed" ? [`\u2192 Topic: ${outcome.topic}`] : []
   ].join(`
 `);
-  if (config.notificationType === "toast") {
-    const shown = await showToast(client, {
-      title: "Squash Notification",
-      message,
-      variant: "info",
-      duration: 5000
-    });
-    if (shown)
-      return;
-  }
-  await sendIgnoredMessage(client, sessionId, message, {}, logger);
-}
-var TOAST_BODY_MAX_LINES = 12;
-var TOAST_SUMMARY_MAX_CHARS = 600;
-function truncateToastBody(body, maxLines = TOAST_BODY_MAX_LINES) {
-  const lines = body.split(`
-`);
-  if (lines.length <= maxLines) {
-    return body;
-  }
-  const kept = lines.slice(0, maxLines - 1);
-  const remaining = lines.length - maxLines + 1;
-  return kept.join(`
-`) + `
-... and ${remaining} more`;
-}
-function truncateToastSummary(summary, maxChars = TOAST_SUMMARY_MAX_CHARS) {
-  if (summary.length <= maxChars) {
-    return summary;
-  }
-  return summary.slice(0, maxChars - 3) + "...";
+  await sendIgnoredMessage(client, sessionId, message, logger);
 }
 function buildMinimalMessage(state) {
   return formatStatsHeader(state.stats.totalCompressTokens, state.stats.compressTokenCounter);
@@ -1261,7 +1191,7 @@ function buildDetailedMessage(args) {
   }
   return message;
 }
-async function sendCompressNotification(client, logger, config, state, sessionId, toolIds, itemCount, topic, summary, startResult, endResult, totalMessages, params, rangeTokenEstimate) {
+async function sendCompressNotification(client, logger, config, state, sessionId, toolIds, itemCount, topic, summary, startResult, endResult, totalMessages, rangeTokenEstimate) {
   if (config.notification === "off") {
     return false;
   }
@@ -1277,44 +1207,14 @@ async function sendCompressNotification(client, logger, config, state, sessionId
     rangeTokenEstimate,
     showCompression: config.tools.compress.showCompression
   });
-  if (config.notificationType === "toast") {
-    let toastMessage = message;
-    if (config.tools.compress.showCompression) {
-      const truncatedSummary = truncateToastSummary(summary);
-      if (truncatedSummary !== summary) {
-        toastMessage = toastMessage.replace(`
-\u2192 Compression: ${summary}`, `
-\u2192 Compression: ${truncatedSummary}`);
-      }
-    }
-    toastMessage = config.notification === "minimal" ? toastMessage : truncateToastBody(toastMessage);
-    const shown = await showToast(client, {
-      title: "Compress Notification",
-      message: toastMessage,
-      variant: "info",
-      duration: 5000
-    });
-    if (shown) {
-      return true;
-    }
-  }
-  await sendIgnoredMessage(client, sessionId, message, params, logger);
+  await sendIgnoredMessage(client, sessionId, message, logger);
   return true;
 }
-async function sendIgnoredMessage(client, sessionID, text, params, logger) {
-  const agent = params.agent || undefined;
-  const variant = params.variant || undefined;
-  const model = params.providerId && params.modelId ? {
-    providerID: params.providerId,
-    modelID: params.modelId
-  } : undefined;
+async function sendIgnoredMessage(client, sessionID, text, logger) {
   try {
     await promptSession(client, {
       sessionId: sessionID,
       noReply: true,
-      agent,
-      model,
-      variant,
       parts: [
         {
           type: "text",
@@ -1324,7 +1224,9 @@ async function sendIgnoredMessage(client, sessionID, text, params, logger) {
       ]
     });
   } catch (error) {
-    logger.error("Failed to send notification", { error: error.message });
+    logger.error("Failed to send notification", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
 }
 
@@ -1585,7 +1487,10 @@ function buildV2CleanupPlan(state, rawMessages) {
     return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage);
   });
   const newestCompleted = [...turns].reverse().find((turn) => turn.completedAt && turn.completedMessageId);
-  const visibleAnchors = turns.flatMap((turn) => [indexByMessageId.get(turn.triggerMessageId), turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined].filter((index) => index !== undefined));
+  const visibleAnchors = turns.flatMap((turn) => [
+    indexByMessageId.get(turn.triggerMessageId),
+    turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined
+  ].filter((index) => index !== undefined));
   const firstV2Index = visibleAnchors.length > 0 ? Math.min(...visibleAnchors) : undefined;
   if (firstV2Index !== undefined) {
     for (let i = firstV2Index;i < rawMessages.length; i++) {
@@ -1879,8 +1784,6 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
   return messages.slice(protectedStart).map((message) => message.info.id);
 }
 function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
-  const latestCompactionIndex = rawHistory.findLastIndex(isCompletedNativeCompaction);
-  const preCompactionMessageIds = new Set(rawHistory.slice(0, Math.max(0, latestCompactionIndex)).map((message) => message.info.id));
   const search = transformMessagesForSearch(rawHistory, state, logger);
   const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
   const syntheticMap = search.syntheticMap;
@@ -1902,7 +1805,7 @@ function selectDeterministicCompressionSpan(rawHistory, state, logger, protected
     for (const messageId of summary.messageIds)
       existingBlockMessageIds.add(messageId);
   }
-  const candidates = transformed.slice(newestBlockIndex + 1).filter((message) => !preCompactionMessageIds.has(message.info.id) && !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
+  const candidates = transformed.slice(newestBlockIndex + 1).filter((message) => !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
   const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns);
   const protectedIds = new Set(protectedMessageIds);
   const messages = candidates.filter((message) => !protectedIds.has(message.info.id));
@@ -1925,7 +1828,7 @@ var COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would yo
 var LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i;
 var LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i;
 function trimCommandBoundary(text) {
-  return text.replace(/^[\s:;,.|\-]+/, "").replace(/\s+$/, "");
+  return text.replace(/^[\s:;,.|-]+/, "").replace(/\s+$/, "");
 }
 function extractManageCommandResidual(args) {
   const withoutSubcommand = (args || "").replace(/^\s*manage\b/i, "");
@@ -1964,35 +1867,17 @@ function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity) {
 function generateManagePromptMessageId() {
   return `msg_${generateLiveOrderedMessageIdSuffix()}`;
 }
+function generateNativeCompactionNoticeId(sessionId, event) {
+  if (typeof event.id !== "string" || typeof event.created !== "number")
+    return;
+  return `msg_${generateLiveOrderedMessageIdSuffix(event.created, JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
+}
 function generateAutomaticPromptMessageId(sessionId, trigger) {
   return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
 }
-function extractPromptParentIdForLogging(promptResult) {
-  const result = promptResult?.data ?? promptResult;
-  const info = result?.info;
-  if (!info || typeof info !== "object") {
-    return;
-  }
-  return typeof info.parentID === "string" && info.parentID.length > 0 ? info.parentID : undefined;
-}
-async function sendManageFailureFeedback(client, logger, sessionId, message, params) {
-  if (await showToast(client, {
-    title: "Compression Management",
-    message,
-    variant: "error",
-    duration: 8000
-  })) {
-    return;
-  }
-  if (typeof client?.session?.prompt === "function") {
-    await sendIgnoredMessage(client, sessionId, message, params, logger);
-    return;
-  }
-  logger.error("Unable to surface compression management error to user", { sessionId, message });
-}
 async function handleManageCommand(ctx) {
   if (ctx.config.tools.compress.permission === "deny") {
-    await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.", getCurrentParams(ctx.state, ctx.messages, ctx.logger));
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.", ctx.logger);
     return;
   }
   await startManagementTurn({
@@ -2008,10 +1893,9 @@ async function handleManageCommand(ctx) {
 }
 async function stageManagementTurnWithinLock(ctx) {
   const { client, stateManager, state, logger, sessionId, messages } = ctx;
-  const currentParams = getCurrentParams(state, messages, logger);
   if (!state.persistenceSynchronized) {
     return async () => {
-      await sendManageFailureFeedback(client, logger, sessionId, "Compression management could not start because saved session state could not be loaded.", currentParams);
+      await sendIgnoredMessage(client, sessionId, "Compression management could not start because saved session state could not be loaded.", logger);
       return false;
     };
   }
@@ -2060,28 +1944,21 @@ async function stageManagementTurnWithinLock(ctx) {
       triggerMessageId
     });
     return async () => {
-      await sendManageFailureFeedback(client, logger, sessionId, "Compression management could not start: cleanup state could not be saved.", currentParams);
+      await sendIgnoredMessage(client, sessionId, "Compression management could not start: cleanup state could not be saved.", logger);
       return false;
     };
   }
   commitDurableSessionState(state, candidateState);
-  const model = currentParams.providerId && currentParams.modelId ? {
-    providerID: currentParams.providerId,
-    modelID: currentParams.modelId
-  } : undefined;
   return async () => {
-    let promptResult;
     try {
-      promptResult = await promptSession(client, {
+      await promptSession(client, {
         sessionId,
-        agent: currentParams.agent,
-        model,
-        variant: currentParams.variant,
         parts: messageParts,
         messageId: triggerMessageId,
         metadata: { "opencode.context-compress.management": true }
       });
     } catch (err) {
+      const errorMessage = isRecord(err) && typeof err.message === "string" ? err.message : undefined;
       const rollbackResult = await stateManager.runExclusive(sessionId, async () => {
         const currentTurn = state.managementTurns.find((turn) => turn.triggerMessageId === triggerMessageId);
         if (!currentTurn)
@@ -2098,7 +1975,7 @@ async function stageManagementTurnWithinLock(ctx) {
         commitDurableSessionState(state, rollbackState);
         return "removed";
       });
-      logger.error("Manage command failed", { error: err?.message });
+      logger.error("Manage command failed", { error: errorMessage });
       if (rollbackResult === "completed") {
         logger.warn("Manage prompt failed after compression completed; preserving the completed turn marker", {
           sessionId,
@@ -2110,16 +1987,8 @@ async function stageManagementTurnWithinLock(ctx) {
           triggerMessageId
         });
       }
-      await sendManageFailureFeedback(client, logger, sessionId, rollbackResult === "completed" ? `The compression management prompt reported an error after compression completed: ${err?.message || "the prompt failed."} The completed state was preserved.` : rollbackResult === "removed" ? `Compression management could not start: ${err?.message || "the prompt failed."}` : `Compression management could not start: ${err?.message || "the prompt failed."} Its saved cleanup marker could not be removed.`, currentParams);
+      await sendIgnoredMessage(client, sessionId, rollbackResult === "completed" ? `The compression management prompt reported an error after compression completed: ${errorMessage || "the prompt failed."} The completed state was preserved.` : rollbackResult === "removed" ? `Compression management could not start: ${errorMessage || "the prompt failed."}` : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`, logger);
       return false;
-    }
-    const returnedParentId = extractPromptParentIdForLogging(promptResult);
-    if (returnedParentId && returnedParentId !== triggerMessageId) {
-      logger.warn("Manage prompt result parentID differs from the generated trigger ID; keeping the generated ID as the cleanup anchor", {
-        sessionId,
-        triggerMessageId,
-        returnedParentId
-      });
     }
     logger.info("Sent compression context to agent", {
       sessionId,
@@ -2230,9 +2099,6 @@ function positiveFinite(value) {
 function getAssistantContextTokens(tokens) {
   if (!tokens)
     return 0;
-  const reportedTotal = positiveFinite(tokens.total);
-  if (reportedTotal > 0)
-    return reportedTotal;
   return positiveFinite(tokens.input) + positiveFinite(tokens.output) + positiveFinite(tokens.reasoning) + positiveFinite(tokens.cache?.read) + positiveFinite(tokens.cache?.write);
 }
 function resolveAutomaticCompressionThreshold(contextTokens, config, contextLimit) {
@@ -2263,54 +2129,41 @@ function formatThresholdReason(result, ratio) {
 function createAutomaticCompressionEventHandler(client, stateManager, logger, config, acceptsSession = async () => true) {
   const started = new Map;
   return async (input) => {
-    const outer = isRecord2(input) && isRecord2(input.event) ? input.event : input;
-    const event = isRecord2(outer) ? outer : {};
-    const data = isRecord2(event.data) ? event.data : {};
+    const event = isRecord(input) ? input : {};
+    const data = isRecord(event.data) ? event.data : {};
     if (event.type === "session.step.started") {
-      const model = isRecord2(data.model) ? data.model : {};
+      const model = isRecord(data.model) ? data.model : {};
       if (typeof data.assistantMessageID === "string" && typeof data.sessionID === "string") {
         started.set(data.assistantMessageID, {
           sessionID: data.sessionID,
-          agent: typeof data.agent === "string" ? data.agent : undefined,
           providerID: typeof model.providerID === "string" ? model.providerID : undefined,
           modelID: typeof model.id === "string" ? model.id : undefined
         });
       }
       return;
     }
-    const projected = event.type === "session.step.ended" && typeof data.assistantMessageID === "string" ? started.get(data.assistantMessageID) : undefined;
     if (event.type === "session.step.failed") {
       if (typeof data.assistantMessageID === "string")
         started.delete(data.assistantMessageID);
       return;
     }
-    if (event.type === "session.step.ended" && typeof data.assistantMessageID === "string") {
-      started.delete(data.assistantMessageID);
-    }
-    const info = projected ? {
-      id: data.assistantMessageID,
-      sessionID: projected.sessionID,
-      role: "assistant",
-      agent: projected.agent,
-      providerID: projected.providerID,
-      modelID: projected.modelID,
-      time: { completed: Date.now() },
-      tokens: isRecord2(data.tokens) ? data.tokens : undefined
-    } : event.type === "session.step.ended" && typeof data.assistantMessageID === "string" && typeof data.sessionID === "string" ? {
-      id: data.assistantMessageID,
-      sessionID: data.sessionID,
-      role: "assistant",
-      time: { completed: Date.now() },
-      tokens: isRecord2(data.tokens) ? data.tokens : undefined
-    } : isRecord2(event.properties) && isRecord2(event.properties.info) ? event.properties.info : undefined;
+    if (event.type !== "session.step.ended" || typeof data.assistantMessageID !== "string")
+      return;
+    const projected = started.get(data.assistantMessageID);
+    started.delete(data.assistantMessageID);
+    const sessionID = projected?.sessionID ?? (typeof data.sessionID === "string" ? data.sessionID : undefined);
+    if (!sessionID)
+      return;
     if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
       return;
-    if (event.type !== "message.updated" && event.type !== "session.step.ended")
-      return;
-    if (!info || info.role !== "assistant" || info.summary === true || info.error || !info.time?.completed) {
-      return;
-    }
-    if (!await acceptsSession(info.sessionID, outer))
+    const info = {
+      id: data.assistantMessageID,
+      sessionID,
+      providerID: projected?.providerID,
+      modelID: projected?.modelID,
+      tokens: isRecord(data.tokens) ? data.tokens : undefined
+    };
+    if (!await acceptsSession(info.sessionID, event))
       return;
     const state = stateManager.get(info.sessionID);
     const contextTokens = getAssistantContextTokens(info.tokens);
@@ -2394,29 +2247,13 @@ function createAutomaticCompressionEventHandler(client, stateManager, logger, co
         messageId: info.id,
         error: message
       });
-      const shown = await showToast(client, {
-        title: "Automatic Compression",
-        message: `Could not start automatic compression: ${message}`,
-        variant: "error",
-        duration: 8000
-      });
-      if (!shown) {
-        await sendIgnoredMessage(client, info.sessionID, `Could not start automatic compression: ${message}`, {
-          agent: info.agent,
-          providerId: info.providerID,
-          modelId: info.modelID,
-          variant: state.variant
-        }, logger);
-      }
+      await sendIgnoredMessage(client, info.sessionID, `Could not start automatic compression: ${message}`, logger);
     } finally {
       if (attemptedStart) {
         state.autoCompressionStarting = false;
       }
     }
   };
-}
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // lib/config.ts
@@ -2430,11 +2267,17 @@ var DEFAULT_AUTO_COMPRESSION = {
   tokenThreshold: 432000
 };
 function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-  if (layer.protectedTurns !== undefined)
+  if (typeof layer.protectedTurns === "number")
     return layer.protectedTurns;
   if (hasExplicitTopLevel)
     return fallback;
-  return layer.autoCompression?.protectedTurns ?? fallback;
+  const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
+  return typeof autoCompression.protectedTurns === "number" ? autoCompression.protectedTurns : fallback;
+}
+var NOTIFICATIONS = ["off", "minimal", "detailed"];
+var PERMISSIONS = ["ask", "allow", "deny"];
+function isOneOf(values, value) {
+  return values.some((candidate) => candidate === value);
 }
 var VALID_CONFIG_KEYS = new Set([
   "$schema",
@@ -2458,11 +2301,11 @@ var VALID_CONFIG_KEYS = new Set([
 ]);
 function getConfigKeyPaths(obj, prefix = "") {
   const keys = [];
-  for (const key of Object.keys(obj)) {
+  for (const [key, value] of Object.entries(obj)) {
     const fullKey = prefix ? `${prefix}.${key}` : key;
     keys.push(fullKey);
-    if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
-      keys.push(...getConfigKeyPaths(obj[key], fullKey));
+    if (isRecord(value)) {
+      keys.push(...getConfigKeyPaths(value, fullKey));
     }
   }
   return keys;
@@ -2490,8 +2333,7 @@ function validateConfigTypes(config) {
     });
   }
   if (config.notification !== undefined) {
-    const validValues = ["off", "minimal", "detailed"];
-    if (!validValues.includes(config.notification)) {
+    if (!isOneOf(NOTIFICATIONS, config.notification)) {
       errors.push({
         key: "notification",
         expected: '"off" | "minimal" | "detailed"',
@@ -2499,19 +2341,9 @@ function validateConfigTypes(config) {
       });
     }
   }
-  if (config.notificationType !== undefined) {
-    const validValues = ["chat", "toast"];
-    if (!validValues.includes(config.notificationType)) {
-      errors.push({
-        key: "notificationType",
-        expected: '"chat" | "toast"',
-        actual: JSON.stringify(config.notificationType)
-      });
-    }
-  }
   const autoCompression = config.autoCompression;
   if (autoCompression !== undefined) {
-    if (!autoCompression || typeof autoCompression !== "object" || Array.isArray(autoCompression)) {
+    if (!isRecord(autoCompression)) {
       errors.push({
         key: "autoCompression",
         expected: "object",
@@ -2550,7 +2382,7 @@ function validateConfigTypes(config) {
   }
   const commands = config.commands;
   if (commands !== undefined) {
-    if (typeof commands === "object") {
+    if (isRecord(commands)) {
       if (commands.enabled !== undefined && typeof commands.enabled !== "boolean") {
         errors.push({
           key: "commands.enabled",
@@ -2567,25 +2399,23 @@ function validateConfigTypes(config) {
     }
   }
   const tools = config.tools;
-  if (tools) {
-    if (tools.compress) {
-      if (tools.compress.permission !== undefined) {
-        const validValues = ["ask", "allow", "deny"];
-        if (!validValues.includes(tools.compress.permission)) {
-          errors.push({
-            key: "tools.compress.permission",
-            expected: '"ask" | "allow" | "deny"',
-            actual: JSON.stringify(tools.compress.permission)
-          });
-        }
-      }
-      if (tools.compress.showCompression !== undefined && typeof tools.compress.showCompression !== "boolean") {
+  if (isRecord(tools) && isRecord(tools.compress)) {
+    const compress = tools.compress;
+    if (compress.permission !== undefined) {
+      if (!isOneOf(PERMISSIONS, compress.permission)) {
         errors.push({
-          key: "tools.compress.showCompression",
-          expected: "boolean",
-          actual: typeof tools.compress.showCompression
+          key: "tools.compress.permission",
+          expected: '"ask" | "allow" | "deny"',
+          actual: JSON.stringify(compress.permission)
         });
       }
+    }
+    if (compress.showCompression !== undefined && typeof compress.showCompression !== "boolean") {
+      errors.push({
+        key: "tools.compress.showCompression",
+        expected: "boolean",
+        actual: typeof compress.showCompression
+      });
     }
   }
   return errors;
@@ -2620,7 +2450,6 @@ var defaultConfig = {
   enabled: true,
   debug: false,
   notification: "detailed",
-  notificationType: "chat",
   protectedTurns: 3,
   commands: {
     enabled: true
@@ -2688,7 +2517,7 @@ function createDefaultConfig() {
     mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
   }
   const configContent = `{
-  "$schema": "compress.schema.json"
+  "$schema": "https://raw.githubusercontent.com/AidenGeunGeun/opencode-context-compress/main/compress.schema.json"
 }
 `;
   writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
@@ -2702,38 +2531,54 @@ function loadConfigFile(configPath) {
   }
   try {
     const parsed = parse(fileContent);
-    if (parsed === undefined || parsed === null) {
+    if (!isRecord(parsed)) {
       return { data: null, parseError: "Config file is empty or invalid" };
     }
     return { data: parsed };
   } catch (error) {
-    return { data: null, parseError: error.message || "Failed to parse config" };
+    return {
+      data: null,
+      parseError: error instanceof Error && error.message ? error.message : "Failed to parse config"
+    };
   }
 }
 function mergeTools(base, override) {
-  if (!override)
+  if (!isRecord(override))
     return base;
+  const compress = isRecord(override.compress) ? override.compress : {};
   return {
     compress: {
-      permission: override.compress?.permission ?? base.compress.permission,
-      showCompression: override.compress?.showCompression ?? base.compress.showCompression
+      permission: isOneOf(PERMISSIONS, compress.permission) ? compress.permission : base.compress.permission,
+      showCompression: typeof compress.showCompression === "boolean" ? compress.showCompression : base.compress.showCompression
     }
   };
 }
 function mergeCommands(base, override) {
-  if (override === undefined)
+  if (!isRecord(override))
     return base;
   return {
-    enabled: override.enabled ?? base.enabled
+    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled
   };
 }
 function mergeAutoCompression(base, override) {
-  if (override === undefined)
+  if (!isRecord(override))
     return base;
   return {
-    enabled: override.enabled ?? base.enabled,
-    contextWindowRatio: override.contextWindowRatio ?? base.contextWindowRatio,
-    tokenThreshold: override.tokenThreshold ?? base.tokenThreshold
+    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
+    contextWindowRatio: typeof override.contextWindowRatio === "number" ? override.contextWindowRatio : base.contextWindowRatio,
+    tokenThreshold: typeof override.tokenThreshold === "number" ? override.tokenThreshold : base.tokenThreshold
+  };
+}
+function mergeConfigLayer(config, data, hasExplicitProtectedTurns) {
+  return {
+    enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
+    debug: typeof data.debug === "boolean" ? data.debug : config.debug,
+    dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
+    notification: isOneOf(NOTIFICATIONS, data.notification) ? data.notification : config.notification,
+    protectedTurns: resolveProtectedTurnsSetting(data, config.protectedTurns, hasExplicitProtectedTurns),
+    commands: mergeCommands(config.commands, data.commands),
+    autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
+    tools: mergeTools(config.tools, data.tools)
   };
 }
 function deepCloneConfig(config) {
@@ -2759,18 +2604,8 @@ ${result.parseError}
 Using default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.global, result.data, false);
-      config = {
-        enabled: result.data.enabled ?? config.enabled,
-        debug: result.data.debug ?? config.debug,
-        dailyLog: result.data.dailyLog ?? config.dailyLog,
-        notification: result.data.notification ?? config.notification,
-        notificationType: result.data.notificationType ?? config.notificationType,
-        protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-        commands: mergeCommands(config.commands, result.data.commands),
-        autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-        tools: mergeTools(config.tools, result.data.tools)
-      };
-      hasExplicitProtectedTurns = result.data.protectedTurns !== undefined;
+      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
+      hasExplicitProtectedTurns = typeof result.data.protectedTurns === "number";
     }
   } else {
     createDefaultConfig();
@@ -2784,18 +2619,8 @@ ${result.parseError}
 Using global/default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.configDir, result.data, true);
-      config = {
-        enabled: result.data.enabled ?? config.enabled,
-        debug: result.data.debug ?? config.debug,
-        dailyLog: result.data.dailyLog ?? config.dailyLog,
-        notification: result.data.notification ?? config.notification,
-        notificationType: result.data.notificationType ?? config.notificationType,
-        protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-        commands: mergeCommands(config.commands, result.data.commands),
-        autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-        tools: mergeTools(config.tools, result.data.tools)
-      };
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
+      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
+      hasExplicitProtectedTurns = hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
     }
   }
   if (configPaths.project) {
@@ -2807,18 +2632,8 @@ ${result.parseError}
 Using global/default values`);
     } else if (result.data) {
       showConfigValidationWarnings(configPaths.project, result.data, true);
-      config = {
-        enabled: result.data.enabled ?? config.enabled,
-        debug: result.data.debug ?? config.debug,
-        dailyLog: result.data.dailyLog ?? config.dailyLog,
-        notification: result.data.notification ?? config.notification,
-        notificationType: result.data.notificationType ?? config.notificationType,
-        protectedTurns: resolveProtectedTurnsSetting(result.data, config.protectedTurns, hasExplicitProtectedTurns),
-        commands: mergeCommands(config.commands, result.data.commands),
-        autoCompression: mergeAutoCompression(config.autoCompression, result.data.autoCompression),
-        tools: mergeTools(config.tools, result.data.tools)
-      };
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || result.data.protectedTurns !== undefined;
+      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
+      hasExplicitProtectedTurns = hasExplicitProtectedTurns || typeof result.data.protectedTurns === "number";
     }
   }
   return config;
@@ -2930,8 +2745,43 @@ async function handleAutoCommand(ctx) {
       return successMessage;
     });
   }
-  const params = getCurrentParams(ctx.state, ctx.messages, ctx.logger);
-  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, params, ctx.logger);
+  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
+}
+
+// lib/token-utils.ts
+import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
+import { encodingForModel } from "js-tiktoken";
+var _tiktokenEncoder = null;
+function getTiktokenEncoder() {
+  if (!_tiktokenEncoder) {
+    _tiktokenEncoder = encodingForModel("gpt-4o");
+  }
+  return _tiktokenEncoder;
+}
+function isAnthropicProvider(providerId) {
+  if (!providerId)
+    return false;
+  return providerId.toLowerCase().includes("anthropic");
+}
+function getCurrentProviderId(state, messages) {
+  return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
+}
+function countTokens(text, providerId) {
+  if (!text)
+    return 0;
+  try {
+    if (isAnthropicProvider(providerId)) {
+      return anthropicCountTokens(text);
+    }
+    return getTiktokenEncoder().encode(text).length;
+  } catch {
+    return Math.ceil(text.length / 4);
+  }
+}
+function estimateTokensBatch(texts, providerId) {
+  if (texts.length === 0)
+    return 0;
+  return countTokens(texts.join(" "), providerId);
 }
 
 // lib/commands/context.ts
@@ -3088,10 +2938,9 @@ function formatContextMessage(breakdown) {
 }
 async function handleContextCommand(ctx) {
   const { client, state, logger, sessionId, messages } = ctx;
-  const params = getCurrentParams(state, messages, logger);
-  const breakdown = analyzeTokens(state, messages, params.providerId);
+  const breakdown = analyzeTokens(state, messages, getCurrentProviderId(state, messages));
   const message = formatContextMessage(breakdown);
-  await sendIgnoredMessage(client, sessionId, message, params, logger);
+  await sendIgnoredMessage(client, sessionId, message, logger);
 }
 
 // lib/commands/help.ts
@@ -3111,35 +2960,33 @@ function formatHelpMessage() {
 `);
 }
 async function handleHelpCommand(ctx) {
-  const { client, state, logger, sessionId, messages } = ctx;
+  const { client, logger, sessionId } = ctx;
   const message = formatHelpMessage();
-  const params = getCurrentParams(state, messages, logger);
-  await sendIgnoredMessage(client, sessionId, message, params, logger);
+  await sendIgnoredMessage(client, sessionId, message, logger);
   logger.info("Help command executed");
 }
 
 // lib/commands/squash.ts
 function extractSquashCommandResidual(args) {
-  const residual = (args || "").replace(/^\s*squash\b/i, "").replace(/^[\s:;,.|\-]+/, "").trim();
+  const residual = (args || "").replace(/^\s*squash\b/i, "").replace(/^[\s:;,.|-]+/, "").trim();
   return residual || undefined;
 }
 async function handleSquashCommand(ctx) {
-  const currentParams = getCurrentParams(ctx.state, ctx.messages, ctx.logger);
   if (ctx.config.tools.compress.permission === "deny") {
-    await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.", currentParams);
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.", ctx.logger);
     return;
   }
   const staged = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
     if (!ctx.state.persistenceSynchronized) {
       return async () => {
-        await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Block squash could not start because saved session state could not be loaded.", currentParams);
+        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash could not start because saved session state could not be loaded.", ctx.logger);
         return false;
       };
     }
     const active = findActiveManagementTurn(ctx.state, ctx.messages);
     if (active && active.turn.source !== "squash") {
       return async () => {
-        await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Block squash could not start because a compression management turn is still active.", currentParams);
+        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash could not start because a compression management turn is still active.", ctx.logger);
         return false;
       };
     }
@@ -3149,13 +2996,13 @@ async function handleSquashCommand(ctx) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return async () => {
-        await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, `Block squash could not start: ${message}`, currentParams);
+        await sendIgnoredMessage(ctx.client, ctx.sessionId, `Block squash could not start: ${message}`, ctx.logger);
         return false;
       };
     }
     if (blockCount < 2) {
       return async () => {
-        await sendManageFailureFeedback(ctx.client, ctx.logger, ctx.sessionId, "Block squash requires at least two existing compressed blocks.", currentParams);
+        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash requires at least two existing compressed blocks.", ctx.logger);
         return false;
       };
     }
@@ -3189,14 +3036,13 @@ function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTim
 `);
 }
 async function handleStatsCommand(ctx) {
-  const { client, state, logger, sessionId, messages } = ctx;
+  const { client, state, logger, sessionId } = ctx;
   const sessionTokens = state.stats.totalCompressTokens;
   const sessionTools = state.compressed.toolIds.size;
   const sessionMessages = state.compressed.messageIds.size;
   const allTime = await loadAllSessionStats(logger);
   const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime);
-  const params = getCurrentParams(state, messages, logger);
-  await sendIgnoredMessage(client, sessionId, message, params, logger);
+  await sendIgnoredMessage(client, sessionId, message, logger);
   logger.info("Stats command executed", {
     sessionTokens,
     sessionTools,
@@ -3225,7 +3071,7 @@ async function handleCompressCommand(input, dependencies) {
     return true;
   }
   if (subcommand === "stats") {
-    await handleStatsCommand({ client, state, logger, sessionId: input.sessionID, messages });
+    await handleStatsCommand({ client, state, logger, sessionId: input.sessionID });
     return true;
   }
   if (subcommand === "manage") {
@@ -3262,12 +3108,11 @@ async function handleCompressCommand(input, dependencies) {
       config,
       logger,
       sessionId: input.sessionID,
-      messages,
       arguments: args.slice(1)
     });
     return true;
   }
-  await handleHelpCommand({ client, state, logger, sessionId: input.sessionID, messages });
+  await handleHelpCommand({ client, logger, sessionId: input.sessionID });
   return true;
 }
 
@@ -3339,7 +3184,7 @@ class Logger {
       await this.ensureLogDir();
       const timestamp = new Date().toISOString();
       const dataStr = this.formatData(data);
-      const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? " | " + dataStr : ""}
+      const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? ` | ${dataStr}` : ""}
 `;
       const dailyLogDir = join3(this.logDir, "daily");
       if (!existsSync3(dailyLogDir)) {
@@ -3368,24 +3213,28 @@ class Logger {
     return this.write("ERROR", component, message, data);
   }
   minimizeForDebug(messages) {
-    return messages.map((msg) => {
+    return messages.map((message) => {
+      const msg = isRecord(message) ? message : {};
+      const info = isRecord(msg.info) ? msg.info : {};
+      const time = isRecord(info.time) ? info.time : {};
       const minimized = {
-        role: msg.info?.role ?? msg.role
+        role: info.role ?? msg.role
       };
-      if (msg.info?.time?.created) {
-        minimized.time = msg.info.time.created;
+      if (time.created) {
+        minimized.time = time.created;
       }
-      if (msg.info?.tokens) {
+      if (isRecord(info.tokens)) {
         minimized.tokens = {
-          input: msg.info.tokens.input,
-          output: msg.info.tokens.output,
-          reasoning: msg.info.tokens.reasoning,
-          cache: msg.info.tokens.cache
+          input: info.tokens.input,
+          output: info.tokens.output,
+          reasoning: info.tokens.reasoning,
+          cache: info.tokens.cache
         };
       }
       const parts = msg.parts ?? msg.content;
-      if (parts) {
-        minimized.parts = parts.map((part) => {
+      if (Array.isArray(parts)) {
+        minimized.parts = parts.map((item) => {
+          const part = isRecord(item) ? item : {};
           if (part.type === "step-start" || part.type === "step-finish") {
             return null;
           }
@@ -3401,22 +3250,23 @@ class Logger {
             };
           }
           if (part.type === "tool") {
+            const state = isRecord(part.state) ? part.state : {};
             const toolPart = {
               type: "tool",
               tool: part.tool,
               callID: part.callID
             };
-            if (part.state?.status) {
-              toolPart.status = part.state.status;
+            if (state.status) {
+              toolPart.status = state.status;
             }
-            if (part.state?.input) {
-              toolPart.input = part.state.input;
+            if (state.input) {
+              toolPart.input = state.input;
             }
-            if (part.state?.output) {
-              toolPart.output = part.state.output;
+            if (state.output) {
+              toolPart.output = state.output;
             }
-            if (part.state?.error) {
-              toolPart.error = part.state.error;
+            if (state.error) {
+              toolPart.error = state.error;
             }
             return toolPart;
           }
@@ -3556,7 +3406,10 @@ function transformV2Messages(raw, state, logger, modelMessages) {
       if (message.info.role === "assistant")
         return transformToolPair(messages, message, state);
       if (message.info.role === "user" && text(message) !== text(source)) {
-        return messages.map((item) => ({ ...item, content: [{ type: "text", text: text(message) }] }));
+        return messages.map((item) => ({
+          ...item,
+          content: [{ type: "text", text: text(message) }]
+        }));
       }
       return messages;
     }),
@@ -3595,7 +3448,9 @@ function transformToolPair(messages, target, state) {
         return [{ ...part, input: structuredClone(tool.state.input) }];
       }
       if (part.type === "tool-result" && state.compressed.toolIds.has(tool.callID) && tool.state.status === "completed" && tool.tool !== "question" && tool.tool !== "edit" && tool.tool !== "write") {
-        return [{ ...part, result: { type: "text", value: String(tool.state.output ?? "") } }];
+        return [
+          { ...part, result: { type: "text", value: String(tool.state.output ?? "") } }
+        ];
       }
       return [part];
     });
@@ -3676,7 +3531,11 @@ async function inheritForkCompression(session, client, state, logger, childMessa
   const turns = parentState.state.managementTurns.filter((turn) => {
     if (!mapped.has(turn.triggerMessageId))
       return false;
-    return [turn.triggeredByMessageId, turn.completedMessageId, ...turn.protectedMessageIds ?? []].every((id) => !id || mapped.has(id));
+    return [
+      turn.triggeredByMessageId,
+      turn.completedMessageId,
+      ...turn.protectedMessageIds ?? []
+    ].every((id) => !id || mapped.has(id));
   });
   const compressedMessages = new Set(summaries.flatMap((summary) => summary.messageIds.map(messageID)));
   const childTools = new Set(childMessages.slice(0, parentPrefix.length).filter((message) => compressedMessages.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
@@ -3832,7 +3691,10 @@ function createCompressTool(ctx) {
   return {
     description: COMPRESS_TOOL_DESCRIPTION,
     args: {
-      summary: { type: "string", description: "Compact structured continuation handoff described by this tool's instructions" },
+      summary: {
+        type: "string",
+        description: "Compact structured continuation handoff described by this tool's instructions"
+      },
       topic: { type: "string", description: "Short block title, usually 3-5 words" }
     },
     async execute(args, toolCtx) {
@@ -3927,19 +3789,13 @@ function createCompressTool(ctx) {
           summary,
           estimatedCompressedTokens,
           storedBlockId: storedBlock.label,
-          continueTask: boundary.managementTurn?.source === "automatic",
-          currentParams: {
-            providerId: state.modelContext?.providerId,
-            modelId: state.modelContext?.modelId,
-            agent: toolCtx.agent,
-            variant: state.variant
-          }
+          continueTask: boundary.managementTurn?.source === "automatic"
         };
       });
       if (outcome.kind === "empty") {
         return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
       }
-      await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.currentParams, outcome.estimatedCompressedTokens);
+      await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.estimatedCompressedTokens);
       const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
       return receipt;
     }
@@ -3982,7 +3838,10 @@ function createSquashTool(ctx) {
     args: {
       from: { type: "string", description: "Inclusive current block label, for example b1" },
       to: { type: "string", description: "Inclusive current block label, for example b12" },
-      summary: { type: "string", description: "Truthful replacement for only the selected blocks" },
+      summary: {
+        type: "string",
+        description: "Truthful replacement for only the selected blocks"
+      },
       topic: { type: "string", description: "Short replacement block title" }
     },
     async execute(args, toolCtx) {
@@ -4076,7 +3935,7 @@ function createSquashTool(ctx) {
   };
 }
 // lib/plugin.ts
-var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction clears every compression block. Set `"compaction": { "auto": false }` ' + "in opencode.jsonc.";
+var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' + "in your OpenCode config.";
 async function setup(context) {
   const client = pluginClient(context.session);
   const config = getConfig({ directory: context.location.directory });
@@ -4151,8 +4010,6 @@ async function setup(context) {
     const modelContext = await resolveModelContext(context, event.model);
     let transformed;
     await stateManager.runExclusive(event.sessionID, async () => {
-      state.currentAgent = event.agent;
-      state.variant = event.model.variant;
       if (modelContext)
         state.modelContext = modelContext;
       let syncResult = await checkSession(state, logger, messages);
@@ -4209,8 +4066,8 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
       return;
     try {
       await automatic(item.value);
-      const event = isRecord3(item.value) ? item.value : {};
-      const data = isRecord3(event.data) ? event.data : {};
+      const event = isRecord(item.value) ? item.value : {};
+      const data = isRecord(event.data) ? event.data : {};
       if (event.type === "session.forked" && typeof data.sessionID === "string") {
         if (!await ownsSession(context, data.sessionID, event))
           continue;
@@ -4230,7 +4087,8 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
         await promptSession(client, {
           sessionId: data.sessionID,
           parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
-          noReply: true
+          noReply: true,
+          messageId: generateNativeCompactionNoticeId(data.sessionID, event)
         });
         continue;
       }
@@ -4248,15 +4106,12 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
   }
 }
 async function ownsSession(context, sessionID, event) {
-  const ref = isRecord3(event) && isRecord3(event.location) ? event.location : undefined;
+  const ref = isRecord(event) && isRecord(event.location) ? event.location : undefined;
   if (ref && typeof ref.directory === "string") {
     return ref.directory === context.location.directory && ref.workspaceID === context.location.workspaceID;
   }
   const location = (await context.session.get({ sessionID })).location;
   return location.directory === context.location.directory;
-}
-function isRecord3(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // index.ts
@@ -4268,5 +4123,5 @@ export {
   wt_default as default
 };
 
-//# debugId=5E9445E318FB79C464756E2164756E21
+//# debugId=A81397AACB11810064756E2164756E21
 //# sourceMappingURL=index.js.map
