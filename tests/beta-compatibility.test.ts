@@ -193,50 +193,6 @@ describe("beta projected message compatibility", () => {
         }
     })
 
-    it("leaves history before the latest completed native compaction out of selection", () => {
-        const [oldUser, oldAssistant, owner] = projected()
-        const nativeCompaction = (id: string, status: string) => ({
-            id,
-            type: "compaction",
-            status,
-            summary: "Native summary",
-            time: { created: 3 },
-        })
-        const later = {
-            id: "later-user",
-            type: "user",
-            text: "continue",
-            files: [],
-            time: { created: 6 },
-        }
-        const state = new SessionStateManager().get("session")
-
-        const completed = adaptProjectedMessages("session", [
-            oldUser,
-            oldAssistant,
-            nativeCompaction("native", "completed"),
-            owner,
-            later,
-        ])
-        assert.deepEqual(
-            selectDeterministicCompressionSpan(completed, state, logger, 0).messageIds,
-            ["native", "owner", "later-user"],
-        )
-
-        const failed = adaptProjectedMessages("session", [
-            oldUser,
-            oldAssistant,
-            nativeCompaction("native", "failed"),
-            owner,
-            later,
-        ])
-        assert.ok(
-            selectDeterministicCompressionSpan(failed, state, logger, 0).messageIds.includes(
-                "old-user",
-            ),
-        )
-    })
-
     it("keeps attached media objects intact", () => {
         const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")

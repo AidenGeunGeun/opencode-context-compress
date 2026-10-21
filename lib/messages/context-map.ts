@@ -1,6 +1,5 @@
 import type { Logger } from "../logger.js"
 import type { SessionState, WithParts } from "../state/index.js"
-import { isCompletedNativeCompaction } from "../state/utils.js"
 import {
     stripV2MachineryForCompressionSelection,
     transformMessagesForSearch,
@@ -41,12 +40,6 @@ export function selectDeterministicCompressionSpan(
     logger: Logger,
     protectedTurns: number,
 ): DeterministicCompressionSpan {
-    // History before the latest native compaction is already summarized by the host.
-    // Folding it would make lifecycle reconciliation retire the new block at once.
-    const latestCompactionIndex = rawHistory.findLastIndex(isCompletedNativeCompaction)
-    const preCompactionMessageIds = new Set(
-        rawHistory.slice(0, Math.max(0, latestCompactionIndex)).map((message) => message.info.id),
-    )
     const search = transformMessagesForSearch(rawHistory, state, logger)
     const transformed = stripV2MachineryForCompressionSelection(search.transformed, state)
     const syntheticMap = search.syntheticMap
@@ -80,7 +73,6 @@ export function selectDeterministicCompressionSpan(
         .slice(newestBlockIndex + 1)
         .filter(
             (message) =>
-                !preCompactionMessageIds.has(message.info.id) &&
                 !syntheticMap.has(message.info.id) &&
                 !existingBlockMessageIds.has(message.info.id),
         )
