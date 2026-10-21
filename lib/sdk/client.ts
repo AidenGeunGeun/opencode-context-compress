@@ -49,8 +49,9 @@ export async function promptSession(
     input: SessionPromptInput,
 ): Promise<unknown> {
     const text = input.parts
-        .filter((part) => part.type === "text" && typeof part.text === "string")
-        .map((part) => part.text as string)
+        .flatMap((part) =>
+            part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+        )
         .join("\n\n")
     if (!text) throw new Error("Session prompt requires text")
 

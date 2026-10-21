@@ -90,8 +90,11 @@ function resolveOwner(
 
     const resultOwners = new Set(
         message.content
-            .filter((part) => part.type === "tool-result" && typeof part.id === "string")
-            .map((part) => tools.get(part.id as string))
+            .flatMap((part) =>
+                part.type === "tool-result" && typeof part.id === "string"
+                    ? [tools.get(part.id)]
+                    : [],
+            )
             .filter((owner): owner is string => owner !== undefined),
     )
     if (resultOwners.size === 1 && message.content.every((part) => part.type === "tool-result")) {
@@ -164,7 +167,8 @@ function text(message: WithParts) {
 
 function textFromModel(message: ModelMessage) {
     return message.content
-        .filter((part) => part.type === "text" && typeof part.text === "string")
-        .map((part) => part.text as string)
+        .flatMap((part) =>
+            part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+        )
         .join("\n")
 }

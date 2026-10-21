@@ -87,7 +87,7 @@ function analyzeTokens(
     let firstAssistant: AssistantMessage | undefined
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
-            const assistantInfo = msg.info as AssistantMessage
+            const assistantInfo = msg.info
             if (
                 (assistantInfo.tokens?.input ?? 0) > 0 ||
                 (assistantInfo.tokens?.cache?.read ?? 0) > 0
@@ -102,7 +102,7 @@ function analyzeTokens(
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]
         if (msg.info.role === "assistant") {
-            const assistantInfo = msg.info as AssistantMessage
+            const assistantInfo = msg.info
             if ((assistantInfo.tokens?.output ?? 0) > 0) {
                 lastAssistant = assistantInfo
                 break
