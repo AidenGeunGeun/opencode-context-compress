@@ -967,7 +967,10 @@ function user(sessionID, id, created, message, selection) {
       variant: selection?.model?.variant,
       time: { created }
     },
-    parts: typeof message.text === "string" && message.text.length > 0 ? [{ type: "text", text: message.text }] : []
+    parts: [
+      ...typeof message.text === "string" && message.text.length > 0 ? [{ type: "text", text: message.text }] : [],
+      ...(Array.isArray(message.files) ? message.files : []).filter(isRecord).map((file) => ({ type: "file", mime: file.mime, filename: file.name }))
+    ]
   };
 }
 function synthetic(sessionID, id, created, message, selection) {
@@ -4326,5 +4329,5 @@ export {
   cc_work_default as default
 };
 
-//# debugId=C4D3287934538A7364756E2164756E21
+//# debugId=D670CBF55B8D484164756E2164756E21
 //# sourceMappingURL=index.js.map

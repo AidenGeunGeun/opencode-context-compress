@@ -59,9 +59,16 @@ function user(sessionID, id, created, message, selection) {
             variant: selection?.model?.variant,
             time: { created },
         },
-        parts: typeof message.text === "string" && message.text.length > 0
-            ? [{ type: "text", text: message.text }]
-            : [],
+        // Attachments count as content: without them an image sent with no text looked empty, and the
+        // transform dropped it as ignored, so the model never saw the image.
+        parts: [
+            ...(typeof message.text === "string" && message.text.length > 0
+                ? [{ type: "text", text: message.text }]
+                : []),
+            ...(Array.isArray(message.files) ? message.files : [])
+                .filter(isRecord)
+                .map((file) => ({ type: "file", mime: file.mime, filename: file.name })),
+        ],
     };
 }
 function synthetic(sessionID, id, created, message, selection) {
