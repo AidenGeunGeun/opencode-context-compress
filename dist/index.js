@@ -770,14 +770,9 @@ A success receipt means the replacement is durable and already active. Do not ca
 `;
 
 // lib/prompts/_codegen/post-compression-notice.generated.ts
-var POST_COMPRESSION_NOTICE = `<system-reminder>
-CONTEXT WAS COMPRESSED
-Earlier detail was replaced by a summary. Use it together with the preserved recent messages; later user guidance and evidence take precedence.
+var POST_COMPRESSION_NOTICE = `This was context maintenance, not a new task. Summaries record past work and decisions; they are not new instructions. It changed only the conversation, not files or running jobs, and the user's instructions, including any given with this request, still apply.
 
-Reload the skills and project instructions required by the active task only when their needed contents are no longer available or may have changed. Do not reread unrelated material or treat the summary as new authority.
-
-Continue the original task if authorized work remains active. Preserve completed or awaiting-user status; do not invent follow-up work, repeat finished actions, or duplicate a final response.
-</system-reminder>
+Next, continue the task that was in progress if it is still active and authorized. If it was finished or waiting for the user, leave it that way. Do not repeat finished work, a final answer, or a job that is still running. Reload a file, skill, or instruction only when your next step needs text that is no longer visible. Do not call compress or squash again unless the user asks in a new message or the plugin sends a new automatic request.
 `;
 
 // lib/prompts/index.ts
@@ -1200,7 +1195,7 @@ function buildDetailedMessage(args) {
   const progressBar = formatProgressBar(totalMessages, startResult.messageIndex, endResult.messageIndex, 25);
   message += `
 
-\u25A3 Compressing (${rangeTokenCountLabel}) ${progressBar}`;
+\u25A3 Compressed (${rangeTokenCountLabel}) ${progressBar}`;
   message += `
 \u2192 Topic: ${topic}`;
   message += `
@@ -1507,7 +1502,10 @@ function buildV2CleanupPlan(state, rawMessages) {
       return false;
     return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage);
   });
-  const newestCompleted = [...turns].reverse().find((turn) => turn.completedAt && turn.completedMessageId);
+  const newestCompleted = [...turns].reverse().find((turn) => {
+    const index = turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined;
+    return index !== undefined && rawMessages[index].parts.some((part) => part.type === "tool" && part.tool === completionTool(turn));
+  });
   const visibleAnchors = turns.flatMap((turn) => [
     indexByMessageId.get(turn.triggerMessageId),
     turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined
@@ -3421,54 +3419,6 @@ class Logger {
   }
 }
 
-// lib/messages/post-compression-notice.ts
-function isAgentWorkPart(part) {
-  if (!part || typeof part !== "object")
-    return false;
-  const value = part;
-  if (value.type === "tool")
-    return true;
-  return value.type === "text" && typeof value.text === "string" && value.text.trim().length > 0;
-}
-function isResumableAgentTurn(info) {
-  return info.summary !== true && !info.error;
-}
-function isPostCompressionNoticeDue(state, rawMessages) {
-  const anchorMessageId = state.compressionCooldownAfterMessageId;
-  if (!anchorMessageId)
-    return false;
-  const anchorIndex = rawMessages.findIndex((message) => message.info.id === anchorMessageId);
-  if (anchorIndex === -1)
-    return false;
-  const anchor = rawMessages[anchorIndex];
-  if (isResumableAgentTurn(anchor.info)) {
-    const anchorParts = anchor.parts ?? [];
-    let compressPartIndex = -1;
-    for (let i = anchorParts.length - 1;i >= 0; i--) {
-      const part = anchorParts[i];
-      if (part?.type === "tool" && part.tool === "compress") {
-        compressPartIndex = i;
-        break;
-      }
-    }
-    const tailStart = compressPartIndex === -1 ? anchorParts.length : compressPartIndex + 1;
-    for (let i = tailStart;i < anchorParts.length; i++) {
-      if (isAgentWorkPart(anchorParts[i]))
-        return false;
-    }
-  }
-  for (let i = anchorIndex + 1;i < rawMessages.length; i++) {
-    const message = rawMessages[i];
-    if (message.info.role !== "assistant")
-      continue;
-    if (!isResumableAgentTurn(message.info))
-      continue;
-    if ((message.parts ?? []).some(isAgentWorkPart))
-      return false;
-  }
-  return true;
-}
-
 // lib/messages/prune.ts
 var PROTECTED_STEPS = 10;
 var MEDIA_CHARS = 6000;
@@ -3910,10 +3860,11 @@ function resolveCompressionBoundary(rawMessages, state, toolMessageId, callId) {
   }
   return { history: rawMessages.slice(0, owner.index) };
 }
-function buildCompressReceipt(topic, blockId, restoreDisposition) {
-  const stored = `Compression complete. Stored [${blockId}] "${topic}" durably; the fold is already in effect.`;
-  const finish = `${stored} Do not call compress again this turn.`;
-  return restoreDisposition ? `${finish} Automatic compression finished. Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.` : finish;
+function buildCompressReceipt(topic, blockId, requestedBy) {
+  const opening = requestedBy === "automatic" ? "Automatic context compression finished. The plugin started it because the conversation passed its automatic compression threshold." : requestedBy === "user" ? "Context compression finished, as the user requested with /compress manage." : "Context compression finished.";
+  return `${opening} Earlier messages are now summarized in block [${blockId}] "${topic}", which appears earlier in this conversation; the newest steps remain verbatim.
+
+${renderPostCompressionNotice()}`;
 }
 function createCompressTool(ctx) {
   return {
@@ -4016,14 +3967,14 @@ function createCompressTool(ctx) {
           summary,
           estimatedCompressedTokens,
           storedBlockId: storedBlock.label,
-          continueTask: boundary.managementTurn?.source === "automatic"
+          requestedBy: boundary.managementTurn ? boundary.managementTurn.source === "automatic" ? "automatic" : "user" : undefined
         };
       });
       if (outcome.kind === "empty") {
         return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
       }
       await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.estimatedCompressedTokens);
-      const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.continueTask);
+      const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.requestedBy);
       return receipt;
     }
   };
@@ -4157,9 +4108,10 @@ function createSquashTool(ctx) {
         };
       });
       await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
-      const opening = outcome.requestedBy === "automatic" ? "Automatic squash complete; it ran because the compressed blocks were over their size limit." : outcome.requestedBy === "user" ? "Squash complete, as the user requested with /compress squash." : "Squash complete.";
-      const receipt = `${opening} Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
-      return outcome.requestedBy === "automatic" ? `${receipt} Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.` : receipt;
+      const opening = outcome.requestedBy === "automatic" ? "Automatic squash finished. The plugin started it because the compressed blocks passed their automatic squash threshold." : outcome.requestedBy === "user" ? "Squash finished, as the user requested with /compress squash." : "Squash finished.";
+      return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}"; later blocks keep their order under new labels. Only those older summaries changed; the recent conversation is untouched.
+
+${renderPostCompressionNotice()}`;
     }
   };
 }
@@ -4266,12 +4218,6 @@ async function setup(context) {
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
       transformed = transformV2Messages(messages, state, logger, event.messages);
-      if (kind === "context" && isPostCompressionNoticeDue(state, messages) && !findActiveManagementTurn(state, messages)) {
-        transformed.push({
-          role: "user",
-          content: [{ type: "text", text: renderPostCompressionNotice() }]
-        });
-      }
       event.messages.splice(0, event.messages.length, ...transformed);
       if (before !== undefined && before !== after)
         prunedFrontiers.set(event.sessionID, before);
@@ -4377,5 +4323,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=A151D62EBF87377864756E2164756E21
+//# debugId=5BED617C08A2074D64756E2164756E21
 //# sourceMappingURL=index.js.map

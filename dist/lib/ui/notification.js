@@ -23,7 +23,7 @@ function buildDetailedMessage(args) {
     const rangeTokenCount = rangeTokenEstimate ?? state.stats.compressTokenCounter;
     const rangeTokenCountLabel = `~${formatTokenCount(rangeTokenCount)}`;
     const progressBar = formatProgressBar(totalMessages, startResult.messageIndex, endResult.messageIndex, 25);
-    message += `\n\n▣ Compressing (${rangeTokenCountLabel}) ${progressBar}`;
+    message += `\n\n▣ Compressed (${rangeTokenCountLabel}) ${progressBar}`;
     message += `\n→ Topic: ${topic}`;
     message += `\n→ Items: ${itemCount} ${itemCount === 1 ? "entry" : "entries"}`;
     message += toolIds.length > 0 ? ` and ${toolIds.length} tools condensed` : " condensed";
