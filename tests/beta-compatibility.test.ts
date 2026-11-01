@@ -122,7 +122,7 @@ describe("beta projected message compatibility", () => {
                 topic: "Earlier work",
             },
         ]
-        const transformed = transformV2Messages(raw, state, logger, [
+        const transformed = transformV2Messages(raw, state, [
             { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
             {
                 id: "old-assistant",
@@ -176,7 +176,7 @@ describe("beta projected message compatibility", () => {
                 { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
             ]
 
-            const transformed = transformV2Messages(raw, state, logger, modelMessages)
+            const transformed = transformV2Messages(raw, state, modelMessages)
 
             assert.equal(transformed.length, 2, anchor.type)
             assert.equal(transformed[0].role, "user")
@@ -185,8 +185,8 @@ describe("beta projected message compatibility", () => {
                 /\[b0\].*Earlier work was completed/s,
             )
             assert.deepEqual(transformed[1], modelMessages[1])
-            assert.deepEqual(transformV2Messages(raw, state, logger, modelMessages), transformed)
-            assert.deepEqual(selectDeterministicCompressionSpan(raw, state, logger, 0).messageIds, [
+            assert.deepEqual(transformV2Messages(raw, state, modelMessages), transformed)
+            assert.deepEqual(selectDeterministicCompressionSpan(raw, state, 0).messageIds, [
                 "later-model-change",
                 "owner",
             ])
@@ -201,7 +201,7 @@ describe("beta projected message compatibility", () => {
             source = { type: "base64", data: "iVBORw0KGgo=" }
         }
         const media = new Asset()
-        const transformed = transformV2Messages(raw, state, logger, [
+        const transformed = transformV2Messages(raw, state, [
             {
                 id: "old-user",
                 role: "user",
@@ -247,10 +247,7 @@ describe("beta projected message compatibility", () => {
             owner,
         ]
 
-        assert.deepEqual(transformV2Messages(raw, state, logger, modelMessages).slice(-2), [
-            marker,
-            owner,
-        ])
+        assert.deepEqual(transformV2Messages(raw, state, modelMessages).slice(-2), [marker, owner])
 
         state.compressed.messageIds = new Set([
             "old-user",
@@ -265,7 +262,7 @@ describe("beta projected message compatibility", () => {
                 summary: "Earlier work was completed.",
             },
         ]
-        const folded = transformV2Messages(raw, state, logger, modelMessages)
+        const folded = transformV2Messages(raw, state, modelMessages)
         assert.equal(folded.length, 1)
         assert.match(String(folded[0].content[0].text), /\[b0\]/)
     })
@@ -282,20 +279,15 @@ describe("beta projected message compatibility", () => {
             },
         ])
         const image = { id: "image-only", role: "user", content: [{ type: "media", media: {} }] }
-        const transformed = transformV2Messages(
-            raw,
-            new SessionStateManager().get("session"),
-            logger,
-            [
-                { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
-                {
-                    id: "old-assistant",
-                    role: "assistant",
-                    content: [{ type: "text", text: "older result" }],
-                },
-                image,
-            ],
-        )
+        const transformed = transformV2Messages(raw, new SessionStateManager().get("session"), [
+            { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
+            {
+                id: "old-assistant",
+                role: "assistant",
+                content: [{ type: "text", text: "older result" }],
+            },
+            image,
+        ])
 
         assert.deepEqual(transformed.at(-1), image)
     })
@@ -303,7 +295,7 @@ describe("beta projected message compatibility", () => {
     it("preserves idless user and system inputs added by transient generation", () => {
         const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")
-        const transformed = transformV2Messages(raw, state, logger, [
+        const transformed = transformV2Messages(raw, state, [
             { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
             {
                 id: "old-assistant",

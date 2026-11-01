@@ -508,7 +508,7 @@ describe("squash tool", () => {
             assert.equal(result.state.compressed.messageIds.size, 40)
 
             const transformed = structuredClone(result.messages)
-            applyCompressTransforms(result.state, logger, transformed)
+            applyCompressTransforms(result.state, transformed)
             const blockTexts = transformed
                 .map((message) => partText(message.parts[0]))
                 .filter(
@@ -545,7 +545,7 @@ describe("squash tool", () => {
                 ...structuredClone(result.messages),
                 textMessage("later-user", result.sessionId, "user", "Continue normally"),
             ]
-            applyCompressTransforms(result.state, logger, laterMessages)
+            applyCompressTransforms(result.state, laterMessages)
             assert.equal(
                 laterMessages.some((message) => message.info.id === "squash-trigger"),
                 false,

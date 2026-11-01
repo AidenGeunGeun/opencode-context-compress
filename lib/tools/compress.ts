@@ -201,7 +201,6 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                 const span = selectDeterministicCompressionSpan(
                     boundary.history,
                     state,
-                    logger,
                     ctx.config.protectedTurns,
                 )
                 if (span.messages.length === 0) {

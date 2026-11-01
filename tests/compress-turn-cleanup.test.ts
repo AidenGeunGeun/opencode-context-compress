@@ -179,7 +179,7 @@ describe("compress-turn machinery cleanup", () => {
             textMessage("next-user", sessionId, "Next normal request"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.equal(messages.length, 2)
         assert.equal(partText(messages[0].parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX), true)
@@ -216,7 +216,7 @@ describe("compress-turn machinery cleanup", () => {
             textMessage("normal-after", sessionId, "Normal context after"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -251,7 +251,7 @@ describe("compress-turn machinery cleanup", () => {
             textMessage("post", sessionId, "After failure"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -312,7 +312,7 @@ describe("compress-turn machinery cleanup", () => {
             state.managementTurns.push({ triggerMessageId: manage })
         }
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         const serialized = messageTexts(messages)
         assert.equal(
@@ -348,7 +348,7 @@ describe("compress-turn machinery cleanup", () => {
             ignoredUserMessage("current-notification", sessionId, "Ignored in-turn notification"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -381,7 +381,7 @@ describe("compress-turn machinery cleanup", () => {
             textMessage("next", sessionId, "Next turn"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -427,8 +427,8 @@ describe("compress-turn machinery cleanup", () => {
             textMessage("tail-u-2", sessionId, "Second active-tail user"),
         ]
 
-        applyCompressTransforms(state, logger, baseMessages)
-        applyCompressTransforms(state, logger, laterMessages)
+        applyCompressTransforms(state, baseMessages)
+        applyCompressTransforms(state, laterMessages)
 
         assert.equal(
             serializeProviderPrefix(baseMessages, "tail-u-1"),
@@ -549,7 +549,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("slice3-next", sessionId, "Continue with the next dashboard task"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -591,7 +591,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("legacy-mixed-next", sessionId, "Continue with the launch checklist"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -637,7 +637,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("legacy-incomplete-next", sessionId, "Continue with the launch checklist"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -679,7 +679,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("wips-next", sessionId, "Continue phase 1A work"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -712,7 +712,7 @@ describe("legacy residue repair by content signature", () => {
             ),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -750,7 +750,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("neg-user-3", sessionId, "Compress again."),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -795,7 +795,7 @@ describe("legacy residue repair by content signature", () => {
             textMessage("normal-next-user", sessionId, "Now add the follow-up"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.equal(
             messages.some((message: WithParts) => message.info.id === "normal-final"),
@@ -869,7 +869,7 @@ describe("legacy residue repair by content signature", () => {
             }
         }
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         const serialized = messageTexts(messages)
         assert.equal(
@@ -927,7 +927,7 @@ describe("atomic compress completion cleanup", () => {
             statusNotificationMessage("notif-1", sessionId, "5.0K tokens"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.equal(messages.length, 2)
         assert.equal(partText(messages[0].parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX), true)
@@ -978,7 +978,7 @@ describe("atomic compress completion cleanup", () => {
             ),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -1028,7 +1028,7 @@ describe("atomic compress completion cleanup", () => {
             statusNotificationMessage("new-notif", sessionId, "2.0K tokens"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -1075,7 +1075,7 @@ describe("atomic compress completion cleanup", () => {
         ]
         toolInput(messages[2].parts[0]).summary = submittedSummary
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -1164,7 +1164,7 @@ describe("prospective Version 2 cleanup", () => {
             textMessage("user-v2-b", sessionId, "second user boundary"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         const ids = messages.map((message: WithParts) => message.info.id)
         assert.deepEqual(ids, [
@@ -1236,7 +1236,7 @@ describe("prospective Version 2 cleanup", () => {
             toolMessage("compress-new-v2", sessionId, "compress", "new receipt"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.equal(
             messages.some(
@@ -1273,7 +1273,7 @@ describe("prospective Version 2 cleanup", () => {
         const before = createState(sessionId)
         before.managementTurns = [completed]
         const beforeMessages = structuredClone(history)
-        applyCompressTransforms(before, logger, beforeMessages)
+        applyCompressTransforms(before, beforeMessages)
 
         const state = createState(sessionId)
         state.managementTurns = [
@@ -1290,7 +1290,7 @@ describe("prospective Version 2 cleanup", () => {
                 "assistant",
             ),
         ]
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),
@@ -1324,7 +1324,7 @@ describe("prospective Version 2 cleanup", () => {
             textMessage("user-after-failed-v2", sessionId, "continue after failure"),
         ]
 
-        applyCompressTransforms(state, logger, messages)
+        applyCompressTransforms(state, messages)
 
         assert.deepEqual(
             messages.map((message: WithParts) => message.info.id),

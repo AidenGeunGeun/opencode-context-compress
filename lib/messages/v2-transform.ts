@@ -1,4 +1,3 @@
-import type { Logger } from "../logger.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import { applyCompressTransforms } from "./compress-transform.js"
 import { isIgnoredUserMessage } from "./utils.js"
@@ -16,7 +15,6 @@ export interface ModelMessage extends Record<string, unknown> {
 export function transformV2Messages(
     raw: WithParts[],
     state: SessionState,
-    logger: Logger,
     modelMessages: readonly ModelMessage[],
 ): ModelMessage[] {
     const projected = new Map(raw.map((message) => [message.info.id, message]))
@@ -77,7 +75,7 @@ export function transformV2Messages(
     }
 
     const transformed = structuredClone(raw)
-    applyCompressTransforms(state, logger, transformed)
+    applyCompressTransforms(state, transformed)
     return [
         ...transformed.flatMap((message) => [
             ...(before.get(message.info.id) ?? []),

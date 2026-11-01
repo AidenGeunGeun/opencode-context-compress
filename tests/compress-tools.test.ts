@@ -210,7 +210,7 @@ describe("single-tool compression", () => {
                     "recent-user",
                 ])
                 const transformed = structuredClone(result.messages)
-                applyCompressTransforms(result.state, logger, transformed)
+                applyCompressTransforms(result.state, transformed)
                 assert.equal(
                     transformed.some((message) => message.info.id === "recent-step"),
                     true,

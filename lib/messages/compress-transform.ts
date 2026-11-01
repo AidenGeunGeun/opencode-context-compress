@@ -1,5 +1,4 @@
 import type { SessionState, TextPart, WithParts } from "../state/index.js"
-import type { Logger } from "../logger.js"
 import { isMessageCompacted } from "../shared-utils.js"
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js"
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js"
@@ -9,12 +8,8 @@ const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output pruned to save context.]"
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]"
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]"
 
-export const applyCompressTransforms = (
-    state: SessionState,
-    logger: Logger,
-    messages: WithParts[],
-): void => {
-    filterCompressedRanges(state, logger, messages)
+export const applyCompressTransforms = (state: SessionState, messages: WithParts[]): void => {
+    filterCompressedRanges(state, messages)
     stripCompressedTools(state, messages)
     stripToolOutputs(state, messages)
     stripToolInputs(state, messages)
@@ -351,7 +346,6 @@ function createRetainedUserMessage(message: WithParts, retainedText: string): Wi
 export const transformMessagesForSearch = (
     rawMessages: WithParts[],
     state: SessionState,
-    logger: Logger,
 ): TransformMessagesForSearchResult => {
     // Legacy residue repair runs by content signature alone, independent of persisted
     // `managementTurns`, so it must be checked even when that state is empty, wrong, or
@@ -433,11 +427,6 @@ export const transformMessagesForSearch = (
             )
             transformed.push(syntheticMessage)
             syntheticMap.set(syntheticMessage.info.id, summary)
-
-            logger.info("Injected compress summary", {
-                anchorMessageId: msgId,
-                summaryLength: summary.summary.length,
-            })
         }
 
         const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId)
@@ -599,12 +588,8 @@ const stripToolErrors = (state: SessionState, messages: WithParts[]): void => {
     }
 }
 
-const filterCompressedRanges = (
-    state: SessionState,
-    logger: Logger,
-    messages: WithParts[],
-): void => {
-    const { transformed } = transformMessagesForSearch(messages, state, logger)
+const filterCompressedRanges = (state: SessionState, messages: WithParts[]): void => {
+    const { transformed } = transformMessagesForSearch(messages, state)
     messages.length = 0
     messages.push(...transformed)
 }

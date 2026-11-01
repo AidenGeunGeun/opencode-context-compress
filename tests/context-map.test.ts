@@ -1,12 +1,9 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { Logger } from "../lib/logger.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { createSessionState } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
-
-const logger = new Logger({ daily: false, context: false })
 
 function message(id: string, role: "user" | "assistant", stepStart = false): WithParts {
     return {
@@ -35,7 +32,7 @@ describe("deterministic compression selection", () => {
             message("a3", "assistant", true),
         ]
 
-        const span = selectDeterministicCompressionSpan(messages, state, logger, 2)
+        const span = selectDeterministicCompressionSpan(messages, state, 2)
 
         assert.deepEqual(span.messageIds, ["u1", "a1", "u2"])
         assert.deepEqual(span.protectedMessageIds, ["a2", "u3", "a3"])
@@ -50,7 +47,7 @@ describe("deterministic compression selection", () => {
             message("m4", "assistant"),
         ]
 
-        const span = selectDeterministicCompressionSpan(messages, state, logger, 3)
+        const span = selectDeterministicCompressionSpan(messages, state, 3)
 
         assert.deepEqual(span.messageIds, ["m1"])
         assert.deepEqual(span.protectedMessageIds, ["m2", "m3", "m4"])
@@ -60,7 +57,7 @@ describe("deterministic compression selection", () => {
         const state = createSessionState()
         const messages = [message("m1", "user"), message("m2", "assistant", true)]
 
-        const span = selectDeterministicCompressionSpan(messages, state, logger, 0)
+        const span = selectDeterministicCompressionSpan(messages, state, 0)
 
         assert.deepEqual(span.messageIds, ["m1", "m2"])
         assert.deepEqual(span.protectedMessageIds, [])
@@ -78,8 +75,7 @@ describe("deterministic compression selection", () => {
         ]
 
         assert.throws(
-            () =>
-                selectDeterministicCompressionSpan([message("visible", "user")], state, logger, 0),
+            () => selectDeterministicCompressionSpan([message("visible", "user")], state, 0),
             /could not reconcile an existing compressed block/,
         )
     })

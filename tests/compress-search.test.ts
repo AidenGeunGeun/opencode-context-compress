@@ -5,10 +5,7 @@ import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { transformMessagesForSearch } from "../lib/messages/compress-transform.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { backfillCompressSummaryMessageIds } from "../lib/state/persistence.ts"
-import { Logger } from "../lib/logger.ts"
 import type { CompressSummary, SessionState, WithParts } from "../lib/state/types.ts"
-
-const logger = new Logger({ daily: false, context: false })
 
 const textMessage = (id: string, text: string, role: "user" | "assistant" = "user"): WithParts => ({
     info: {
@@ -57,7 +54,7 @@ describe("compressed message transformation", () => {
             summary: "legacy block summary with needle",
         }
         const state = createState(["m2", "m3"], [summary])
-        const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state, logger)
+        const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state)
 
         assert.equal(transformed.length, 2)
         assert.equal(syntheticMap.size, 1)
@@ -95,7 +92,7 @@ describe("compressed message transformation", () => {
             textMessage("user-v2", "next request"),
         ]
 
-        const span = selectDeterministicCompressionSpan(rawMessages, state, logger, 0)
+        const span = selectDeterministicCompressionSpan(rawMessages, state, 0)
 
         assert.deepEqual(span.messageIds, ["before-v2", "compress-v2", "after-v2", "user-v2"])
         assert.equal(

@@ -1,4 +1,3 @@
-import type { Logger } from "../logger.js"
 import type { SessionState, WithParts } from "../state/index.js"
 import {
     stripV2MachineryForCompressionSelection,
@@ -40,10 +39,9 @@ export function deriveProtectedTailMessageIds(
 export function selectDeterministicCompressionSpan(
     rawHistory: WithParts[],
     state: SessionState,
-    logger: Logger,
     protectedTurns: number,
 ): DeterministicCompressionSpan {
-    const search = transformMessagesForSearch(rawHistory, state, logger)
+    const search = transformMessagesForSearch(rawHistory, state)
     const transformed = stripV2MachineryForCompressionSelection(search.transformed, state)
     const syntheticMap = search.syntheticMap
     const representedBlockAnchors = new Set(
@@ -92,10 +90,9 @@ export function selectDeterministicCompressionSpan(
 export function deriveAutomaticProtectedTail(
     rawMessages: WithParts[],
     state: SessionState,
-    logger: Logger,
     protectedTurns: number,
 ): { protectedMessageIds: string[]; hasSelectableMessages: boolean } {
-    const span = selectDeterministicCompressionSpan(rawMessages, state, logger, protectedTurns)
+    const span = selectDeterministicCompressionSpan(rawMessages, state, protectedTurns)
     return {
         protectedMessageIds: span.protectedMessageIds,
         hasSelectableMessages: span.messageIds.length > 0,

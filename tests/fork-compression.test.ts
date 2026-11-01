@@ -112,7 +112,7 @@ test("a fork inherits ordered compression blocks with remapped message IDs", asy
         childState.compressed.messageIds = new Set(loaded.state.compressed.messageIds)
         childState.compressed.toolIds = new Set(loaded.state.compressed.toolIds)
         childState.compressSummaries = loaded.state.compressSummaries
-        const context = transformMessagesForSearch(child, childState, logger).transformed
+        const context = transformMessagesForSearch(child, childState).transformed
         assert.deepEqual(
             context.map((item) =>
                 item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
@@ -168,11 +168,10 @@ test("a fork inherits ordered compression blocks with remapped message IDs", asy
             partialState.compressed.toolIds = new Set(partial.state.compressed.toolIds)
             partialState.compressSummaries = partial.state.compressSummaries
             assert.deepEqual(
-                transformMessagesForSearch(partialChild, partialState, logger).transformed.map(
-                    (item) =>
-                        item.parts
-                            .flatMap((part) => (part.type === "text" ? [part.text] : []))
-                            .join(""),
+                transformMessagesForSearch(partialChild, partialState).transformed.map((item) =>
+                    item.parts
+                        .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                        .join(""),
                 ),
                 ["[Compressed conversation block]\n\n[b0]\n\nfirst", "content-2", "content-3"],
             )

@@ -149,7 +149,6 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
             transformed = transformV2Messages(
                 messages,
                 state,
-                logger,
                 event.messages as unknown as ModelMessage[],
             )
             event.messages.splice(

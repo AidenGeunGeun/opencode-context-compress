@@ -442,11 +442,6 @@ export async function loadSessionState(
         }
     }
 
-    logger.info("Loaded session state from disk", {
-        sessionId: sessionId,
-        migrated,
-    })
-
     const managementTurns = normalizeManagementTurns(state.managementTurns)
     const result: PersistedSessionState = {
         sessionName: state.sessionName,

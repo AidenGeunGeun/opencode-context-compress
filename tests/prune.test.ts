@@ -167,8 +167,8 @@ describe("background pruning", () => {
                 },
             ]
         })
-        const first = transformV2Messages(messages, state, logger, model)
-        const second = transformV2Messages(messages, state, logger, model)
+        const first = transformV2Messages(messages, state, model)
+        const second = transformV2Messages(messages, state, model)
         assert.equal(JSON.stringify(first), JSON.stringify(second))
         assert.match(JSON.stringify(first), /Output pruned to save context/)
         assert.doesNotMatch(JSON.stringify(first), /"value":"original"/)

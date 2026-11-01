@@ -178,7 +178,7 @@ export async function stageManagementTurnWithinLock(
 
     const automaticTail =
         ctx.source === "automatic"
-            ? deriveAutomaticProtectedTail(messages, state, logger, ctx.protectedTurns ?? 0)
+            ? deriveAutomaticProtectedTail(messages, state, ctx.protectedTurns ?? 0)
             : undefined
 
     if (ctx.source === "automatic" && !automaticTail?.hasSelectableMessages) {

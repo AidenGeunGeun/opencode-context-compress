@@ -1,12 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { Logger } from "../lib/logger.ts"
 import { selectDeterministicCompressionSpan } from "../lib/messages/context-map.ts"
 import { createSessionState } from "../lib/state/state.ts"
 import type { WithParts } from "../lib/state/types.ts"
 
-const logger = new Logger({ daily: false, context: false })
 const message = (id: string, role: "user" | "assistant" = "user"): WithParts => ({
     info: { id, role, sessionID: "block-session", time: { created: Date.now() } },
     parts: [{ type: "text", text: id }],
@@ -41,7 +39,7 @@ describe("existing block exclusion", () => {
             message("m8", "assistant"),
         ]
 
-        const span = selectDeterministicCompressionSpan(messages, state, logger, 0)
+        const span = selectDeterministicCompressionSpan(messages, state, 0)
 
         assert.deepEqual(span.messageIds, ["m7", "m8"])
         assert.deepEqual(
