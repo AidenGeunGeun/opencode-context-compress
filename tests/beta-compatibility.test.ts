@@ -270,6 +270,36 @@ describe("beta projected message compatibility", () => {
         assert.match(String(folded[0].content[0].text), /\[b0\]/)
     })
 
+    it("keeps a user message that carries only an image", () => {
+        const raw = adaptProjectedMessages("session", [
+            ...projected().slice(0, 2),
+            {
+                id: "image-only",
+                type: "user",
+                text: "",
+                files: [{ mime: "image/png", name: "image.png", data: "iVBORw0KGgo=" }],
+                time: { created: 4 },
+            },
+        ])
+        const image = { id: "image-only", role: "user", content: [{ type: "media", media: {} }] }
+        const transformed = transformV2Messages(
+            raw,
+            new SessionStateManager().get("session"),
+            logger,
+            [
+                { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
+                {
+                    id: "old-assistant",
+                    role: "assistant",
+                    content: [{ type: "text", text: "older result" }],
+                },
+                image,
+            ],
+        )
+
+        assert.deepEqual(transformed.at(-1), image)
+    })
+
     it("preserves idless user and system inputs added by transient generation", () => {
         const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")

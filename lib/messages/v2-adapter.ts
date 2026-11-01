@@ -96,10 +96,16 @@ function user(
             variant: selection?.model?.variant,
             time: { created },
         },
-        parts:
-            typeof message.text === "string" && message.text.length > 0
-                ? [{ type: "text", text: message.text }]
-                : [],
+        // Attachments count as content: without them an image sent with no text looked empty, and the
+        // transform dropped it as ignored, so the model never saw the image.
+        parts: [
+            ...(typeof message.text === "string" && message.text.length > 0
+                ? [{ type: "text" as const, text: message.text }]
+                : []),
+            ...(Array.isArray(message.files) ? message.files : [])
+                .filter(isRecord)
+                .map((file) => ({ type: "file" as const, mime: file.mime, filename: file.name })),
+        ],
     }
 }
 
