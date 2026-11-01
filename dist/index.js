@@ -4120,13 +4120,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var wt_default = Plugin.define({
+var context_compress_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  wt_default as default
+  context_compress_default as default
 };
 
-//# debugId=76A3A45B41E3B13064756E2164756E21
+//# debugId=6E39B8ED91C0779464756E2164756E21
 //# sourceMappingURL=index.js.map

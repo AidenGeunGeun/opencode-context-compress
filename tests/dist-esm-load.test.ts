@@ -17,7 +17,7 @@ import {
     type ToolFake,
 } from "./helpers.ts"
 
-describe("built OpenCode 2.0.13 Promise plugin", () => {
+describe("built OpenCode 2.2.5 Promise plugin", () => {
     it("loads and executes command, context, generate, and tool paths", async () => {
         const root = await mkdtemp(join(tmpdir(), "context-compress-2013-"))
         const previousConfig = process.env.XDG_CONFIG_HOME
