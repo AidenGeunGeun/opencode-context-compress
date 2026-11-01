@@ -726,7 +726,7 @@ A failure means nothing changed. Surface the exact diagnostic; do not retry auto
 // lib/prompts/_codegen/squash-system.generated.ts
 var SQUASH_SYSTEM = `<system-reminder>
 CONTEXT SQUASH REQUESTED
-This turn exists only because the user explicitly ran \`/compress squash\`. Review the current positional compressed blocks and make exactly one successful \`squash\` call.
+{{reason}} Review the current positional compressed blocks and make exactly one successful \`squash\` call.
 
 If a \`<user-message>\` block is present, it contains the user's specific instructions for this squash turn. Follow it while preserving truthfulness and chronology.
 
@@ -752,7 +752,7 @@ Result handling:
 `;
 
 // lib/prompts/_codegen/squash.generated.ts
-var SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK SQUASHING IN THE CURRENT TURN. High context usage, tool availability, or your own judgment alone is not authorization. Runtime does not persist an authorization marker; this is a strict agent contract.
+var SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK SQUASHING IN THE CURRENT TURN OR AUTOMATIC SQUASH HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization. Runtime does not persist an authorization marker; this is a strict agent contract.
 
 When requested, call it once with four required non-empty values:
 - \`from\`: The inclusive first current positional block label, such as \`b1\`.
@@ -791,8 +791,8 @@ function renderAutomaticSystemPrompt(vars) {
   }
   return prompt;
 }
-function renderSquashSystemPrompt() {
-  return SQUASH_SYSTEM.trim();
+function renderSquashSystemPrompt(reason = "This turn exists only because the user explicitly ran `/compress squash`.") {
+  return SQUASH_SYSTEM.trim().replace("{{reason}}", () => reason);
 }
 function renderPostCompressionNotice() {
   return POST_COMPRESSION_NOTICE.trim();
@@ -1390,7 +1390,7 @@ ${block.summary.summary}`;
 }
 
 // lib/messages/compress-transform.ts
-var COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output removed to save context - information superseded or no longer needed]";
+var COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output pruned to save context.]";
 var COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 var COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
 var applyCompressTransforms = (state, logger, messages) => {
@@ -1893,8 +1893,8 @@ function generateNativeCompactionNoticeId(sessionId, event) {
     return;
   return `msg_${generateLiveOrderedMessageIdSuffix(Math.floor(event.created), JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
 }
-function generateAutomaticPromptMessageId(sessionId, trigger) {
-  return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
+function generateAutomaticPromptMessageId(sessionId, trigger, purpose = "automatic-compression") {
+  return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify([purpose, sessionId, trigger.id]))}`;
 }
 async function handleManageCommand(ctx) {
   if (ctx.config.tools.compress.permission === "deny") {
@@ -1939,11 +1939,11 @@ async function stageManagementTurnWithinLock(ctx) {
 `)
     });
   }
-  const trigger = ctx.source === "automatic" ? messages.find((message) => message.info.id === ctx.triggeredByMessageId) : undefined;
-  if (ctx.source === "automatic" && !trigger) {
+  const trigger = ctx.triggeredByMessageId ? messages.find((message) => message.info.id === ctx.triggeredByMessageId) : undefined;
+  if (ctx.triggeredByMessageId && !trigger) {
     throw new Error("Automatic compression trigger is missing from projected history");
   }
-  const triggerMessageId = trigger ? generateAutomaticPromptMessageId(sessionId, trigger.info) : generateManagePromptMessageId();
+  const triggerMessageId = trigger ? generateAutomaticPromptMessageId(sessionId, trigger.info, ctx.source === "squash" ? "automatic-squash" : "automatic-compression") : generateManagePromptMessageId();
   const managementTurn = {
     triggerMessageId,
     cleanupVersion: 2,
@@ -2186,6 +2186,13 @@ function createAutomaticCompressionEventHandler(client, stateManager, logger, co
     if (!await acceptsSession(info.sessionID, event))
       return;
     const state = stateManager.get(info.sessionID);
+    if (state.compressionCooldownAfterMessageId === info.id) {
+      await startAutomaticSquash(client, stateManager, logger, config, info.sessionID, info.id);
+      return;
+    }
+    if (state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId && !turn.completedAt)) {
+      await closeUnansweredAutomaticSquash(client, stateManager, logger, info.sessionID, info.id);
+    }
     const contextTokens = getAssistantContextTokens(info.tokens);
     if (state.initialized && state.persistenceSynchronized) {
       const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
@@ -2274,6 +2281,78 @@ function createAutomaticCompressionEventHandler(client, stateManager, logger, co
       }
     }
   };
+}
+var AUTO_SQUASH_MAX_BLOCKS = 7;
+var AUTO_SQUASH_MAX_CHARS = 1e5;
+async function startAutomaticSquash(client, stateManager, logger, config, sessionId, messageId) {
+  const state = stateManager.get(sessionId);
+  try {
+    const staged = await stateManager.runExclusive(sessionId, async () => {
+      const messages = await listSessionMessages(client, sessionId);
+      if (messages.length === 0)
+        return;
+      await reconcileSessionLifecycle(state, sessionId, logger, messages);
+      if (!state.persistenceSynchronized || !resolveEffectiveAutoCompressionPolicy(config.autoCompression, state).enabled || findActiveManagementTurn(state, messages) || state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId === messageId)) {
+        return;
+      }
+      const blocks = orderCompressBlocks(messages, state.compressSummaries);
+      const chars = blocks.reduce((total, block) => total + block.summary.summary.length, 0);
+      if (blocks.length < 2 || blocks.length <= AUTO_SQUASH_MAX_BLOCKS && chars <= AUTO_SQUASH_MAX_CHARS) {
+        return;
+      }
+      logger.info("Automatic squash due", { sessionId, blocks: blocks.length, chars });
+      const number = (value) => value.toLocaleString("en-US");
+      const reason = [
+        `Automatic squash was invoked for this turn: the ${blocks.length} compressed blocks hold ${number(chars)} summary characters, over the limit of ${AUTO_SQUASH_MAX_BLOCKS} blocks or ${number(AUTO_SQUASH_MAX_CHARS)} characters.`,
+        `Choose the range yourself. Where one range allows it, leave at most 5 blocks and about ${number(AUTO_SQUASH_MAX_CHARS * 0.8)} summary characters.`,
+        `Current blocks: ${blocks.map((block) => `[${block.label}] "${block.summary.topic ?? "untitled"}" ${number(block.summary.summary.length)} chars`).join("; ")}.`
+      ].join(" ");
+      return stageManagementTurnWithinLock({
+        client,
+        stateManager,
+        state,
+        logger,
+        sessionId,
+        messages,
+        systemPrompt: renderSquashSystemPrompt(reason),
+        source: "squash",
+        triggeredByMessageId: messageId
+      });
+    });
+    if (staged)
+      await staged();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("Automatic squash failed to start", { sessionId, messageId, error: message });
+    await sendIgnoredMessage(client, sessionId, `Could not start automatic squash: ${message}`, logger);
+  }
+}
+async function closeUnansweredAutomaticSquash(client, stateManager, logger, sessionId, messageId) {
+  const state = stateManager.get(sessionId);
+  await stateManager.runExclusive(sessionId, async () => {
+    const messages = await listSessionMessages(client, sessionId);
+    const active = findActiveManagementTurn(state, messages);
+    if (active?.turn.source !== "squash" || !active.turn.triggeredByMessageId)
+      return;
+    const index = messages.findIndex((message) => message.info.id === messageId);
+    if (index <= active.triggerIndex || messages[index].parts.some((part) => part.type === "tool" && part.tool === "squash"))
+      return;
+    const candidateState = {
+      ...state,
+      managementTurns: state.managementTurns.map((turn) => turn === active.turn ? {
+        ...turn,
+        completedAt: new Date().toISOString(),
+        completedMessageId: messageId
+      } : turn)
+    };
+    if (!await saveSessionState(candidateState, logger))
+      return;
+    commitDurableSessionState(state, candidateState);
+    logger.warn("Automatic squash closed without a successful squash call", {
+      sessionId,
+      messageId
+    });
+  });
 }
 
 // lib/config.ts
@@ -3390,6 +3469,96 @@ function isPostCompressionNoticeDue(state, rawMessages) {
   return true;
 }
 
+// lib/messages/prune.ts
+var PROTECTED_STEPS = 10;
+var MEDIA_CHARS = 6000;
+var PROTECTED_TOOLS = new Set([
+  "patch",
+  "edit",
+  "write",
+  "subagent",
+  "task",
+  "skill",
+  "todowrite",
+  "todoread",
+  "question",
+  "compress",
+  "squash",
+  "get_goal",
+  "create_goal",
+  "update_goal"
+]);
+async function pruneStaleToolOutputs(messages, state, logger) {
+  if (findActiveManagementTurn(state, messages))
+    return;
+  const tail = messages.slice(messages.findLastIndex((m) => isMessageCompacted(state, m)) + 1);
+  const recent = new Set(deriveProtectedTailMessageIds(tail, PROTECTED_STEPS));
+  const candidates = tail.flatMap((message, index) => recent.has(message.info.id) ? [] : message.parts.flatMap((part) => part.type === "tool" && !PROTECTED_TOOLS.has(part.tool) && !state.compressed.toolIds.has(part.callID) && (part.state.status === "completed" || part.state.status === "error") ? [{ index, part }] : []));
+  if (candidates.length === 0)
+    return;
+  const prunedChars = candidates.reduce((total, { part }) => total + prunableChars(part), 0);
+  const suffixChars = tail.slice(candidates[0].index).reduce((total, message) => total + messageChars(message, state), 0);
+  const stepsAfter = [];
+  tail.reduceRight((after, message, index) => {
+    stepsAfter[index] = after;
+    return after + message.parts.filter((part) => part.type === "step-start").length;
+  }, 0);
+  const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * 0.1 * (stepsAfter[index] - PROTECTED_STEPS), 0);
+  const rewrite = (suffixChars - prunedChars) * 0.9;
+  if (rent * 4 < rewrite)
+    return;
+  const candidateState = {
+    ...state,
+    compressed: {
+      ...state.compressed,
+      toolIds: new Set([
+        ...state.compressed.toolIds,
+        ...candidates.map(({ part }) => part.callID)
+      ])
+    }
+  };
+  if (!await saveSessionState(candidateState, logger)) {
+    logger.warn("Pruning skipped because its marks could not be saved", {
+      sessionId: state.sessionId
+    });
+    return;
+  }
+  commitDurableSessionState(state, candidateState);
+  logger.info("Pruned stale tool outputs", {
+    sessionId: state.sessionId,
+    tools: candidates.length,
+    prunedChars,
+    suffixChars,
+    rent
+  });
+}
+function prunableChars(part) {
+  if (part.state.status === "completed")
+    return outputChars(part.state.output);
+  return Object.values(part.state.input).reduce((total, value) => total + (typeof value === "string" ? value.length : 0), 0);
+}
+function messageChars(message, state) {
+  return message.parts.reduce((total, part) => {
+    if (part.type === "text" || part.type === "reasoning")
+      return total + part.text.length;
+    if (part.type !== "tool")
+      return total;
+    const output = part.state.status === "completed" && !state.compressed.toolIds.has(part.callID) ? outputChars(part.state.output) : 0;
+    return total + JSON.stringify(part.state.input).length + output;
+  }, 0);
+}
+function outputChars(output) {
+  if (typeof output === "string")
+    return output.length;
+  if (!Array.isArray(output))
+    return 0;
+  return output.reduce((total, item) => {
+    if (item?.type === "text" && typeof item.text === "string")
+      return total + item.text.length;
+    return total + (item?.type === "file" ? MEDIA_CHARS : 0);
+  }, 0);
+}
+
 // lib/messages/v2-transform.ts
 function transformV2Messages(raw, state, logger, modelMessages) {
   const projected = new Map(raw.map((message) => [message.info.id, message]));
@@ -3571,7 +3740,8 @@ async function inheritForkCompression(session, client, state, logger, childMessa
     ].every((id) => !id || mapped.has(id));
   });
   const compressedMessages = new Set(summaries.flatMap((summary) => summary.messageIds.map(messageID)));
-  const childTools = new Set(childMessages.slice(0, parentPrefix.length).filter((message) => compressedMessages.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
+  const parentBlockMessages = new Set(parentState.state.compressSummaries.flatMap((summary) => summary.messageIds.flatMap((id) => mapped.get(id) ?? [])));
+  const childTools = new Set(childMessages.slice(0, parentPrefix.length).filter((message) => compressedMessages.has(message.info.id) || !parentBlockMessages.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
   const candidate = {
     ...state,
     compressed: {
@@ -3963,6 +4133,7 @@ function createSquashTool(ctx) {
         }
         commitDurableSessionState(state, candidateState);
         return {
+          requestedBy: managementTurn ? managementTurn.triggeredByMessageId ? "automatic" : "user" : undefined,
           oldFrom: selected[0].label,
           oldTo: selected[selected.length - 1].label,
           newLabel: replacementLabel,
@@ -3975,7 +4146,9 @@ function createSquashTool(ctx) {
         };
       });
       await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
-      return `Squash complete. Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
+      const opening = outcome.requestedBy === "automatic" ? "Automatic squash complete; it ran because the compressed blocks were over their size limit." : outcome.requestedBy === "user" ? "Squash complete, as the user requested with /compress squash." : "Squash complete.";
+      const receipt = `${opening} Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
+      return outcome.requestedBy === "automatic" ? `${receipt} Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.` : receipt;
     }
   };
 }
@@ -4071,8 +4244,10 @@ async function setup(context) {
         if (!state.persistenceSynchronized)
           throw new Error("Cannot load inherited fork compression state");
       }
+      if (kind === "context")
+        await pruneStaleToolOutputs(messages, state, logger);
       transformed = transformV2Messages(messages, state, logger, event.messages);
-      if (kind === "context" && isPostCompressionNoticeDue(state, messages)) {
+      if (kind === "context" && isPostCompressionNoticeDue(state, messages) && !findActiveManagementTurn(state, messages)) {
         transformed.push({
           role: "user",
           content: [{ type: "text", text: renderPostCompressionNotice() }]
@@ -4163,13 +4338,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var context_compress_default = Plugin.define({
+var cc_work_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  context_compress_default as default
+  cc_work_default as default
 };
 
-//# debugId=87C34F6FEC87F57E64756E2164756E21
+//# debugId=37FB148BA109E66664756E2164756E21
 //# sourceMappingURL=index.js.map

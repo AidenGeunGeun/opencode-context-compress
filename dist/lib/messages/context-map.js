@@ -1,5 +1,5 @@
 import { stripV2MachineryForCompressionSelection, transformMessagesForSearch, } from "./compress-transform.js";
-function deriveProtectedTailMessageIds(messages, protectedTurns) {
+export function deriveProtectedTailMessageIds(messages, protectedTurns) {
     if (protectedTurns <= 0 || messages.length === 0)
         return [];
     let protectedStart = 0;

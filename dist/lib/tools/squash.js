@@ -126,6 +126,11 @@ export function createSquashTool(ctx) {
                 }
                 commitDurableSessionState(state, candidateState);
                 return {
+                    requestedBy: managementTurn
+                        ? managementTurn.triggeredByMessageId
+                            ? "automatic"
+                            : "user"
+                        : undefined,
                     oldFrom: selected[0].label,
                     oldTo: selected[selected.length - 1].label,
                     newLabel: replacementLabel,
@@ -138,7 +143,16 @@ export function createSquashTool(ctx) {
                 };
             });
             await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
-            return `Squash complete. Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
+            // The trigger message is hidden once the turn completes, so the receipt says who asked.
+            const opening = outcome.requestedBy === "automatic"
+                ? "Automatic squash complete; it ran because the compressed blocks were over their size limit."
+                : outcome.requestedBy === "user"
+                    ? "Squash complete, as the user requested with /compress squash."
+                    : "Squash complete.";
+            const receipt = `${opening} Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`;
+            return outcome.requestedBy === "automatic"
+                ? `${receipt} Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.`
+                : receipt;
         },
     };
 }

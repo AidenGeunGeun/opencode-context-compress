@@ -5,6 +5,7 @@ export interface DeterministicCompressionSpan {
     messageIds: string[];
     protectedMessageIds: string[];
 }
+export declare function deriveProtectedTailMessageIds(messages: WithParts[], protectedTurns: number): string[];
 /**
  * Select every uncompressed physical message after the newest durable block, while
  * preserving the configured newest execution steps verbatim.

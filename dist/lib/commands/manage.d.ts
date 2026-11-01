@@ -33,7 +33,7 @@ export type StagedManagementTurn = () => Promise<boolean>;
 export declare function extractManageCommandResidual(args: string | undefined): string | undefined;
 export declare function generateManagePromptMessageId(): string;
 export declare function generateNativeCompactionNoticeId(sessionId: string, event: Record<string, unknown>): string | undefined;
-export declare function generateAutomaticPromptMessageId(sessionId: string, trigger: WithParts["info"]): string;
+export declare function generateAutomaticPromptMessageId(sessionId: string, trigger: WithParts["info"], purpose?: "automatic-compression" | "automatic-squash"): string;
 export declare function handleManageCommand(ctx: ManageCommandContext): Promise<void>;
 /** Persists the turn marker; the caller must hold this session's mutation lock. */
 export declare function stageManagementTurnWithinLock(ctx: ManagementTurnStartContext): Promise<StagedManagementTurn | undefined>;

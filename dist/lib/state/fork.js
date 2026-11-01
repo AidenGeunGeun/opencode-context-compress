@@ -70,9 +70,13 @@ export async function inheritForkCompression(session, client, state, logger, chi
     });
     // A fork inside a block retains that span as raw history; only complete blocks stay compressed.
     const compressedMessages = new Set(summaries.flatMap((summary) => summary.messageIds.map(messageID)));
+    // Tools inside a parent block the fork cut through come back raw, so they lose their marks;
+    // pruning marks on the parent's raw tail carry over.
+    const parentBlockMessages = new Set(parentState.state.compressSummaries.flatMap((summary) => summary.messageIds.flatMap((id) => mapped.get(id) ?? [])));
     const childTools = new Set(childMessages
         .slice(0, parentPrefix.length)
-        .filter((message) => compressedMessages.has(message.info.id))
+        .filter((message) => compressedMessages.has(message.info.id) ||
+        !parentBlockMessages.has(message.info.id))
         .flatMap((message) => message.parts.flatMap((part) => (part.type === "tool" ? [part.callID] : []))));
     const candidate = {
         ...state,

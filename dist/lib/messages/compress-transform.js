@@ -2,7 +2,7 @@ import { isMessageCompacted } from "../shared-utils.js";
 import { createSyntheticUserMessage, isIgnoredUserMessage } from "./utils.js";
 import { buildLegacyResidueSuppressionPlan } from "./legacy-residue.js";
 import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js";
-const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output removed to save context - information superseded or no longer needed]";
+const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output pruned to save context.]";
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
 export const applyCompressTransforms = (state, logger, messages) => {

@@ -60,9 +60,9 @@ export function generateNativeCompactionNoticeId(sessionId, event) {
         return undefined;
     return `msg_${generateLiveOrderedMessageIdSuffix(Math.floor(event.created), JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
 }
-export function generateAutomaticPromptMessageId(sessionId, trigger) {
+export function generateAutomaticPromptMessageId(sessionId, trigger, purpose = "automatic-compression") {
     // The host deduplicates prompt admission by ID, including across plugin instances.
-    return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify(["automatic-compression", sessionId, trigger.id]))}`;
+    return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify([purpose, sessionId, trigger.id]))}`;
 }
 export async function handleManageCommand(ctx) {
     if (ctx.config.tools.compress.permission === "deny") {
@@ -109,14 +109,14 @@ export async function stageManagementTurnWithinLock(ctx) {
             text: ["<user-message>", ctx.retainedText, "</user-message>"].join("\n"),
         });
     }
-    const trigger = ctx.source === "automatic"
+    const trigger = ctx.triggeredByMessageId
         ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
         : undefined;
-    if (ctx.source === "automatic" && !trigger) {
+    if (ctx.triggeredByMessageId && !trigger) {
         throw new Error("Automatic compression trigger is missing from projected history");
     }
     const triggerMessageId = trigger
-        ? generateAutomaticPromptMessageId(sessionId, trigger.info)
+        ? generateAutomaticPromptMessageId(sessionId, trigger.info, ctx.source === "squash" ? "automatic-squash" : "automatic-compression")
         : generateManagePromptMessageId();
     const managementTurn = {
         triggerMessageId,

@@ -1,7 +1,7 @@
 // AUTO-GENERATED FILE - DO NOT EDIT
 // Generated from squash.md by scripts/generate-prompts.ts
 // To modify, edit squash.md and run `npm run generate:prompts`
-export const SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK SQUASHING IN THE CURRENT TURN. High context usage, tool availability, or your own judgment alone is not authorization. Runtime does not persist an authorization marker; this is a strict agent contract.
+export const SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK SQUASHING IN THE CURRENT TURN OR AUTOMATIC SQUASH HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization. Runtime does not persist an authorization marker; this is a strict agent contract.
 
 When requested, call it once with four required non-empty values:
 - \`from\`: The inclusive first current positional block label, such as \`b1\`.

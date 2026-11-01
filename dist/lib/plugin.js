@@ -4,7 +4,9 @@ import { getConfig } from "./config.js";
 import { generateNativeCompactionNoticeId } from "./commands/manage.js";
 import { handleCompressCommand } from "./commands/route.js";
 import { Logger } from "./logger.js";
+import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js";
+import { pruneStaleToolOutputs } from "./messages/prune.js";
 import { transformV2Messages } from "./messages/v2-transform.js";
 import { renderPostCompressionNotice } from "./prompts/index.js";
 import { isRecord } from "./shared-utils.js";
@@ -105,8 +107,12 @@ export async function setup(context) {
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state");
             }
+            if (kind === "context")
+                await pruneStaleToolOutputs(messages, state, logger);
             transformed = transformV2Messages(messages, state, logger, event.messages);
-            if (kind === "context" && isPostCompressionNoticeDue(state, messages)) {
+            if (kind === "context" &&
+                isPostCompressionNoticeDue(state, messages) &&
+                !findActiveManagementTurn(state, messages)) {
                 transformed.push({
                     role: "user",
                     content: [{ type: "text", text: renderPostCompressionNotice() }],

@@ -1,9 +1,10 @@
 import { stageManagementTurnWithinLock } from "./commands/manage.js";
+import { orderCompressBlocks } from "./messages/blocks.js";
 import { findActiveManagementTurn } from "./messages/compress-transform.js";
-import { renderAutomaticSystemPrompt } from "./prompts/index.js";
+import { renderAutomaticSystemPrompt, renderSquashSystemPrompt } from "./prompts/index.js";
 import { listSessionMessages } from "./sdk/client.js";
 import { isRecord } from "./shared-utils.js";
-import { reconcileSessionLifecycle } from "./state/index.js";
+import { commitDurableSessionState, reconcileSessionLifecycle, saveSessionState, } from "./state/index.js";
 import { sendIgnoredMessage } from "./ui/notification.js";
 import { isMessageWithinPostCompressionCooldown, messageContainsCompressCall, resolveEffectiveAutoCompressionPolicy, } from "./auto-policy.js";
 function positiveFinite(value) {
@@ -93,6 +94,15 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
         if (!(await acceptsSession(info.sessionID, event)))
             return;
         const state = stateManager.get(info.sessionID);
+        // Blocks only grow when a fold lands, so the block budget is checked once, at the end of
+        // the step whose compress call succeeded.
+        if (state.compressionCooldownAfterMessageId === info.id) {
+            await startAutomaticSquash(client, stateManager, logger, config, info.sessionID, info.id);
+            return;
+        }
+        if (state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId && !turn.completedAt)) {
+            await closeUnansweredAutomaticSquash(client, stateManager, logger, info.sessionID, info.id);
+        }
         const contextTokens = getAssistantContextTokens(info.tokens);
         if (state.initialized && state.persistenceSynchronized) {
             const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
@@ -194,5 +204,92 @@ export function createAutomaticCompressionEventHandler(client, stateManager, log
             }
         }
     };
+}
+const AUTO_SQUASH_MAX_BLOCKS = 7;
+const AUTO_SQUASH_MAX_CHARS = 100_000;
+/** Opens a squash management turn when blocks exceed the budget; the agent picks the range. */
+async function startAutomaticSquash(client, stateManager, logger, config, sessionId, messageId) {
+    const state = stateManager.get(sessionId);
+    try {
+        const staged = await stateManager.runExclusive(sessionId, async () => {
+            const messages = await listSessionMessages(client, sessionId);
+            if (messages.length === 0)
+                return undefined;
+            await reconcileSessionLifecycle(state, sessionId, logger, messages);
+            if (!state.persistenceSynchronized ||
+                !resolveEffectiveAutoCompressionPolicy(config.autoCompression, state).enabled ||
+                findActiveManagementTurn(state, messages) ||
+                state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId === messageId)) {
+                return undefined;
+            }
+            const blocks = orderCompressBlocks(messages, state.compressSummaries);
+            const chars = blocks.reduce((total, block) => total + block.summary.summary.length, 0);
+            if (blocks.length < 2 ||
+                (blocks.length <= AUTO_SQUASH_MAX_BLOCKS && chars <= AUTO_SQUASH_MAX_CHARS)) {
+                return undefined;
+            }
+            logger.info("Automatic squash due", { sessionId, blocks: blocks.length, chars });
+            const number = (value) => value.toLocaleString("en-US");
+            const reason = [
+                `Automatic squash was invoked for this turn: the ${blocks.length} compressed blocks hold ${number(chars)} summary characters, over the limit of ${AUTO_SQUASH_MAX_BLOCKS} blocks or ${number(AUTO_SQUASH_MAX_CHARS)} characters.`,
+                `Choose the range yourself. Where one range allows it, leave at most 5 blocks and about ${number(AUTO_SQUASH_MAX_CHARS * 0.8)} summary characters.`,
+                `Current blocks: ${blocks.map((block) => `[${block.label}] "${block.summary.topic ?? "untitled"}" ${number(block.summary.summary.length)} chars`).join("; ")}.`,
+            ].join(" ");
+            return stageManagementTurnWithinLock({
+                client,
+                stateManager,
+                state,
+                logger,
+                sessionId,
+                messages,
+                systemPrompt: renderSquashSystemPrompt(reason),
+                source: "squash",
+                triggeredByMessageId: messageId,
+            });
+        });
+        if (staged)
+            await staged();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("Automatic squash failed to start", { sessionId, messageId, error: message });
+        await sendIgnoredMessage(client, sessionId, `Could not start automatic squash: ${message}`, logger);
+    }
+}
+/**
+ * Closes an automatic squash turn that a whole step went by without completing. Left open, it would
+ * block automatic compression and pruning until the user's next message, and nobody may be watching.
+ */
+async function closeUnansweredAutomaticSquash(client, stateManager, logger, sessionId, messageId) {
+    const state = stateManager.get(sessionId);
+    await stateManager.runExclusive(sessionId, async () => {
+        const messages = await listSessionMessages(client, sessionId);
+        const active = findActiveManagementTurn(state, messages);
+        if (active?.turn.source !== "squash" || !active.turn.triggeredByMessageId)
+            return;
+        // A step that started before the request was admitted has not seen it yet, and a step with
+        // a failed squash call leaves the agent room to retry.
+        const index = messages.findIndex((message) => message.info.id === messageId);
+        if (index <= active.triggerIndex ||
+            messages[index].parts.some((part) => part.type === "tool" && part.tool === "squash"))
+            return;
+        const candidateState = {
+            ...state,
+            managementTurns: state.managementTurns.map((turn) => turn === active.turn
+                ? {
+                    ...turn,
+                    completedAt: new Date().toISOString(),
+                    completedMessageId: messageId,
+                }
+                : turn),
+        };
+        if (!(await saveSessionState(candidateState, logger)))
+            return;
+        commitDurableSessionState(state, candidateState);
+        logger.warn("Automatic squash closed without a successful squash call", {
+            sessionId,
+            messageId,
+        });
+    });
 }
 //# sourceMappingURL=auto-compression.js.map

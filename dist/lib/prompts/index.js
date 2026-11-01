@@ -15,8 +15,8 @@ export function renderAutomaticSystemPrompt(vars) {
     }
     return prompt;
 }
-export function renderSquashSystemPrompt() {
-    return SQUASH_SYSTEM_PROMPT.trim();
+export function renderSquashSystemPrompt(reason = "This turn exists only because the user explicitly ran `/compress squash`.") {
+    return SQUASH_SYSTEM_PROMPT.trim().replace("{{reason}}", () => reason);
 }
 export function renderPostCompressionNotice() {
     return POST_COMPRESSION_NOTICE_PROMPT.trim();

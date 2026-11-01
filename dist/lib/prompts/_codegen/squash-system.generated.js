@@ -3,7 +3,7 @@
 // To modify, edit squash-system.md and run `npm run generate:prompts`
 export const SQUASH_SYSTEM = `<system-reminder>
 CONTEXT SQUASH REQUESTED
-This turn exists only because the user explicitly ran \`/compress squash\`. Review the current positional compressed blocks and make exactly one successful \`squash\` call.
+{{reason}} Review the current positional compressed blocks and make exactly one successful \`squash\` call.
 
 If a \`<user-message>\` block is present, it contains the user's specific instructions for this squash turn. Follow it while preserving truthfulness and chronology.
 
