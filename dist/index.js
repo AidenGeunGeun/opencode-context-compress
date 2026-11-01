@@ -3472,6 +3472,7 @@ function isPostCompressionNoticeDue(state, rawMessages) {
 // lib/messages/prune.ts
 var PROTECTED_STEPS = 10;
 var MEDIA_CHARS = 6000;
+var REWRITE_TOLERANCE = 1.5;
 var PROTECTED_TOOLS = new Set([
   "patch",
   "edit",
@@ -3488,16 +3489,16 @@ var PROTECTED_TOOLS = new Set([
   "create_goal",
   "update_goal"
 ]);
-async function pruneStaleToolOutputs(messages, state, logger) {
+async function pruneStaleToolOutputs(messages, state, logger, anchored) {
   if (findActiveManagementTurn(state, messages))
     return;
-  const tail = messages.slice(messages.findLastIndex((m) => isMessageCompacted(state, m)) + 1);
+  const tail = currentTail(messages, state);
   const recent = new Set(deriveProtectedTailMessageIds(tail, PROTECTED_STEPS));
-  const candidates = tail.flatMap((message, index) => recent.has(message.info.id) ? [] : message.parts.flatMap((part) => part.type === "tool" && !PROTECTED_TOOLS.has(part.tool) && !state.compressed.toolIds.has(part.callID) && (part.state.status === "completed" || part.state.status === "error") ? [{ index, part }] : []));
+  const candidates = tail.flatMap((message, index) => recent.has(message.info.id) ? [] : message.parts.flatMap((part) => isPrunable(part, state) ? [{ index, part }] : []));
   if (candidates.length === 0)
     return;
   const prunedChars = candidates.reduce((total, { part }) => total + prunableChars(part), 0);
-  const suffixChars = tail.slice(candidates[0].index).reduce((total, message) => total + messageChars(message, state), 0);
+  const suffixChars = anchored ? tail.slice(candidates[0].index).reduce((total, message) => total + messageChars(message, state), 0) : state.compressSummaries.reduce((total, block) => total + block.summary.length, 0) + messages.filter((message) => !isMessageCompacted(state, message)).reduce((total, message) => total + messageChars(message, state), 0);
   const stepsAfter = [];
   tail.reduceRight((after, message, index) => {
     stepsAfter[index] = after;
@@ -3505,7 +3506,7 @@ async function pruneStaleToolOutputs(messages, state, logger) {
   }, 0);
   const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * 0.1 * (stepsAfter[index] - PROTECTED_STEPS), 0);
   const rewrite = (suffixChars - prunedChars) * 0.9;
-  if (rent * 4 < rewrite)
+  if (rent * REWRITE_TOLERANCE < rewrite)
     return;
   const candidateState = {
     ...state,
@@ -3529,8 +3530,18 @@ async function pruneStaleToolOutputs(messages, state, logger) {
     tools: candidates.length,
     prunedChars,
     suffixChars,
-    rent
+    rent,
+    anchored
   });
+}
+function pruneFrontier(messages, state) {
+  return currentTail(messages, state).flatMap((message) => message.parts).find((part) => isPrunable(part, state))?.callID;
+}
+function currentTail(messages, state) {
+  return messages.slice(messages.findLastIndex((m) => isMessageCompacted(state, m)) + 1);
+}
+function isPrunable(part, state) {
+  return part.type === "tool" && !PROTECTED_TOOLS.has(part.tool) && !state.compressed.toolIds.has(part.callID) && (part.state.status === "completed" || part.state.status === "error");
 }
 function prunableChars(part) {
   if (part.state.status === "completed")
@@ -4154,6 +4165,7 @@ function createSquashTool(ctx) {
 }
 // lib/plugin.ts
 var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' + "in your OpenCode config.";
+var CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 async function setup(context) {
   const client = pluginClient(context.session);
   const config = getConfig({ directory: context.location.directory });
@@ -4212,7 +4224,12 @@ async function setup(context) {
       });
     }));
   }
+  const anchors = new Map;
+  const prunedFrontiers = new Map;
   const applyCompression = async (event, kind) => {
+    const anchored = kind === "context" && event.model.providerID === "anthropic";
+    if (kind === "context")
+      anchors.delete(event.sessionID);
     setSessionSelection(client, event.sessionID, {
       agent: event.agent,
       model: {
@@ -4244,8 +4261,10 @@ async function setup(context) {
         if (!state.persistenceSynchronized)
           throw new Error("Cannot load inherited fork compression state");
       }
+      const before = anchored ? pruneFrontier(messages, state) : undefined;
       if (kind === "context")
-        await pruneStaleToolOutputs(messages, state, logger);
+        await pruneStaleToolOutputs(messages, state, logger, anchored);
+      const after = anchored ? pruneFrontier(messages, state) : undefined;
       transformed = transformV2Messages(messages, state, logger, event.messages);
       if (kind === "context" && isPostCompressionNoticeDue(state, messages) && !findActiveManagementTurn(state, messages)) {
         transformed.push({
@@ -4254,11 +4273,23 @@ async function setup(context) {
         });
       }
       event.messages.splice(0, event.messages.length, ...transformed);
+      if (before !== undefined && before !== after)
+        prunedFrontiers.set(event.sessionID, before);
+      const ids = [...new Set([prunedFrontiers.get(event.sessionID), after])].filter((id) => id !== undefined);
+      if (anchored && ids.length > 0)
+        anchors.set(event.sessionID, ids);
     });
     if (kind === "context" && transformed)
       await logger.saveContext(event.sessionID, transformed);
   };
-  registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
+  registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("model.request", (event) => {
+    if (event.kind !== "primary")
+      return;
+    const ids = anchors.get(event.sessionID);
+    anchors.delete(event.sessionID);
+    if (ids)
+      event.headers[CACHE_ANCHORS_HEADER] = ids.join(",");
+  }, { providerID: "anthropic" }));
   const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
   const events = context.event.subscribe()[Symbol.asyncIterator]();
   const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
@@ -4338,13 +4369,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var cc_work_default = Plugin.define({
+var context_compress_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  cc_work_default as default
+  context_compress_default as default
 };
 
-//# debugId=37FB148BA109E66664756E2164756E21
+//# debugId=A151D62EBF87377864756E2164756E21
 //# sourceMappingURL=index.js.map

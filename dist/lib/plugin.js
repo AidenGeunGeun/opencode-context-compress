@@ -6,7 +6,7 @@ import { handleCompressCommand } from "./commands/route.js";
 import { Logger } from "./logger.js";
 import { findActiveManagementTurn } from "./messages/compress-transform.js";
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js";
-import { pruneStaleToolOutputs } from "./messages/prune.js";
+import { pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js";
 import { transformV2Messages } from "./messages/v2-transform.js";
 import { renderPostCompressionNotice } from "./prompts/index.js";
 import { isRecord } from "./shared-utils.js";
@@ -19,6 +19,9 @@ import { createCompressTool, createSquashTool } from "./tools/index.js";
 const NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
     'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' +
     "in your OpenCode config.";
+// Tool call IDs a request should place a cache marker before; the anthropic-auth plugin applies them
+// to the wire body before it signs the request, because hook order between plugins is not fixed.
+const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 export async function setup(context) {
     const client = pluginClient(context.session);
     const config = getConfig({ directory: context.location.directory });
@@ -75,7 +78,17 @@ export async function setup(context) {
             });
         }));
     }
+    // Cache anchors computed by a session's latest context hook, read by its next primary model request.
+    const anchors = new Map();
+    // The frontier before each session's latest prune. It stays anchored until the next prune, so a retry of
+    // a prune request that never reached the provider still resumes the cache there.
+    const prunedFrontiers = new Map();
     const applyCompression = async (event, kind) => {
+        // Only Anthropic requests carry the anchor. Other providers have no markers; measured OpenAI reads
+        // after an edit fall back to an earlier point, often the end of the system prompt.
+        const anchored = kind === "context" && event.model.providerID === "anthropic";
+        if (kind === "context")
+            anchors.delete(event.sessionID);
         setSessionSelection(client, event.sessionID, {
             agent: event.agent,
             model: {
@@ -107,8 +120,12 @@ export async function setup(context) {
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state");
             }
+            // A prune moves the frontier, so the request anchors both: it resumes the cache at the old
+            // frontier and writes the new one for the next prune.
+            const before = anchored ? pruneFrontier(messages, state) : undefined;
             if (kind === "context")
-                await pruneStaleToolOutputs(messages, state, logger);
+                await pruneStaleToolOutputs(messages, state, logger, anchored);
+            const after = anchored ? pruneFrontier(messages, state) : undefined;
             transformed = transformV2Messages(messages, state, logger, event.messages);
             if (kind === "context" &&
                 isPostCompressionNoticeDue(state, messages) &&
@@ -119,11 +136,23 @@ export async function setup(context) {
                 });
             }
             event.messages.splice(0, event.messages.length, ...transformed);
+            if (before !== undefined && before !== after)
+                prunedFrontiers.set(event.sessionID, before);
+            const ids = [...new Set([prunedFrontiers.get(event.sessionID), after])].filter((id) => id !== undefined);
+            if (anchored && ids.length > 0)
+                anchors.set(event.sessionID, ids);
         });
         if (kind === "context" && transformed)
             await logger.saveContext(event.sessionID, transformed);
     };
-    registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")));
+    registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("model.request", (event) => {
+        if (event.kind !== "primary")
+            return;
+        const ids = anchors.get(event.sessionID);
+        anchors.delete(event.sessionID);
+        if (ids)
+            event.headers[CACHE_ANCHORS_HEADER] = ids.join(",");
+    }, { providerID: "anthropic" }));
     const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
     const events = context.event.subscribe()[Symbol.asyncIterator]();
     const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
