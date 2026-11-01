@@ -3534,48 +3534,51 @@ function transformV2Messages(raw, state, logger, modelMessages) {
     }
   }
   const owned = new Map;
-  const passthrough = [];
+  const before = new Map;
+  const pending = [];
   const system = raw.filter((message) => message.info.sourceType === "system");
   const usedSystem = new Set;
   for (const message of modelMessages) {
-    if (message.id === undefined && message.role === "assistant" && message.content.every((part) => part.type === "text" || part.type === "reasoning")) {
-      passthrough.push(message);
-      continue;
-    }
-    const owner = resolveOwner(message, projected, tools, system, usedSystem);
+    const owner = message.id === undefined && message.role === "assistant" && message.content.every((part) => part.type === "text" || part.type === "reasoning") ? undefined : resolveOwner(message, projected, tools, system, usedSystem);
     if (!owner) {
-      passthrough.push(message);
+      pending.push(message);
       continue;
     }
+    if (pending.length > 0)
+      before.set(owner, [...before.get(owner) ?? [], ...pending.splice(0)]);
     const current = owned.get(owner) ?? [];
     current.push(message);
     owned.set(owner, current);
   }
+  const project = (message) => {
+    if (message.info.role === "user" && isIgnoredUserMessage(message))
+      return [];
+    if (!projected.has(message.info.id))
+      return [summaryMessage(message)];
+    const source = projected.get(message.info.id);
+    if (!source)
+      throw new Error(`Missing projected source for ${message.info.id}`);
+    const messages = owned.get(message.info.id) ?? [];
+    if (messages.length === 0)
+      return [];
+    if (message.info.role === "assistant")
+      return transformToolPair(messages, message, state);
+    if (message.info.role === "user" && text(message) !== text(source)) {
+      return messages.map((item) => ({
+        ...item,
+        content: [{ type: "text", text: text(message) }]
+      }));
+    }
+    return messages;
+  };
   const transformed = structuredClone(raw);
   applyCompressTransforms(state, logger, transformed);
   return [
-    ...transformed.flatMap((message) => {
-      if (message.info.role === "user" && isIgnoredUserMessage(message))
-        return [];
-      if (!projected.has(message.info.id))
-        return [summaryMessage(message)];
-      const source = projected.get(message.info.id);
-      if (!source)
-        throw new Error(`Missing projected source for ${message.info.id}`);
-      const messages = owned.get(message.info.id) ?? [];
-      if (messages.length === 0)
-        return [];
-      if (message.info.role === "assistant")
-        return transformToolPair(messages, message, state);
-      if (message.info.role === "user" && text(message) !== text(source)) {
-        return messages.map((item) => ({
-          ...item,
-          content: [{ type: "text", text: text(message) }]
-        }));
-      }
-      return messages;
-    }),
-    ...passthrough
+    ...transformed.flatMap((message) => [
+      ...before.get(message.info.id) ?? [],
+      ...project(message)
+    ]),
+    ...pending
   ];
 }
 function resolveOwner(message, projected, tools, system, usedSystem) {
@@ -4315,13 +4318,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var context_compress_default = Plugin.define({
+var cc_work_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  context_compress_default as default
+  cc_work_default as default
 };
 
-//# debugId=5BED617C08A2074D64756E2164756E21
+//# debugId=C4D3287934538A7364756E2164756E21
 //# sourceMappingURL=index.js.map
