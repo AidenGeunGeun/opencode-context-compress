@@ -220,6 +220,56 @@ describe("beta projected message compatibility", () => {
         assert.equal(transformed[0].content[1].media, media)
     })
 
+    it("keeps an idless effort marker where core placed it", () => {
+        const raw = adaptProjectedMessages("session", [
+            ...projected().slice(0, 2),
+            { id: "variant-change", type: "model-switched", time: { created: 3 } },
+            projected()[2],
+        ])
+        const state = new SessionStateManager().get("session")
+        const marker = {
+            role: "system",
+            content: [{ type: "effort", effort: "high", previous: "max" }],
+        }
+        const owner = {
+            id: "owner",
+            role: "user",
+            content: [{ type: "text", text: "compress now" }],
+        }
+        const modelMessages = [
+            { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
+            {
+                id: "old-assistant",
+                role: "assistant",
+                content: [{ type: "text", text: "older result" }],
+            },
+            marker,
+            owner,
+        ]
+
+        assert.deepEqual(transformV2Messages(raw, state, logger, modelMessages).slice(-2), [
+            marker,
+            owner,
+        ])
+
+        state.compressed.messageIds = new Set([
+            "old-user",
+            "old-assistant",
+            "variant-change",
+            "owner",
+        ])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "old-user",
+                messageIds: ["old-user", "old-assistant", "variant-change", "owner"],
+                summary: "Earlier work was completed.",
+            },
+        ]
+        const folded = transformV2Messages(raw, state, logger, modelMessages)
+        assert.equal(folded.length, 1)
+        assert.match(String(folded[0].content[0].text), /\[b0\]/)
+    })
+
     it("preserves idless user and system inputs added by transient generation", () => {
         const raw = adaptProjectedMessages("session", projected().slice(0, 2))
         const state = new SessionStateManager().get("session")

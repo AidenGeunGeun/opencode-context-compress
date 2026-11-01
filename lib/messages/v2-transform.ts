@@ -31,51 +31,59 @@ export function transformV2Messages(
     }
 
     const owned = new Map<string, ModelMessage[]>()
-    const passthrough: ModelMessage[] = []
+    // Messages without an owner (effort markers from a variant switch, transient generation inputs) keep
+    // their place: each one goes before the next owned message, and those after the last one stay at the
+    // end. Moving a mid-history effort marker to the end changed every turn's tail and broke the cache.
+    // A marker whose next message was compressed is dropped with it.
+    const before = new Map<string, ModelMessage[]>()
+    const pending: ModelMessage[] = []
     const system = raw.filter((message) => message.info.sourceType === "system")
     const usedSystem = new Set<string>()
     // Model messages are rebuilt with spreads, never mutated. Deep-cloning them would turn attached media
     // (class instances such as Media.Asset) into plain objects that the host rejects.
     for (const message of modelMessages) {
-        if (
+        const owner =
             message.id === undefined &&
             message.role === "assistant" &&
             message.content.every((part) => part.type === "text" || part.type === "reasoning")
-        ) {
-            passthrough.push(message)
-            continue
-        }
-        const owner = resolveOwner(message, projected, tools, system, usedSystem)
+                ? undefined
+                : resolveOwner(message, projected, tools, system, usedSystem)
         if (!owner) {
-            passthrough.push(message)
+            pending.push(message)
             continue
         }
+        if (pending.length > 0)
+            before.set(owner, [...(before.get(owner) ?? []), ...pending.splice(0)])
         const current = owned.get(owner) ?? []
         current.push(message)
         owned.set(owner, current)
     }
 
+    const project = (message: WithParts): ModelMessage[] => {
+        if (message.info.role === "user" && isIgnoredUserMessage(message)) return []
+        if (!projected.has(message.info.id)) return [summaryMessage(message)]
+        const source = projected.get(message.info.id)
+        if (!source) throw new Error(`Missing projected source for ${message.info.id}`)
+        const messages = owned.get(message.info.id) ?? []
+        if (messages.length === 0) return []
+        if (message.info.role === "assistant") return transformToolPair(messages, message, state)
+        if (message.info.role === "user" && text(message) !== text(source)) {
+            return messages.map((item) => ({
+                ...item,
+                content: [{ type: "text", text: text(message) }],
+            }))
+        }
+        return messages
+    }
+
     const transformed = structuredClone(raw)
     applyCompressTransforms(state, logger, transformed)
     return [
-        ...transformed.flatMap((message) => {
-            if (message.info.role === "user" && isIgnoredUserMessage(message)) return []
-            if (!projected.has(message.info.id)) return [summaryMessage(message)]
-            const source = projected.get(message.info.id)
-            if (!source) throw new Error(`Missing projected source for ${message.info.id}`)
-            const messages = owned.get(message.info.id) ?? []
-            if (messages.length === 0) return []
-            if (message.info.role === "assistant")
-                return transformToolPair(messages, message, state)
-            if (message.info.role === "user" && text(message) !== text(source)) {
-                return messages.map((item) => ({
-                    ...item,
-                    content: [{ type: "text", text: text(message) }],
-                }))
-            }
-            return messages
-        }),
-        ...passthrough,
+        ...transformed.flatMap((message) => [
+            ...(before.get(message.info.id) ?? []),
+            ...project(message),
+        ]),
+        ...pending,
     ]
 }
 
