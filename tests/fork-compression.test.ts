@@ -5,12 +5,12 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import type { WithParts } from "../lib/state/types.ts"
-import { fakeClient, sessionInfo } from "./helpers.ts"
+import { type ContextMessage, fakeClient, sessionInfo } from "./helpers.ts"
 
 function forkHost(
     fork: { sessionID: string; boundary: { type: "before" | "through"; messageID: string } },
-    parent: WithParts[],
-    child: WithParts[],
+    parent: WithParts[] | ContextMessage[],
+    child: WithParts[] | ContextMessage[],
 ) {
     const context = async ({ sessionID }: { sessionID: string }) =>
         sessionID === "parent" ? parent : child
@@ -207,6 +207,77 @@ test("a fork inherits ordered compression blocks with remapped message IDs", asy
         const inherited = await loadSessionState("running-child", logger, runningChild)
         assert.equal(inherited.status, "loaded")
         if (inherited.status === "loaded") assert.equal(inherited.state.compressSummaries.length, 2)
+    } finally {
+        if (previous === undefined) delete process.env.XDG_DATA_HOME
+        else process.env.XDG_DATA_HOME = previous
+        await rm(storage, { recursive: true, force: true })
+    }
+})
+
+test("a full fork through the parent's idle marker inherits its blocks", async () => {
+    const previous = process.env.XDG_DATA_HOME
+    const storage = await mkdtemp(join(tmpdir(), "opencode-fork-compress-"))
+    process.env.XDG_DATA_HOME = storage
+    try {
+        const { createSessionState } = await import("../lib/state/state.ts")
+        const { saveSessionState, loadSessionState } = await import("../lib/state/persistence.ts")
+        const { inheritForkCompression } = await import("../lib/state/fork.ts")
+        const { listSessionMessages } = await import("../lib/sdk/client.ts")
+        const { Logger } = await import("../lib/logger.ts")
+        const logger = new Logger({ daily: false, context: false })
+        // session.context() as OpenCode 2.2.5 projects it: a completed turn ends with an idle marker.
+        const projected = (prefix: string): ContextMessage[] => [
+            { id: `${prefix}-0`, type: "user", text: "first", time: { created: 1 } },
+            {
+                id: `${prefix}-1`,
+                type: "assistant",
+                agent: "build",
+                model: { providerID: "openai", id: "gpt-test" },
+                content: [{ type: "text", text: "answer" }],
+                tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                time: { created: 2, completed: 3 },
+            },
+            { id: `${prefix}-idle`, type: "idle", outcome: "succeeded", time: { created: 4 } },
+        ]
+        const parentState = createSessionState()
+        parentState.sessionId = "parent"
+        parentState.compressed.messageIds = new Set(["parent-0", "parent-1"])
+        parentState.compressSummaries = [
+            { anchorMessageId: "parent-0", messageIds: ["parent-0", "parent-1"], summary: "first" },
+        ]
+        assert.equal(await saveSessionState(parentState, logger), true)
+
+        const host = forkHost(
+            { sessionID: "parent", boundary: { type: "through", messageID: "parent-idle" } },
+            projected("parent"),
+            projected("child"),
+        )
+        const child = await listSessionMessages(host.client, "child")
+        const childState = createSessionState()
+        childState.sessionId = "child"
+        await inheritForkCompression(host.session, host.client, childState, logger, child)
+        const loaded = await loadSessionState("child", logger, child)
+        assert.equal(loaded.status, "loaded")
+        if (loaded.status === "loaded")
+            assert.deepEqual(loaded.state.compressSummaries, [
+                {
+                    anchorMessageId: "child-0",
+                    messageIds: ["child-0", "child-1"],
+                    summary: "first",
+                },
+            ])
+
+        // A boundary outside the parent's context precedes its latest compaction, so nothing carries over.
+        const early = forkHost(
+            { sessionID: "parent", boundary: { type: "before", messageID: "compacted-away" } },
+            projected("parent"),
+            projected("early"),
+        )
+        const earlyState = createSessionState()
+        earlyState.sessionId = "early"
+        const earlyChild = await listSessionMessages(early.client, "early")
+        await inheritForkCompression(early.session, early.client, earlyState, logger, earlyChild)
+        assert.equal((await loadSessionState("early", logger, earlyChild)).status, "missing")
     } finally {
         if (previous === undefined) delete process.env.XDG_DATA_HOME
         else process.env.XDG_DATA_HOME = previous

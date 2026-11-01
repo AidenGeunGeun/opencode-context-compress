@@ -13,11 +13,13 @@ export async function inheritForkCompression(session, client, state, logger, chi
         throw new Error("Cannot read parent compression state for fork");
     if (parentState.status === "missing")
         return;
-    const boundary = parentMessages.findIndex((message) => message.info.id === child.fork?.boundary.messageID);
-    if (boundary < 0)
-        throw new Error("Fork boundary is outside the parent context");
+    const resolved = await resolveForkBoundary(client, child.fork, parentMessages);
+    // A fork from before the parent's latest native compaction holds none of its blocks.
+    if (!resolved)
+        return;
+    const { boundary, before } = resolved;
     const parentPrefix = parentMessages
-        .slice(0, child.fork.boundary.type === "before" ? boundary : boundary + 1)
+        .slice(0, before ? boundary : boundary + 1)
         .filter((message) => {
         if (message.info.sourceType === "assistant")
             return message.info.time.completed !== undefined;
@@ -51,7 +53,7 @@ export async function inheritForkCompression(session, client, state, logger, chi
         const anchor = parentMessages.findIndex((message) => message.info.id === summary.anchorMessageId);
         if (anchor < 0)
             throw new Error("Parent compression block has no transcript anchor");
-        if (anchor > boundary || (anchor === boundary && child.fork?.boundary.type === "before"))
+        if (anchor > boundary || (anchor === boundary && before))
             return false;
         if (!mapped.has(summary.anchorMessageId))
             throw new Error("Fork did not copy a compression block anchor");
@@ -110,5 +112,24 @@ export async function inheritForkCompression(session, client, state, logger, chi
     };
     if (!(await saveSessionState(candidate, logger)))
         throw new Error("Cannot persist fork compression state");
+}
+/**
+ * A full fork copies through the parent's newest idle marker, which the adapted transcript omits, so
+ * such a boundary resolves to the last adapted message before that marker. A boundary missing from the
+ * parent's context precedes its latest native compaction and resolves to nothing.
+ */
+async function resolveForkBoundary(client, fork, parentMessages) {
+    const boundary = parentMessages.findIndex((message) => message.info.id === fork.boundary.messageID);
+    if (boundary >= 0)
+        return { boundary, before: fork.boundary.type === "before" };
+    const projected = await client.session.context({ sessionID: fork.sessionID });
+    const position = projected.findIndex((value) => value.id === fork.boundary.messageID);
+    if (position < 0)
+        return;
+    const earlier = new Set(projected.slice(0, position).map((value) => value.id));
+    return {
+        boundary: parentMessages.findLastIndex((message) => earlier.has(message.info.id)),
+        before: false,
+    };
 }
 //# sourceMappingURL=fork.js.map

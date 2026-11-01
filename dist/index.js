@@ -530,7 +530,35 @@ async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
       });
     }
   }
+  const present = new Set(messages.map((message) => message.info.id));
+  const stale = state.compressSummaries.filter((summary) => cutByRewind(summary, present));
+  if (stale.length === 0)
+    return syncResult;
+  const dropped = new Set(stale.flatMap((summary) => [summary.anchorMessageId, ...summary.messageIds]));
+  const droppedTools = new Set(messages.filter((message) => dropped.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
+  const candidate = {
+    ...state,
+    compressed: {
+      messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
+      toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id)))
+    },
+    compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary))
+  };
+  if (!await saveSessionState(candidate, logger)) {
+    state.persistenceSynchronized = false;
+    return syncResult;
+  }
+  commitDurableSessionState(state, candidate);
+  logger.info("Dropped compression blocks for rewound messages", { blocks: stale.length });
   return syncResult;
+}
+function cutByRewind(summary, present) {
+  const cut = summary.messageIds.findIndex((id) => !present.has(id));
+  if (cut < 0)
+    return false;
+  if (summary.messageIds.slice(cut).some((id) => present.has(id)))
+    return false;
+  return present.has(summary.anchorMessageId) === cut > 0;
 }
 
 class SessionStateManager {
@@ -3492,10 +3520,11 @@ async function inheritForkCompression(session, client, state, logger, childMessa
     throw new Error("Cannot read parent compression state for fork");
   if (parentState.status === "missing")
     return;
-  const boundary = parentMessages.findIndex((message) => message.info.id === child.fork?.boundary.messageID);
-  if (boundary < 0)
-    throw new Error("Fork boundary is outside the parent context");
-  const parentPrefix = parentMessages.slice(0, child.fork.boundary.type === "before" ? boundary : boundary + 1).filter((message) => {
+  const resolved = await resolveForkBoundary(client, child.fork, parentMessages);
+  if (!resolved)
+    return;
+  const { boundary, before } = resolved;
+  const parentPrefix = parentMessages.slice(0, before ? boundary : boundary + 1).filter((message) => {
     if (message.info.sourceType === "assistant")
       return message.info.time.completed !== undefined;
     if (message.info.sourceType === "shell")
@@ -3526,7 +3555,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
     const anchor = parentMessages.findIndex((message) => message.info.id === summary.anchorMessageId);
     if (anchor < 0)
       throw new Error("Parent compression block has no transcript anchor");
-    if (anchor > boundary || anchor === boundary && child.fork?.boundary.type === "before")
+    if (anchor > boundary || anchor === boundary && before)
       return false;
     if (!mapped.has(summary.anchorMessageId))
       throw new Error("Fork did not copy a compression block anchor");
@@ -3570,6 +3599,20 @@ async function inheritForkCompression(session, client, state, logger, childMessa
   };
   if (!await saveSessionState(candidate, logger))
     throw new Error("Cannot persist fork compression state");
+}
+async function resolveForkBoundary(client, fork, parentMessages) {
+  const boundary = parentMessages.findIndex((message) => message.info.id === fork.boundary.messageID);
+  if (boundary >= 0)
+    return { boundary, before: fork.boundary.type === "before" };
+  const projected = await client.session.context({ sessionID: fork.sessionID });
+  const position = projected.findIndex((value) => value.id === fork.boundary.messageID);
+  if (position < 0)
+    return;
+  const earlier = new Set(projected.slice(0, position).map((value) => value.id));
+  return {
+    boundary: parentMessages.findLastIndex((message) => earlier.has(message.info.id)),
+    before: false
+  };
 }
 
 // lib/tools/utils.ts
@@ -4128,5 +4171,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=6E39B8ED91C0779464756E2164756E21
+//# debugId=3112BB253F6305AB64756E2164756E21
 //# sourceMappingURL=index.js.map

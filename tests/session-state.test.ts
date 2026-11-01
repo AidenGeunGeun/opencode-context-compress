@@ -9,9 +9,12 @@ import { isolateHostDirs } from "./helpers.ts"
 
 const root = await isolateHostDirs()
 const { Logger } = await import("../lib/logger.ts")
-const { SessionStateManager, createSessionState, ensureSessionInitialized } = await import(
-    "../lib/state/state.ts"
-)
+const {
+    SessionStateManager,
+    createSessionState,
+    ensureSessionInitialized,
+    reconcileSessionLifecycle,
+} = await import("../lib/state/state.ts")
 const { loadSessionState, saveSessionState } = await import("../lib/state/persistence.ts")
 const { resetOnCompaction } = await import("../lib/state/utils.ts")
 after(() => rm(root, { recursive: true, force: true }))
@@ -344,6 +347,56 @@ describe("ensureSessionInitialized", () => {
         } finally {
             await cleanupSessionFiles(sessionId)
         }
+    })
+})
+
+describe("rewind reconciliation", () => {
+    it("drops blocks that lost rewound messages and shows their survivors raw", async () => {
+        const sessionId = "rewind-session"
+        await cleanupSessionFiles(sessionId)
+        const step = (id: string, callID: string): WithParts => ({
+            ...createMessage(id, sessionId, "assistant"),
+            parts: [
+                { type: "tool", callID, tool: "read", state: { status: "completed", input: {} } },
+            ],
+        })
+        const transcript = [
+            createMessage("m1", sessionId, "user"),
+            step("m2", "t2"),
+            step("m3", "t3"),
+            step("m4", "t4"),
+        ]
+        const saved = createSessionState()
+        saved.sessionId = sessionId
+        saved.compressed.messageIds = new Set(["m1", "m2", "m3", "m4"])
+        saved.compressed.toolIds = new Set(["t2", "t3", "t4"])
+        saved.compressSummaries = [
+            { anchorMessageId: "m1", messageIds: ["m1", "m2"], summary: "kept" },
+            { anchorMessageId: "m3", messageIds: ["m3", "m4"], summary: "rewound" },
+        ]
+        assert.equal(await saveSessionState(saved, logger), true)
+
+        // Rewinding to m4 deletes it, so the second block now summarizes undone work.
+        const rewound = transcript.slice(0, 3)
+        const state = createSessionState()
+        state.sessionId = sessionId
+        await reconcileSessionLifecycle(state, sessionId, logger, rewound)
+
+        assert.deepEqual(
+            state.compressSummaries.map((summary) => summary.summary),
+            ["kept"],
+        )
+        assert.deepEqual([...state.compressed.messageIds], ["m1", "m2"])
+        assert.equal(state.compressed.toolIds.has("t2"), true)
+        assert.equal(state.compressed.toolIds.has("t3"), false)
+        const persisted = await loadSessionState(sessionId, logger, rewound)
+        assert.equal(persisted.status, "loaded")
+        if (persisted.status === "loaded")
+            assert.deepEqual(
+                persisted.state.compressSummaries.map((summary) => summary.summary),
+                ["kept"],
+            )
+        await cleanupSessionFiles(sessionId)
     })
 })
 

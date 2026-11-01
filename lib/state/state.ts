@@ -1,4 +1,4 @@
-import type { SessionState, WithParts } from "./types.js"
+import type { CompressSummary, SessionState, WithParts } from "./types.js"
 import type { Logger } from "../logger.js"
 import { loadSessionState, saveSessionState } from "./persistence.js"
 import {
@@ -233,7 +233,49 @@ export async function reconcileSessionLifecycle(
         }
     }
 
+    // Committing a rewind deletes the rewound messages. A block that lost any of them summarizes
+    // undone work, so drop it and let its surviving messages show raw again.
+    const present = new Set(messages.map((message) => message.info.id))
+    const stale = state.compressSummaries.filter((summary) => cutByRewind(summary, present))
+    if (stale.length === 0) return syncResult
+
+    const dropped = new Set(
+        stale.flatMap((summary) => [summary.anchorMessageId, ...summary.messageIds]),
+    )
+    const droppedTools = new Set(
+        messages
+            .filter((message) => dropped.has(message.info.id))
+            .flatMap((message) =>
+                message.parts.flatMap((part) => (part.type === "tool" ? [part.callID] : [])),
+            ),
+    )
+    const candidate: SessionState = {
+        ...state,
+        compressed: {
+            messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
+            toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id))),
+        },
+        compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary)),
+    }
+    if (!(await saveSessionState(candidate, logger))) {
+        state.persistenceSynchronized = false
+        return syncResult
+    }
+    commitDurableSessionState(state, candidate)
+    logger.info("Dropped compression blocks for rewound messages", { blocks: stale.length })
     return syncResult
+}
+
+/**
+ * A rewind deletes a suffix of the transcript, so a block it cut keeps at most a prefix of its
+ * messages, and keeps its anchor exactly when that prefix is not empty. Any other gap is left for the
+ * transform to reject.
+ */
+function cutByRewind(summary: CompressSummary, present: Set<string>): boolean {
+    const cut = summary.messageIds.findIndex((id) => !present.has(id))
+    if (cut < 0) return false
+    if (summary.messageIds.slice(cut).some((id) => present.has(id))) return false
+    return present.has(summary.anchorMessageId) === cut > 0
 }
 
 export class SessionStateManager {
