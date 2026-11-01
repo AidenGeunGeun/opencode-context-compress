@@ -41,6 +41,11 @@ The plugin compresses automatically only when `autoCompression.enabled` is true.
 setting, a fold that leaves more than 7 blocks or 100,000 summary characters opens an automatic
 squash turn, in which the agent chooses the range.
 
+Before each request, the plugin also replaces outputs of tool calls older than the newest 10 steps
+with a one-line stub, without involving the agent. It prunes in batches, when the cache is cold or
+when the cache reads saved should outweigh rewriting the cached suffix. Edits, patches, writes, and
+subagent, skill, todo, and question results stay intact.
+
 Optional plugin settings live in `compress.jsonc` under the OpenCode config directory or in a project's `.opencode` directory:
 
 ```jsonc

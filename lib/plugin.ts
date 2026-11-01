@@ -8,6 +8,7 @@ import { handleCompressCommand } from "./commands/route.js"
 import { Logger } from "./logger.js"
 import { findActiveManagementTurn } from "./messages/compress-transform.js"
 import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js"
+import { pruneStaleToolOutputs } from "./messages/prune.js"
 import type { ModelMessage } from "./messages/v2-transform.js"
 import { transformV2Messages } from "./messages/v2-transform.js"
 import { renderPostCompressionNotice } from "./prompts/index.js"
@@ -130,6 +131,8 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state")
             }
+            if (kind === "context")
+                await pruneStaleToolOutputs(messages, state, logger, event.model.providerID)
             transformed = transformV2Messages(
                 messages,
                 state,

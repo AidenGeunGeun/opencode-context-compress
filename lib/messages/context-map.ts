@@ -11,7 +11,10 @@ export interface DeterministicCompressionSpan {
     protectedMessageIds: string[]
 }
 
-function deriveProtectedTailMessageIds(messages: WithParts[], protectedTurns: number): string[] {
+export function deriveProtectedTailMessageIds(
+    messages: WithParts[],
+    protectedTurns: number,
+): string[] {
     if (protectedTurns <= 0 || messages.length === 0) return []
 
     let protectedStart = 0

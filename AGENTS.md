@@ -43,6 +43,9 @@ the range, and the turn closes if a step ends without a successful squash. Durab
 compatible with existing blocks, management turns, cooldowns, auto overrides, and the legacy `dcp`
 migration directory; ignore retired fields.
 
+Background pruning (`lib/messages/prune.ts`) is programmatic and never prompts the agent. Its marks
+live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event.
+
 ## Structure
 
 - `index.ts` exports the Promise plugin.
