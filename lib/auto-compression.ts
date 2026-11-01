@@ -415,8 +415,13 @@ async function closeUnansweredAutomaticSquash(
         const messages = await listSessionMessages(client, sessionId)
         const active = findActiveManagementTurn(state, messages)
         if (active?.turn.source !== "squash" || !active.turn.triggeredByMessageId) return
-        // A step that started before the request was admitted has not seen it yet.
-        if (messages.findIndex((message) => message.info.id === messageId) <= active.triggerIndex)
+        // A step that started before the request was admitted has not seen it yet, and a step with
+        // a failed squash call leaves the agent room to retry.
+        const index = messages.findIndex((message) => message.info.id === messageId)
+        if (
+            index <= active.triggerIndex ||
+            messages[index].parts.some((part) => part.type === "tool" && part.tool === "squash")
+        )
             return
 
         const candidateState: SessionState = {

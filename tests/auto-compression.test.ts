@@ -756,6 +756,33 @@ describe("automatic squash", () => {
         }
     })
 
+    it("keeps the turn open after a failed squash call so the agent can retry", async () => {
+        const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        try {
+            const messages = await seed(sessionId, Array(8).fill(100))
+            const { state, handler } = await run(sessionId, messages, "fold")
+            const failed = assistantMessage("failed-squash", sessionId, "")
+            failed.parts.push({
+                type: "tool",
+                callID: "call-squash",
+                tool: "squash",
+                state: { status: "error", input: { from: "b0", to: "b0" }, error: "one block" },
+            })
+            messages.push(
+                userMessage(state.managementTurns[0].triggerMessageId, sessionId, "squash request"),
+                failed,
+            )
+            await handler(stepEnded(sessionId, "failed-squash", usage(1_000)))
+            assert.equal(state.managementTurns[0].completedAt, undefined)
+
+            messages.push(assistantMessage("gave-up", sessionId, "Back to the task"))
+            await handler(stepEnded(sessionId, "gave-up", usage(1_000)))
+            assert.equal(state.managementTurns[0].completedMessageId, "gave-up")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
     it("leaves blocks within budget and ignores steps without a fold", async () => {
         const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
         try {

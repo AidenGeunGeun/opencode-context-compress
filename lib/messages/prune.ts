@@ -6,7 +6,6 @@ import { findActiveManagementTurn } from "./compress-transform.js"
 import { deriveProtectedTailMessageIds } from "./context-map.js"
 
 const PROTECTED_STEPS = 10
-const CACHE_TTL_MS = 5 * 60 * 1000
 // A media item costs about 1,600 tokens whatever its data-URI length; this is its rough character equivalent.
 const MEDIA_CHARS = 6_000
 // Change records, delegated work, plans, and the plugin's own machinery stay verbatim.
@@ -33,16 +32,15 @@ const PROTECTED_TOOLS = new Set([
  * string inputs. Marks are durable and only grow, so request bytes stay identical between events
  * and the provider's prompt cache holds.
  *
- * An event prunes every candidate at once. It fires when the cache is cold anyway, or when the
- * cached reads it saves over the expected remaining steps outweigh rewriting the cached suffix.
- * Both sides are measured in characters, since the tokenizer ratio cancels out.
+ * An event prunes every candidate at once, by rent or buy: stale outputs keep being re-read from the
+ * cache until those reads add up to a quarter of the cost of rewriting the cache after them. This
+ * needs no guess of how long the session will run, and it never prunes on every step. Costs count
+ * characters, since the tokenizer ratio cancels out; a cached read costs 0.1 of an uncached input.
  */
 export async function pruneStaleToolOutputs(
     messages: WithParts[],
     state: SessionState,
     logger: Logger,
-    providerId: string | undefined,
-    now = Date.now(),
 ): Promise<void> {
     // A management turn is about to fold the tail, which rewrites it anyway.
     if (findActiveManagementTurn(state, messages)) return
@@ -67,18 +65,21 @@ export async function pruneStaleToolOutputs(
     const suffixChars = tail
         .slice(candidates[0].index)
         .reduce((total, message) => total + messageChars(message, state), 0)
-    const stepsSinceFold = tail.reduce(
-        (total, message) =>
-            total + message.parts.filter((part) => part.type === "step-start").length,
+    const stepsAfter: number[] = []
+    tail.reduceRight((after, message, index) => {
+        stepsAfter[index] = after
+        return after + message.parts.filter((part) => part.type === "step-start").length
+    }, 0)
+    // Reads paid so far for each candidate since it aged past the protected steps.
+    const rent = candidates.reduce(
+        (total, { index, part }) =>
+            total + prunableChars(part) * 0.1 * (stepsAfter[index] - PROTECTED_STEPS),
         0,
     )
-    const cold = coldCacheReason(messages, now)
-    const writePrice = providerId?.toLowerCase().includes("anthropic") ? 1.25 : 1
-    // Expected remaining steps are half the steps since the last fold. A replay of recorded sessions
-    // showed the full count overestimates the horizon and prunes too often to pay back.
-    const savings = prunedChars * 0.1 * (stepsSinceFold / 2)
-    const rewrite = (suffixChars - prunedChars) * (writePrice - 0.1)
-    if (!cold && savings < rewrite) return
+    const rewrite = (suffixChars - prunedChars) * 0.9
+    // Weighting rent 4x prunes earlier for a smaller context; a replay of recorded sessions kept
+    // average context about 25% lower with net savings in every session.
+    if (rent * 4 < rewrite) return
 
     const candidateState: SessionState = {
         ...state,
@@ -102,28 +103,8 @@ export async function pruneStaleToolOutputs(
         tools: candidates.length,
         prunedChars,
         suffixChars,
-        stepsSinceFold,
-        cold: cold ?? "no",
+        rent,
     })
-}
-
-function coldCacheReason(messages: WithParts[], now: number) {
-    const previous = messages.findLast(
-        (message) => message.info.role === "assistant" && message.info.time.completed,
-    )
-    if (!previous?.info.time.completed) return "no completed step"
-    if (now - previous.info.time.completed > CACHE_TTL_MS) return "idle past cache TTL"
-    if (
-        previous.parts.some(
-            (part) =>
-                part.type === "tool" &&
-                (part.tool === "compress" || part.tool === "squash") &&
-                part.state.status === "completed",
-        )
-    ) {
-        return "previous step rewrote the blocks"
-    }
-    return undefined
 }
 
 function prunableChars(part: ToolPart): number {

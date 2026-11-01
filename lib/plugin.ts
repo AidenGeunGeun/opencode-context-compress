@@ -131,8 +131,7 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state")
             }
-            if (kind === "context")
-                await pruneStaleToolOutputs(messages, state, logger, event.model.providerID)
+            if (kind === "context") await pruneStaleToolOutputs(messages, state, logger)
             transformed = transformV2Messages(
                 messages,
                 state,

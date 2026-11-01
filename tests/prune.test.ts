@@ -72,64 +72,69 @@ const freshState = () => {
 }
 
 describe("background pruning", () => {
-    it("prunes every aged output at once on a cold cache and keeps recent and protected calls", async () => {
+    it("prunes every aged output in one batch and keeps recent and protected calls", async () => {
         const outputs: Array<[string, string]> = [
-            ["read", "r".repeat(1_000)],
+            ["read", "r".repeat(20_000)],
             ["edit", "Edit applied"],
             ["subagent", "Subagent report"],
-            ...Array.from({ length: 12 }, (): [string, string] => ["shell", "s".repeat(1_000)]),
+            ["shell", "s".repeat(20_000)],
+            ...Array.from({ length: 12 }, (): [string, string] => ["shell", "ok"]),
         ]
         const messages = transcript(outputs, 10)
         messages.splice(2, 0, step("failed", "shell", "", NOW - 30 * MINUTE, "error"))
         const state = freshState()
 
-        await pruneStaleToolOutputs(messages, state, logger, "openai", NOW)
+        await pruneStaleToolOutputs(messages, state, logger)
 
         assert.deepEqual([...state.compressed.toolIds].sort(), [
             "call-a0",
             "call-a3",
             "call-a4",
+            "call-a5",
             "call-failed",
         ])
     })
 
-    it("waits on a warm cache while rewriting the suffix costs more than the reads it saves", async () => {
+    it("waits while the reads paid so far are small next to rewriting the suffix", async () => {
         const outputs: Array<[string, string]> = [
-            ["read", "r".repeat(100)],
-            ...Array.from({ length: 10 }, (): [string, string] => ["shell", "s".repeat(10_000)]),
+            ["read", "r".repeat(1_000)],
+            ...Array.from({ length: 12 }, (): [string, string] => ["shell", "s".repeat(10_000)]),
         ]
         const state = freshState()
 
-        await pruneStaleToolOutputs(transcript(outputs, 0), state, logger, "openai", NOW)
+        await pruneStaleToolOutputs(transcript(outputs, 0), state, logger)
 
         assert.equal(state.compressed.toolIds.size, 0)
     })
 
-    it("prunes on a warm cache once the saved reads pay for the rewrite", async () => {
+    it("does not prune again when the only newly aged output has paid no reads yet", async () => {
         const outputs: Array<[string, string]> = [
             ...Array.from({ length: 40 }, (): [string, string] => ["read", "r".repeat(20_000)]),
-            ...Array.from({ length: 10 }, (): [string, string] => ["shell", "ok"]),
+            ...Array.from({ length: 10 }, (): [string, string] => ["shell", "s".repeat(3_000)]),
         ]
+        const messages = transcript(outputs, 0)
         const state = freshState()
+        await pruneStaleToolOutputs(messages, state, logger)
+        assert.equal(state.compressed.toolIds.size, 40)
 
-        await pruneStaleToolOutputs(transcript(outputs, 0), state, logger, "anthropic", NOW)
-
+        messages.push(step("next", "shell", "s".repeat(3_000), NOW + MINUTE))
+        await pruneStaleToolOutputs(messages, state, logger)
         assert.equal(state.compressed.toolIds.size, 40)
     })
 
     it("keeps request bytes stable and shows the stub in place of pruned output", async () => {
         const outputs: Array<[string, string]> = Array.from(
-            { length: 12 },
-            (_, index): [string, string] => ["shell", `output ${index} `.repeat(100)],
+            { length: 14 },
+            (_, index): [string, string] => ["shell", index < 2 ? "x".repeat(20_000) : "ok"],
         )
         const messages = transcript(outputs, 10)
         const state = freshState()
-        await pruneStaleToolOutputs(messages, state, logger, "openai", NOW)
+        await pruneStaleToolOutputs(messages, state, logger)
         const marked = [...state.compressed.toolIds]
-        assert.deepEqual(marked, ["call-a0", "call-a1"])
+        assert.deepEqual(marked, ["call-a0", "call-a1", "call-a2", "call-a3"])
 
         // Nothing new has aged past the protected steps, so a later request changes no marks.
-        await pruneStaleToolOutputs(messages, state, logger, "openai", NOW + 20 * MINUTE)
+        await pruneStaleToolOutputs(messages, state, logger)
         assert.deepEqual([...state.compressed.toolIds], marked)
 
         const model = messages.slice(1, 3).flatMap((message) => {
@@ -169,7 +174,7 @@ describe("background pruning", () => {
         const state = freshState()
         state.managementTurns = [{ triggerMessageId: "user", cleanupVersion: 2 }]
 
-        await pruneStaleToolOutputs(messages, state, logger, "openai", NOW)
+        await pruneStaleToolOutputs(messages, state, logger)
 
         assert.equal(state.compressed.toolIds.size, 0)
     })

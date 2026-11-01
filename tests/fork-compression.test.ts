@@ -284,3 +284,90 @@ test("a full fork through the parent's idle marker inherits its blocks", async (
         await rm(storage, { recursive: true, force: true })
     }
 })
+
+test("a fork keeps pruning marks on the parent's raw tail and drops marks inside a cut block", async () => {
+    const previous = process.env.XDG_DATA_HOME
+    const storage = await mkdtemp(join(tmpdir(), "opencode-fork-prune-"))
+    process.env.XDG_DATA_HOME = storage
+    try {
+        const { createSessionState } = await import("../lib/state/state.ts")
+        const { saveSessionState, loadSessionState } = await import("../lib/state/persistence.ts")
+        const { inheritForkCompression } = await import("../lib/state/fork.ts")
+        const { Logger } = await import("../lib/logger.ts")
+        const logger = new Logger({ daily: false, context: false })
+        const message = (id: string, sessionID: string, index: number): WithParts => ({
+            info: {
+                id,
+                sessionID,
+                role: index % 2 ? "assistant" : "user",
+                sourceType: index % 2 ? "assistant" : "user",
+                time: { created: index + 1, ...(index % 2 ? { completed: index + 1 } : {}) },
+            },
+            parts:
+                index % 2
+                    ? [
+                          {
+                              type: "tool",
+                              callID: `tool-${index}`,
+                              tool: "read",
+                              state: { status: "completed", input: {}, output: "ok" },
+                          },
+                      ]
+                    : [{ type: "text", text: `content-${index}` }],
+        })
+        const parent = Array.from({ length: 6 }, (_, index) =>
+            message(`parent-${index}`, "parent", index),
+        )
+        const childOf = (count: number, sessionID: string) =>
+            parent.slice(0, count).map((item, index) => ({
+                ...item,
+                info: { ...item.info, id: `${sessionID}-${index}`, sessionID },
+            }))
+        const parentState = createSessionState()
+        parentState.sessionId = "parent"
+        // Block over 0-1 (tool-1 folded), block over 2-4 (tool-3 folded), tool-5 pruned on the raw tail.
+        parentState.compressed.messageIds = new Set([
+            "parent-0",
+            "parent-1",
+            "parent-2",
+            "parent-3",
+            "parent-4",
+        ])
+        parentState.compressed.toolIds = new Set(["tool-1", "tool-3", "tool-5"])
+        parentState.compressSummaries = [
+            { anchorMessageId: "parent-0", messageIds: ["parent-0", "parent-1"], summary: "first" },
+            {
+                anchorMessageId: "parent-2",
+                messageIds: ["parent-2", "parent-3", "parent-4"],
+                summary: "second",
+            },
+        ]
+        assert.equal(await saveSessionState(parentState, logger), true)
+
+        const inherit = async (sessionID: string, through: string, child: WithParts[]) => {
+            const host = forkHost(
+                { sessionID: "parent", boundary: { type: "through", messageID: through } },
+                parent,
+                child,
+            )
+            const state = createSessionState()
+            state.sessionId = sessionID
+            await inheritForkCompression(host.session, host.client, state, logger, child)
+            const loaded = await loadSessionState(sessionID, logger, child)
+            assert.equal(loaded.status, "loaded")
+            return loaded.state.compressed.toolIds
+        }
+
+        assert.deepEqual((await inherit("full", "parent-5", childOf(6, "full"))).sort(), [
+            "tool-1",
+            "tool-3",
+            "tool-5",
+        ])
+        // Cutting through the second block returns its span raw, so tool-3 loses its mark.
+        assert.deepEqual(await inherit("cut", "parent-3", childOf(4, "cut")), ["tool-1"])
+    } finally {
+        if (previous === undefined) delete process.env.XDG_DATA_HOME
+        else process.env.XDG_DATA_HOME = previous
+        await rm(storage, { recursive: true, force: true })
+    }
+})
