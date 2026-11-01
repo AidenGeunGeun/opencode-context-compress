@@ -37,9 +37,11 @@ Requires `bun` (build runtime) and `tsc` (TypeScript compiler, resolved via `nod
 
 Compression selection is deterministic: exclude existing blocks, select eligible uncompressed
 history after the newest block, and preserve the newest `protectedTurns` execution steps. `squash`
-changes only a contiguous range of existing blocks. Durable state remains compatible with existing
-blocks, management turns, cooldowns, auto overrides, and the legacy `dcp` migration directory;
-ignore retired fields.
+changes only a contiguous range of existing blocks. Automatic squash opens only after a successful
+fold leaves more than 7 blocks or 100,000 summary characters; the agent, never the plugin, chooses
+the range, and the turn closes if a step ends without a successful squash. Durable state remains
+compatible with existing blocks, management turns, cooldowns, auto overrides, and the legacy `dcp`
+migration directory; ignore retired fields.
 
 ## Structure
 

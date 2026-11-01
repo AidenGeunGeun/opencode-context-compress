@@ -196,6 +196,7 @@ async function executeSquashRange(
     count = 5,
     notification: PluginConfig["notification"] = "off",
     summary?: string,
+    triggeredByMessageId?: string,
 ) {
     const sessionId = `squash-range-${from}-${to}-${Date.now()}-${Math.random()}`
     const manager = new SessionStateManager()
@@ -206,7 +207,9 @@ async function executeSquashRange(
     state.stats = { compressTokenCounter: 91, totalCompressTokens: 700 }
     state.compressionCooldownAfterMessageId = "existing-cooldown"
     const trigger = textMessage("squash-trigger", sessionId, "user", "/compress squash")
-    state.managementTurns = [{ triggerMessageId: trigger.info.id, source: "squash" }]
+    state.managementTurns = [
+        { triggerMessageId: trigger.info.id, source: "squash", triggeredByMessageId },
+    ]
     const call = squashCallMessage("squash-call", sessionId, trigger.info.id, "call-squash")
     const uncompressed = textMessage(
         "visible-uncompressed",
@@ -447,11 +450,30 @@ describe("squash command", () => {
 })
 
 describe("squash tool", () => {
+    it("tells the agent an automatic squash ran and to continue its work", async () => {
+        const result = await executeSquashRange(0, 3, 8, "off", undefined, "fold-step")
+        try {
+            assert.match(
+                result.receipt,
+                /^Automatic squash complete; it ran because the compressed blocks/,
+            )
+            assert.match(result.receipt, /Continue the original work now/)
+            assert.equal(result.state.compressSummaries.length, 5)
+        } finally {
+            await cleanup(result.sessionId)
+        }
+    })
+
     it("replaces b1 through b12 in a 20-block session and relabels canonically", async () => {
         const result = await executeSquashRange(1, 12, 20)
         try {
+            assert.match(
+                result.receipt,
+                /^Squash complete, as the user requested with \/compress squash\./,
+            )
             assert.match(result.receipt, /Replaced \[b1\]-\[b12\] with \[b1\]/)
             assert.match(result.receipt, /Uncompressed history was untouched/)
+            assert.doesNotMatch(result.receipt, /Continue the original work/)
             assert.equal(result.state.compressSummaries.length, 9)
             assert.deepEqual(
                 result.state.compressSummaries.map((summary) => summary.anchorMessageId),

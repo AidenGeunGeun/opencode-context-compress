@@ -37,7 +37,9 @@ Add the plugin and disable native compaction in `opencode.jsonc`:
 To run a local checkout, build it with `npm install && npm run build` and set `package` to the
 checkout's absolute `dist` path.
 
-The plugin compresses automatically only when `autoCompression.enabled` is true.
+The plugin compresses automatically only when `autoCompression.enabled` is true. Under the same
+setting, a fold that leaves more than 7 blocks or 100,000 summary characters opens an automatic
+squash turn, in which the agent chooses the range.
 
 Optional plugin settings live in `compress.jsonc` under the OpenCode config directory or in a project's `.opencode` directory:
 

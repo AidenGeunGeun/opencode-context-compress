@@ -49,6 +49,8 @@ describe("compression prompts", () => {
         const system = renderSquashSystemPrompt()
         const tool = loadPrompt("squash-tool-spec")
         assert.match(system, /contiguous inclusive range/i)
+        assert.match(system, /user explicitly ran `\/compress squash`/)
+        assert.doesNotMatch(system, /\{\{reason\}\}/)
         assert.match(system, /Call `squash` once with `from`, `to`, `summary`, and `topic`/)
         assert.match(tool, /USER EXPLICITLY REQUESTED BLOCK SQUASHING/i)
         assert.doesNotMatch(system, RETIRED)
@@ -72,7 +74,10 @@ describe("compression prompts", () => {
             readFileSync(join(root, "lib/prompts/post-compression-notice.md"), "utf8"),
         )
         assert.equal(SYSTEM.trim(), renderSystemPrompt())
-        assert.equal(SQUASH_SYSTEM.trim(), renderSquashSystemPrompt())
+        assert.equal(
+            SQUASH_SYSTEM.trim().replace("{{reason}}", "Reason."),
+            renderSquashSystemPrompt("Reason."),
+        )
         assert.equal(COMPRESS.trim(), loadPrompt("compress-tool-spec").trim())
         assert.equal(SQUASH.trim(), loadPrompt("squash-tool-spec").trim())
     })

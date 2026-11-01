@@ -126,11 +126,12 @@ export function generateNativeCompactionNoticeId(
 export function generateAutomaticPromptMessageId(
     sessionId: string,
     trigger: WithParts["info"],
+    purpose: "automatic-compression" | "automatic-squash" = "automatic-compression",
 ): string {
     // The host deduplicates prompt admission by ID, including across plugin instances.
     return `msg_${generateLiveOrderedMessageIdSuffix(
         trigger.time.completed ?? trigger.time.created,
-        JSON.stringify(["automatic-compression", sessionId, trigger.id]),
+        JSON.stringify([purpose, sessionId, trigger.id]),
     )}`
 }
 
@@ -203,15 +204,18 @@ export async function stageManagementTurnWithinLock(
         })
     }
 
-    const trigger =
-        ctx.source === "automatic"
-            ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
-            : undefined
-    if (ctx.source === "automatic" && !trigger) {
+    const trigger = ctx.triggeredByMessageId
+        ? messages.find((message) => message.info.id === ctx.triggeredByMessageId)
+        : undefined
+    if (ctx.triggeredByMessageId && !trigger) {
         throw new Error("Automatic compression trigger is missing from projected history")
     }
     const triggerMessageId = trigger
-        ? generateAutomaticPromptMessageId(sessionId, trigger.info)
+        ? generateAutomaticPromptMessageId(
+              sessionId,
+              trigger.info,
+              ctx.source === "squash" ? "automatic-squash" : "automatic-compression",
+          )
         : generateManagePromptMessageId()
     const managementTurn: ManagementTurn = {
         triggerMessageId,

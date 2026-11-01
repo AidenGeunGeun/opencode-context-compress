@@ -297,6 +297,27 @@ describe("post-compression notice", () => {
         assert.equal(hasNotice(messages), false)
     })
 
+    it("is held while an automatic squash turn waits for its squash call", async () => {
+        const harness = await createHarness({
+            ...compressed,
+            managementTurns: [
+                {
+                    triggerMessageId: "squash-request",
+                    cleanupVersion: 2,
+                    source: "squash",
+                    triggeredByMessageId: "a-compress",
+                },
+            ],
+        })
+        const transcript = [
+            userMessage("u1", harness.sessionId, "Do the work"),
+            assistantMessage("a-compress", harness.sessionId, [compressPart(), stepFinishPart()]),
+            userMessage("squash-request", harness.sessionId, "Automatic squash was invoked"),
+        ]
+
+        assert.equal(hasNotice(await harness.run(transcript)), false)
+    })
+
     it("is absent when no compression has succeeded in this session", async () => {
         const harness = await createHarness()
         const transcript = [

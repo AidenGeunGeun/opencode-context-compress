@@ -15,6 +15,7 @@ const {
     resolveAutomaticCompressionThreshold,
 } = await import("../lib/auto-compression.ts")
 const { DEFAULT_AUTO_COMPRESSION } = await import("../lib/config.ts")
+const { generateAutomaticPromptMessageId } = await import("../lib/commands/manage.ts")
 const { Logger } = await import("../lib/logger.ts")
 const { SessionStateManager } = await import("../lib/state/state.ts")
 const { saveSessionState } = await import("../lib/state/persistence.ts")
@@ -655,6 +656,114 @@ describe("automatic compression lifecycle", () => {
             await handler(stepEnded(sessionId, latest.info.id, usage(450_000)))
             assert.equal(promptCalls.length, 1)
             assert.match(promptCalls[0].text, /AUTOMATIC CONTEXT COMPRESSION DUE/)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+})
+
+describe("automatic squash", () => {
+    const seed = async (sessionId: string, blockSizes: number[]) => {
+        const messages = blockSizes.flatMap((_, index) => [
+            userMessage(`u${index}`, sessionId, `Request ${index}`),
+            assistantMessage(`a${index}`, sessionId, `Work ${index}`),
+        ])
+        messages.push(assistantMessage("fold", sessionId, "Compression completed"))
+        const state = new SessionStateManager().get(sessionId)
+        state.compressSummaries = blockSizes.map((size, index) => ({
+            anchorMessageId: `u${index}`,
+            messageIds: [`u${index}`, `a${index}`],
+            summary: "x".repeat(size),
+            topic: `Topic ${index}`,
+        }))
+        state.compressionCooldownAfterMessageId = "fold"
+        await saveSessionState(state, logger)
+        return messages
+    }
+
+    const run = async (sessionId: string, messages: WithParts[], messageId: string) => {
+        const promptCalls: PromptInput[] = []
+        const client = fakeClient({
+            context: async () => messages,
+            prompt: (input) => promptCalls.push(input),
+        })
+        const stateManager = new SessionStateManager()
+        const handler = createAutomaticCompressionEventHandler(client, stateManager, logger, config)
+        await handler(stepEnded(sessionId, messageId, usage(1_000)))
+        await handler(stepEnded(sessionId, messageId, usage(1_000)))
+        return { promptCalls, state: stateManager.get(sessionId), handler }
+    }
+
+    it("opens one squash turn after a fold leaves more than seven blocks", async () => {
+        const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        try {
+            const messages = await seed(sessionId, Array(8).fill(100))
+            const { promptCalls, state } = await run(sessionId, messages, "fold")
+
+            assert.equal(promptCalls.length, 1)
+            assert.match(promptCalls[0].text, /Automatic squash was invoked for this turn/)
+            assert.match(promptCalls[0].text, /the 8 compressed blocks hold 800 summary characters/)
+            assert.match(promptCalls[0].text, /\[b7\] "Topic 7" 100 chars/)
+            assert.doesNotMatch(promptCalls[0].text, /\{\{reason\}\}|user explicitly ran/)
+            assert.equal(state.managementTurns.length, 1)
+            assert.equal(state.managementTurns[0].source, "squash")
+            assert.equal(state.managementTurns[0].triggeredByMessageId, "fold")
+            const fold = messages.find((message) => message.info.id === "fold")
+            assert.ok(fold)
+            assert.equal(
+                promptCalls[0].id,
+                generateAutomaticPromptMessageId(sessionId, fold.info, "automatic-squash"),
+            )
+            assert.notEqual(
+                promptCalls[0].id,
+                generateAutomaticPromptMessageId(sessionId, fold.info),
+            )
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("opens a squash turn when summaries exceed the character budget", async () => {
+        const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        try {
+            const messages = await seed(sessionId, [60_000, 50_000])
+            const { promptCalls } = await run(sessionId, messages, "fold")
+            assert.equal(promptCalls.length, 1)
+            assert.match(promptCalls[0].text, /110,000 summary characters/)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("closes the turn when a step after the request ends without squashing", async () => {
+        const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        try {
+            const messages = await seed(sessionId, Array(8).fill(100))
+            const { state, handler } = await run(sessionId, messages, "fold")
+            const turn = state.managementTurns[0]
+            assert.equal(turn.completedAt, undefined)
+
+            messages.push(
+                userMessage(turn.triggerMessageId, sessionId, "squash request"),
+                assistantMessage("ignored", sessionId, "Back to the task"),
+            )
+            await handler(stepEnded(sessionId, "ignored", usage(1_000)))
+
+            assert.equal(typeof state.managementTurns[0].completedAt, "string")
+            assert.equal(state.managementTurns[0].completedMessageId, "ignored")
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+
+    it("leaves blocks within budget and ignores steps without a fold", async () => {
+        const sessionId = `session-squash-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        try {
+            const messages = await seed(sessionId, Array(7).fill(100))
+            assert.equal((await run(sessionId, messages, "fold")).promptCalls.length, 0)
+
+            const more = await seed(sessionId, Array(8).fill(100))
+            assert.equal((await run(sessionId, more, "a7")).promptCalls.length, 0)
         } finally {
             await cleanupSessionFile(sessionId)
         }
