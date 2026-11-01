@@ -253,7 +253,10 @@ function buildV2CleanupPlan(state: SessionState, rawMessages: WithParts[]): V2Cl
         const completedIndex = turn.completedMessageId
             ? indexByMessageId.get(turn.completedMessageId)
             : undefined
-        if (completedIndex !== undefined && (active || turn !== newestCompleted)) {
+        // Keep the newest receipt while a later turn is in flight. Removing it then rewrites
+        // history just after the existing blocks and voids the provider's prompt cache for
+        // everything since the previous fold; the next fold replaces that span anyway.
+        if (completedIndex !== undefined && turn !== newestCompleted) {
             const message = rawMessages[completedIndex]
             const parts = withoutCompletionTool(message, turn)
             if (parts.length > 0) retainedPartsByMessageId.set(message.info.id, parts)

@@ -6,7 +6,7 @@ export const SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTE
 When requested, call it once with four required non-empty values:
 - \`from\`: The inclusive first current positional block label, such as \`b1\`.
 - \`to\`: The inclusive last current positional block label, such as \`b12\`.
-- \`summary\`: A truthful replacement for only that selected block range.
+- \`summary\`: A truthful replacement for only that selected block range, written in English whatever language the blocks use.
 - \`topic\`: A short replacement block title.
 
 Choose exactly one contiguous inclusive range containing at least two existing compressed blocks. Both endpoints are yours to choose unless the user's \`<user-message>\` gives more specific guidance. \`[bN]\` labels are current positions, not stable durable identities.

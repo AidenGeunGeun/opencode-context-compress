@@ -713,7 +713,7 @@ A failure means nothing was compressed. Surface the exact diagnostic and do not 
 var COMPRESS = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED CONTEXT COMPRESSION IN THE CURRENT TURN OR AUTOMATIC COMPRESSION HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization.
 
 Call once with:
-- \`summary\`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion.
+- \`summary\`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion. Write it in English, whatever language the conversation uses.
 - \`topic\`: A short title for the new compressed block.
 
 Update existing durable documentation only for changed, verified information when authorized; skip edits when already current or the user requested no changes. Read-only agents return findings to the parent instead. Documentation work is not the compression itself, and missing write authority does not block compression.
@@ -757,7 +757,7 @@ var SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK S
 When requested, call it once with four required non-empty values:
 - \`from\`: The inclusive first current positional block label, such as \`b1\`.
 - \`to\`: The inclusive last current positional block label, such as \`b12\`.
-- \`summary\`: A truthful replacement for only that selected block range.
+- \`summary\`: A truthful replacement for only that selected block range, written in English whatever language the blocks use.
 - \`topic\`: A short replacement block title.
 
 Choose exactly one contiguous inclusive range containing at least two existing compressed blocks. Both endpoints are yours to choose unless the user's \`<user-message>\` gives more specific guidance. \`[bN]\` labels are current positions, not stable durable identities.
@@ -1527,7 +1527,7 @@ function buildV2CleanupPlan(state, rawMessages) {
         suppressedMessageIds.add(turn.triggerMessageId);
     }
     const completedIndex = turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined;
-    if (completedIndex !== undefined && (active || turn !== newestCompleted)) {
+    if (completedIndex !== undefined && turn !== newestCompleted) {
       const message = rawMessages[completedIndex];
       const parts = withoutCompletionTool(message, turn);
       if (parts.length > 0)
@@ -4171,5 +4171,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=3112BB253F6305AB64756E2164756E21
+//# debugId=87C34F6FEC87F57E64756E2164756E21
 //# sourceMappingURL=index.js.map
