@@ -123,7 +123,7 @@ export async function setup(context) {
             if (kind === "context")
                 await pruneStaleToolOutputs(messages, state, logger, anchored);
             const after = anchored ? pruneFrontier(messages, state) : undefined;
-            transformed = transformV2Messages(messages, state, logger, event.messages);
+            transformed = transformV2Messages(messages, state, event.messages);
             event.messages.splice(0, event.messages.length, ...transformed);
             if (before !== undefined && before !== after)
                 prunedFrontiers.set(event.sessionID, before);

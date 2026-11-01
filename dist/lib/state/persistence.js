@@ -300,10 +300,6 @@ export async function loadSessionState(sessionId, logger, messages) {
             }));
         }
     }
-    logger.info("Loaded session state from disk", {
-        sessionId: sessionId,
-        migrated,
-    });
     const managementTurns = normalizeManagementTurns(state.managementTurns);
     const result = {
         sessionName: state.sessionName,

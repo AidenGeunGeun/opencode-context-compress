@@ -20,8 +20,8 @@ export function deriveProtectedTailMessageIds(messages, protectedTurns) {
  * Select every uncompressed physical message after the newest durable block, while
  * preserving the configured newest execution steps verbatim.
  */
-export function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
-    const search = transformMessagesForSearch(rawHistory, state, logger);
+export function selectDeterministicCompressionSpan(rawHistory, state, protectedTurns) {
+    const search = transformMessagesForSearch(rawHistory, state);
     const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
     const syntheticMap = search.syntheticMap;
     const representedBlockAnchors = new Set([...syntheticMap.values()].map((summary) => summary.anchorMessageId));
@@ -54,8 +54,8 @@ export function selectDeterministicCompressionSpan(rawHistory, state, logger, pr
         protectedMessageIds,
     };
 }
-export function deriveAutomaticProtectedTail(rawMessages, state, logger, protectedTurns) {
-    const span = selectDeterministicCompressionSpan(rawMessages, state, logger, protectedTurns);
+export function deriveAutomaticProtectedTail(rawMessages, state, protectedTurns) {
+    const span = selectDeterministicCompressionSpan(rawMessages, state, protectedTurns);
     return {
         protectedMessageIds: span.protectedMessageIds,
         hasSelectableMessages: span.messageIds.length > 0,

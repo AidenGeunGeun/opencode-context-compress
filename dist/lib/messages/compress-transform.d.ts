@@ -1,6 +1,5 @@
 import type { SessionState, WithParts } from "../state/index.js";
-import type { Logger } from "../logger.js";
-export declare const applyCompressTransforms: (state: SessionState, logger: Logger, messages: WithParts[]) => void;
+export declare const applyCompressTransforms: (state: SessionState, messages: WithParts[]) => void;
 export interface TransformMessagesForSearchResult {
     transformed: WithParts[];
     syntheticMap: Map<string, SessionState["compressSummaries"][number]>;
@@ -23,6 +22,6 @@ export declare function findActiveManagementTurn(state: SessionState, rawMessage
 export declare function buildManagementTurnSuppressionPlan(state: SessionState, rawMessages: WithParts[]): ManagementTurnSuppressionPlan;
 /** Remove exact Version 2 machinery from material selected into a future summary. */
 export declare function stripV2MachineryForCompressionSelection(messages: WithParts[], state: SessionState): WithParts[];
-export declare const transformMessagesForSearch: (rawMessages: WithParts[], state: SessionState, logger: Logger) => TransformMessagesForSearchResult;
+export declare const transformMessagesForSearch: (rawMessages: WithParts[], state: SessionState) => TransformMessagesForSearchResult;
 export {};
 //# sourceMappingURL=compress-transform.d.ts.map

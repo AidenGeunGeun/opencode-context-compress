@@ -1,6 +1,6 @@
 import { applyCompressTransforms } from "./compress-transform.js";
 import { isIgnoredUserMessage } from "./utils.js";
-export function transformV2Messages(raw, state, logger, modelMessages) {
+export function transformV2Messages(raw, state, modelMessages) {
     const projected = new Map(raw.map((message) => [message.info.id, message]));
     const tools = new Map();
     for (const message of raw) {
@@ -61,7 +61,7 @@ export function transformV2Messages(raw, state, logger, modelMessages) {
         return messages;
     };
     const transformed = structuredClone(raw);
-    applyCompressTransforms(state, logger, transformed);
+    applyCompressTransforms(state, transformed);
     return [
         ...transformed.flatMap((message) => [
             ...(before.get(message.info.id) ?? []),

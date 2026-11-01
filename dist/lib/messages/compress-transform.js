@@ -5,8 +5,8 @@ import { formatCompressBlockContent, orderCompressBlocks } from "./blocks.js";
 const COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output pruned to save context.]";
 const COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 const COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
-export const applyCompressTransforms = (state, logger, messages) => {
-    filterCompressedRanges(state, logger, messages);
+export const applyCompressTransforms = (state, messages) => {
+    filterCompressedRanges(state, messages);
     stripCompressedTools(state, messages);
     stripToolOutputs(state, messages);
     stripToolInputs(state, messages);
@@ -253,7 +253,7 @@ function createRetainedUserMessage(message, retainedText) {
         parts: [retainedPart],
     };
 }
-export const transformMessagesForSearch = (rawMessages, state, logger) => {
+export const transformMessagesForSearch = (rawMessages, state) => {
     // Legacy residue repair runs by content signature alone, independent of persisted
     // `managementTurns`, so it must be checked even when that state is empty, wrong, or
     // incomplete - it is the only thing that can find orphaned artifacts in that case.
@@ -318,10 +318,6 @@ export const transformMessagesForSearch = (rawMessages, state, logger) => {
             const syntheticMessage = createSyntheticUserMessage(msg, formatCompressBlockContent(block), msg.info.variant, summary.anchorMessageId);
             transformed.push(syntheticMessage);
             syntheticMap.set(syntheticMessage.info.id, summary);
-            logger.info("Injected compress summary", {
-                anchorMessageId: msgId,
-                summaryLength: summary.summary.length,
-            });
         }
         const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId);
         if (retainedParts && !state.compressed.messageIds.has(msgId)) {
@@ -456,8 +452,8 @@ const stripToolErrors = (state, messages) => {
         }
     }
 };
-const filterCompressedRanges = (state, logger, messages) => {
-    const { transformed } = transformMessagesForSearch(messages, state, logger);
+const filterCompressedRanges = (state, messages) => {
+    const { transformed } = transformMessagesForSearch(messages, state);
     messages.length = 0;
     messages.push(...transformed);
 };

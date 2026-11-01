@@ -258,10 +258,6 @@ async function loadSessionState(sessionId, logger, messages) {
       }));
     }
   }
-  logger.info("Loaded session state from disk", {
-    sessionId,
-    migrated
-  });
   const managementTurns = normalizeManagementTurns(state.managementTurns);
   const result = {
     sessionName: state.sessionName,
@@ -1391,8 +1387,8 @@ ${block.summary.summary}`;
 var COMPRESSED_TOOL_OUTPUT_REPLACEMENT = "[Output pruned to save context.]";
 var COMPRESSED_TOOL_ERROR_INPUT_REPLACEMENT = "[input removed due to failed tool call]";
 var COMPRESSED_QUESTION_INPUT_REPLACEMENT = "[questions removed - see output for user's answers]";
-var applyCompressTransforms = (state, logger, messages) => {
-  filterCompressedRanges(state, logger, messages);
+var applyCompressTransforms = (state, messages) => {
+  filterCompressedRanges(state, messages);
   stripCompressedTools(state, messages);
   stripToolOutputs(state, messages);
   stripToolInputs(state, messages);
@@ -1595,7 +1591,7 @@ function createRetainedUserMessage(message, retainedText) {
     parts: [retainedPart]
   };
 }
-var transformMessagesForSearch = (rawMessages, state, logger) => {
+var transformMessagesForSearch = (rawMessages, state) => {
   const legacyPlan = buildLegacyResidueSuppressionPlan(rawMessages);
   const v2Plan = buildV2CleanupPlan(state, rawMessages);
   const hasLegacyFindings = legacyPlan.suppressedMessageIds.size > 0 || legacyPlan.retainedTextByMessageId.size > 0;
@@ -1644,10 +1640,6 @@ var transformMessagesForSearch = (rawMessages, state, logger) => {
       const syntheticMessage = createSyntheticUserMessage(msg, formatCompressBlockContent(block), msg.info.variant, summary.anchorMessageId);
       transformed.push(syntheticMessage);
       syntheticMap.set(syntheticMessage.info.id, summary);
-      logger.info("Injected compress summary", {
-        anchorMessageId: msgId,
-        summaryLength: summary.summary.length
-      });
     }
     const retainedParts = v2Plan.retainedPartsByMessageId.get(msgId);
     if (retainedParts && !state.compressed.messageIds.has(msgId)) {
@@ -1781,8 +1773,8 @@ var stripToolErrors = (state, messages) => {
     }
   }
 };
-var filterCompressedRanges = (state, logger, messages) => {
-  const { transformed } = transformMessagesForSearch(messages, state, logger);
+var filterCompressedRanges = (state, messages) => {
+  const { transformed } = transformMessagesForSearch(messages, state);
   messages.length = 0;
   messages.push(...transformed);
 };
@@ -1805,8 +1797,8 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
   }
   return messages.slice(protectedStart).map((message) => message.info.id);
 }
-function selectDeterministicCompressionSpan(rawHistory, state, logger, protectedTurns) {
-  const search = transformMessagesForSearch(rawHistory, state, logger);
+function selectDeterministicCompressionSpan(rawHistory, state, protectedTurns) {
+  const search = transformMessagesForSearch(rawHistory, state);
   const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
   const syntheticMap = search.syntheticMap;
   const representedBlockAnchors = new Set([...syntheticMap.values()].map((summary) => summary.anchorMessageId));
@@ -1837,8 +1829,8 @@ function selectDeterministicCompressionSpan(rawHistory, state, logger, protected
     protectedMessageIds
   };
 }
-function deriveAutomaticProtectedTail(rawMessages, state, logger, protectedTurns) {
-  const span = selectDeterministicCompressionSpan(rawMessages, state, logger, protectedTurns);
+function deriveAutomaticProtectedTail(rawMessages, state, protectedTurns) {
+  const span = selectDeterministicCompressionSpan(rawMessages, state, protectedTurns);
   return {
     protectedMessageIds: span.protectedMessageIds,
     hasSelectableMessages: span.messageIds.length > 0
@@ -1921,7 +1913,7 @@ async function stageManagementTurnWithinLock(ctx) {
       return false;
     };
   }
-  const automaticTail = ctx.source === "automatic" ? deriveAutomaticProtectedTail(messages, state, logger, ctx.protectedTurns ?? 0) : undefined;
+  const automaticTail = ctx.source === "automatic" ? deriveAutomaticProtectedTail(messages, state, ctx.protectedTurns ?? 0) : undefined;
   if (ctx.source === "automatic" && !automaticTail?.hasSelectableMessages) {
     logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
       sessionId,
@@ -3524,7 +3516,7 @@ function outputChars(output) {
 }
 
 // lib/messages/v2-transform.ts
-function transformV2Messages(raw, state, logger, modelMessages) {
+function transformV2Messages(raw, state, modelMessages) {
   const projected = new Map(raw.map((message) => [message.info.id, message]));
   const tools = new Map;
   for (const message of raw) {
@@ -3575,7 +3567,7 @@ function transformV2Messages(raw, state, logger, modelMessages) {
     return messages;
   };
   const transformed = structuredClone(raw);
-  applyCompressTransforms(state, logger, transformed);
+  applyCompressTransforms(state, transformed);
   return [
     ...transformed.flatMap((message) => [
       ...before.get(message.info.id) ?? [],
@@ -3914,7 +3906,7 @@ function createCompressTool(ctx) {
           const remaining = getPostCompressionCooldownRemaining(state, rawMessages);
           throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
         }
-        const span = selectDeterministicCompressionSpan(boundary.history, state, logger, ctx.config.protectedTurns);
+        const span = selectDeterministicCompressionSpan(boundary.history, state, ctx.config.protectedTurns);
         if (span.messages.length === 0) {
           return { kind: "empty" };
         }
@@ -4223,7 +4215,7 @@ async function setup(context) {
       if (kind === "context")
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
-      transformed = transformV2Messages(messages, state, logger, event.messages);
+      transformed = transformV2Messages(messages, state, event.messages);
       event.messages.splice(0, event.messages.length, ...transformed);
       if (before !== undefined && before !== after)
         prunedFrontiers.set(event.sessionID, before);
@@ -4329,5 +4321,5 @@ export {
   cc_work_default as default
 };
 
-//# debugId=D670CBF55B8D484164756E2164756E21
+//# debugId=34778D5FA06DAD4C64756E2164756E21
 //# sourceMappingURL=index.js.map

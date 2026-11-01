@@ -125,7 +125,7 @@ export function createCompressTool(ctx) {
                     const remaining = getPostCompressionCooldownRemaining(state, rawMessages);
                     throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
                 }
-                const span = selectDeterministicCompressionSpan(boundary.history, state, logger, ctx.config.protectedTurns);
+                const span = selectDeterministicCompressionSpan(boundary.history, state, ctx.config.protectedTurns);
                 if (span.messages.length === 0) {
                     return { kind: "empty" };
                 }
