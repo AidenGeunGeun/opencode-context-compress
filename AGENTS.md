@@ -44,7 +44,10 @@ compatible with existing blocks, management turns, cooldowns, auto overrides, an
 migration directory; ignore retired fields.
 
 Background pruning (`lib/messages/prune.ts`) is programmatic and never prompts the agent. Its marks
-live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event.
+live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event. On
+Anthropic it sends the prune frontier to the next primary request in the `x-opencode-cache-anchors`
+header, which the `anthropic-auth` plugin turns into a cache marker before signing. The prune rule
+prices Anthropic rewrites from that marker, so it depends on that plugin.
 
 ## Structure
 

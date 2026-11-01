@@ -8,6 +8,8 @@ import { deriveProtectedTailMessageIds } from "./context-map.js"
 const PROTECTED_STEPS = 10
 // A media item costs about 1,600 tokens whatever its data-URI length; this is its rough character equivalent.
 const MEDIA_CHARS = 6_000
+// A prune may cost up to this multiple of the stale reads paid so far, in exchange for a smaller context.
+const REWRITE_TOLERANCE = 1.5
 // Change records, delegated work, plans, and the plugin's own machinery stay verbatim.
 const PROTECTED_TOOLS = new Set([
     "patch",
@@ -33,38 +35,43 @@ const PROTECTED_TOOLS = new Set([
  * and the provider's prompt cache holds.
  *
  * An event prunes every candidate at once, by rent or buy: stale outputs keep being re-read from the
- * cache until those reads add up to a quarter of the cost of rewriting the cache after them. This
- * needs no guess of how long the session will run, and it never prunes on every step. Costs count
- * characters, since the tokenizer ratio cancels out; a cached read costs 0.1 of an uncached input.
+ * cache until those reads reach 1 / REWRITE_TOLERANCE of the cost of the cache rewrite the prune
+ * causes. This needs no guess of how long the session will run, and it never prunes on every step.
+ * Costs count characters, since the tokenizer ratio cancels out; a cached read costs 0.1 of an
+ * uncached input.
+ *
+ * A provider can only resume the cache at a marker an earlier request placed. Without one before the
+ * first pruned output, the rewrite starts at the end of the system prompt and covers the whole
+ * conversation. `anchored` says the request carries a marker just before the prune frontier (see
+ * `pruneFrontier`), so the rewrite starts there.
  */
 export async function pruneStaleToolOutputs(
     messages: WithParts[],
     state: SessionState,
     logger: Logger,
+    anchored: boolean,
 ): Promise<void> {
     // A management turn is about to fold the tail, which rewrites it anyway.
     if (findActiveManagementTurn(state, messages)) return
 
-    const tail = messages.slice(messages.findLastIndex((m) => isMessageCompacted(state, m)) + 1)
+    const tail = currentTail(messages, state)
     const recent = new Set(deriveProtectedTailMessageIds(tail, PROTECTED_STEPS))
     const candidates = tail.flatMap((message, index) =>
         recent.has(message.info.id)
             ? []
-            : message.parts.flatMap((part) =>
-                  part.type === "tool" &&
-                  !PROTECTED_TOOLS.has(part.tool) &&
-                  !state.compressed.toolIds.has(part.callID) &&
-                  (part.state.status === "completed" || part.state.status === "error")
-                      ? [{ index, part }]
-                      : [],
-              ),
+            : message.parts.flatMap((part) => (isPrunable(part, state) ? [{ index, part }] : [])),
     )
     if (candidates.length === 0) return
 
     const prunedChars = candidates.reduce((total, { part }) => total + prunableChars(part), 0)
-    const suffixChars = tail
-        .slice(candidates[0].index)
-        .reduce((total, message) => total + messageChars(message, state), 0)
+    const suffixChars = anchored
+        ? tail
+              .slice(candidates[0].index)
+              .reduce((total, message) => total + messageChars(message, state), 0)
+        : state.compressSummaries.reduce((total, block) => total + block.summary.length, 0) +
+          messages
+              .filter((message) => !isMessageCompacted(state, message))
+              .reduce((total, message) => total + messageChars(message, state), 0)
     const stepsAfter: number[] = []
     tail.reduceRight((after, message, index) => {
         stepsAfter[index] = after
@@ -77,9 +84,7 @@ export async function pruneStaleToolOutputs(
         0,
     )
     const rewrite = (suffixChars - prunedChars) * 0.9
-    // Weighting rent 4x prunes earlier for a smaller context; a replay of recorded sessions kept
-    // average context about 25% lower with net savings in every session.
-    if (rent * 4 < rewrite) return
+    if (rent * REWRITE_TOLERANCE < rewrite) return
 
     const candidateState: SessionState = {
         ...state,
@@ -104,7 +109,32 @@ export async function pruneStaleToolOutputs(
         prunedChars,
         suffixChars,
         rent,
+        anchored,
     })
+}
+
+/**
+ * The oldest tool call a later prune may still change. Everything before it stays byte-identical
+ * until the next fold, so a cache marker placed just before its message lets a prune rewrite only
+ * what follows.
+ */
+export function pruneFrontier(messages: WithParts[], state: SessionState): string | undefined {
+    return currentTail(messages, state)
+        .flatMap((message) => message.parts)
+        .find((part) => isPrunable(part, state))?.callID
+}
+
+function currentTail(messages: WithParts[], state: SessionState) {
+    return messages.slice(messages.findLastIndex((m) => isMessageCompacted(state, m)) + 1)
+}
+
+function isPrunable(part: WithParts["parts"][number], state: SessionState): part is ToolPart {
+    return (
+        part.type === "tool" &&
+        !PROTECTED_TOOLS.has(part.tool) &&
+        !state.compressed.toolIds.has(part.callID) &&
+        (part.state.status === "completed" || part.state.status === "error")
+    )
 }
 
 function prunableChars(part: ToolPart): number {

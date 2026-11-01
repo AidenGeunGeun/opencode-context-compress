@@ -107,6 +107,14 @@ export interface ModelHookInput {
     options: Record<string, unknown>
 }
 
+export interface ModelRequestHookInput {
+    sessionID: string
+    agent: string
+    model: { providerID: string; id: string }
+    kind: "primary" | "compaction" | "title" | "generate"
+    headers: Record<string, string>
+}
+
 export interface HostFake {
     readonly location: { readonly directory: string }
     readonly command: {
@@ -122,8 +130,8 @@ export interface HostFake {
     readonly session: Session & {
         readonly get: (input: { sessionID: string }) => Promise<SessionInfo>
         readonly hook?: (
-            name: "context" | "generate",
-            callback: (input: ModelHookInput) => Promise<void> | void,
+            name: "context" | "generate" | "model.request",
+            callback: (input: ModelHookInput | ModelRequestHookInput) => Promise<void> | void,
         ) => Promise<Registration>
     }
     readonly model: {

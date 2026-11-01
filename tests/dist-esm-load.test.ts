@@ -135,7 +135,7 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
                 tools.map((tool) => tool.name),
                 ["compress", "squash"],
             )
-            assert.deepEqual([...hooks.keys()], ["context", "generate"])
+            assert.deepEqual([...hooks.keys()], ["context", "generate", "model.request"])
 
             await commands[0].execute({
                 sessionID,

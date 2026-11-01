@@ -43,8 +43,11 @@ squash turn, in which the agent chooses the range.
 
 Before each request, the plugin also replaces outputs of tool calls older than the newest 10 steps
 with a one-line stub, without involving the agent. It prunes in batches: once re-reading the stale
-outputs from the cache has cost a quarter of rewriting the cache after them. Edits, patches, writes,
-and subagent, skill, todo, and question results stay intact.
+outputs from the cache has cost two thirds of the cache rewrite the prune causes. That rewrite covers
+the whole conversation after the system prompt, except on Anthropic models, where the `anthropic-auth`
+plugin places a cache marker before the oldest prunable output so the rewrite starts there. Pruning
+assumes that marker, so install `anthropic-auth` alongside this plugin for Anthropic models.
+Edits, patches, writes, and subagent, skill, todo, and question results stay intact.
 
 Optional plugin settings live in `compress.jsonc` under the OpenCode config directory or in a project's `.opencode` directory:
 
