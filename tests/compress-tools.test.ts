@@ -174,15 +174,18 @@ describe("single-tool compression", () => {
         it(`${source} compression selects the full eligible history in one call`, async () => {
             const result = await executePath(source)
             try {
-                assert.match(result.receipt, /fold is already in effect/)
-                if (source === "automatic") {
-                    assert.match(
-                        result.receipt,
-                        /Automatic compression finished.*Continue the original work now/i,
-                    )
-                    assert.match(result.receipt, /already complete or awaiting the user/i)
-                    assert.doesNotMatch(result.receipt, /Continue the original task now/i)
-                }
+                const opening = {
+                    normal: /^Context compression finished\. Earlier messages/,
+                    manual: /^Context compression finished, as the user requested with \/compress manage\./,
+                    automatic: /^Automatic context compression finished\. The plugin started it/,
+                }[source]
+                assert.match(result.receipt, opening)
+                assert.match(result.receipt, /summarized in block \[b0\] "/)
+                assert.match(result.receipt, /continue the task that was in progress/i)
+                assert.match(
+                    result.receipt,
+                    /Do not call compress or squash again unless the user asks in a new message/,
+                )
                 assert.deepEqual(result.state.compressSummaries[0].messageIds, [
                     "old-user",
                     "old-step",
@@ -255,7 +258,7 @@ describe("single-tool compression", () => {
                 toolContext(sessionId, "compress-message", callID),
             )
 
-            assert.match(receipt, /Automatic compression finished/)
+            assert.match(receipt, /^Automatic context compression finished/)
             assert.deepEqual(state.compressSummaries[0].messageIds, ["old-user", "old-step"])
             assert.ok(state.managementTurns[0].completedAt)
         } finally {

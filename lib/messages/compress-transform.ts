@@ -222,9 +222,19 @@ function buildV2CleanupPlan(state: SessionState, rawMessages: WithParts[]): V2Cl
         if (triggerIndex === undefined) return false
         return !rawMessages.slice(triggerIndex + 1).some(isVisibleUserMessage)
     })
-    const newestCompleted = [...turns]
-        .reverse()
-        .find((turn) => turn.completedAt && turn.completedMessageId)
+    // Only a turn whose completing message holds its tool call left a receipt. An automatic squash the
+    // agent never answered is closed without one, and must not hide the compress receipt before it.
+    const newestCompleted = [...turns].reverse().find((turn) => {
+        const index = turn.completedMessageId
+            ? indexByMessageId.get(turn.completedMessageId)
+            : undefined
+        return (
+            index !== undefined &&
+            rawMessages[index].parts.some(
+                (part) => part.type === "tool" && part.tool === completionTool(turn),
+            )
+        )
+    })
     const visibleAnchors = turns.flatMap((turn) =>
         [
             indexByMessageId.get(turn.triggerMessageId),

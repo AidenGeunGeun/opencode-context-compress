@@ -77,7 +77,7 @@ function buildDetailedMessage(args: {
         25,
     )
 
-    message += `\n\n▣ Compressing (${rangeTokenCountLabel}) ${progressBar}`
+    message += `\n\n▣ Compressed (${rangeTokenCountLabel}) ${progressBar}`
     message += `\n→ Topic: ${topic}`
     message += `\n→ Items: ${itemCount} ${itemCount === 1 ? "entry" : "entries"}`
     message += toolIds.length > 0 ? ` and ${toolIds.length} tools condensed` : " condensed"

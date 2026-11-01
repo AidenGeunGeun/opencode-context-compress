@@ -49,12 +49,15 @@ Anthropic it sends the prune frontier to the next primary request in the `x-open
 header, which the `anthropic-auth` plugin turns into a cache marker before signing. The prune rule
 prices Anthropic rewrites from that marker, so it depends on that plugin.
 
+The compress and squash receipts are the only messages the agent gets after either operation. Keep
+them in the tool result: a message added to one request and dropped from the next breaks the cache.
+
 ## Structure
 
 - `index.ts` exports the Promise plugin.
 - `lib/plugin.ts` registers commands, tools, hooks, and events.
 - `lib/commands` implements command behavior.
-- `lib/messages` owns projection, selection, transforms, cleanup, and notices.
+- `lib/messages` owns projection, selection, transforms, and cleanup.
 - `lib/state` owns per-session locking, persistence, migration, and native-compaction reconciliation.
 - `lib/tools` owns durable compress and squash writes.
 - `lib/sdk` owns the client and session message listing.

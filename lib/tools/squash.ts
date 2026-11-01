@@ -2,7 +2,7 @@ import type { CompressSummary, SessionState, WithParts } from "../state/index.js
 import type { CompressToolContext, ToolDefinition } from "./types.js"
 import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
-import { loadPrompt } from "../prompts/index.js"
+import { loadPrompt, renderPostCompressionNotice } from "../prompts/index.js"
 import { estimateTokensBatch } from "../token-utils.js"
 import { findActiveManagementTurn } from "../messages/compress-transform.js"
 import {
@@ -187,17 +187,15 @@ export function createSquashTool(ctx: CompressToolContext): ToolDefinition<Squas
 
             await sendSquashNotification(client, logger, ctx.config, sessionId, outcome)
 
-            // The trigger message is hidden once the turn completes, so the receipt says who asked.
+            // The receipt is the only post-squash message the agent sees, and the trigger message is
+            // hidden once the turn completes, so it says who asked.
             const opening =
                 outcome.requestedBy === "automatic"
-                    ? "Automatic squash complete; it ran because the compressed blocks were over their size limit."
+                    ? "Automatic squash finished. The plugin started it because the compressed blocks passed their automatic squash threshold."
                     : outcome.requestedBy === "user"
-                      ? "Squash complete, as the user requested with /compress squash."
-                      : "Squash complete."
-            const receipt = `${opening} Replaced [${outcome.oldFrom}]-[${outcome.oldTo}] with [${outcome.newLabel}] "${outcome.topic}" durably; the replacement is already in effect. Uncompressed history was untouched. Do not call squash or compress again this turn.`
-            return outcome.requestedBy === "automatic"
-                ? `${receipt} Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.`
-                : receipt
+                      ? "Squash finished, as the user requested with /compress squash."
+                      : "Squash finished."
+            return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}"; later blocks keep their order under new labels. Only those older summaries changed; the recent conversation is untouched.\n\n${renderPostCompressionNotice()}`
         },
     }
 }

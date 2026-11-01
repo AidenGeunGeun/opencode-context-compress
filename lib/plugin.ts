@@ -6,12 +6,9 @@ import { getConfig } from "./config.js"
 import { generateNativeCompactionNoticeId } from "./commands/manage.js"
 import { handleCompressCommand } from "./commands/route.js"
 import { Logger } from "./logger.js"
-import { findActiveManagementTurn } from "./messages/compress-transform.js"
-import { isPostCompressionNoticeDue } from "./messages/post-compression-notice.js"
 import { pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js"
 import type { ModelMessage } from "./messages/v2-transform.js"
 import { transformV2Messages } from "./messages/v2-transform.js"
-import { renderPostCompressionNotice } from "./prompts/index.js"
 import { isRecord } from "./shared-utils.js"
 import {
     listSessionMessages,
@@ -155,16 +152,6 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 logger,
                 event.messages as unknown as ModelMessage[],
             )
-            if (
-                kind === "context" &&
-                isPostCompressionNoticeDue(state, messages) &&
-                !findActiveManagementTurn(state, messages)
-            ) {
-                transformed.push({
-                    role: "user",
-                    content: [{ type: "text", text: renderPostCompressionNotice() }],
-                })
-            }
             event.messages.splice(
                 0,
                 event.messages.length,

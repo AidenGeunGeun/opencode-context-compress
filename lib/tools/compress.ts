@@ -2,7 +2,7 @@ import type { SessionState, WithParts } from "../state/index.js"
 import type { CompressToolContext, ToolDefinition } from "./types.js"
 import { commitDurableSessionState, reconcileSessionLifecycle } from "../state/index.js"
 import { saveSessionState } from "../state/persistence.js"
-import { loadPrompt } from "../prompts/index.js"
+import { loadPrompt, renderPostCompressionNotice } from "../prompts/index.js"
 import { estimateTokensBatch } from "../token-utils.js"
 import { collectContentInRange, collectToolIdsInRange } from "./utils.js"
 import { sendCompressNotification } from "../ui/notification.js"
@@ -120,12 +120,20 @@ export function resolveCompressionBoundary(
     return { history: rawMessages.slice(0, owner.index) }
 }
 
-function buildCompressReceipt(topic: string, blockId: string, restoreDisposition: boolean): string {
-    const stored = `Compression complete. Stored [${blockId}] "${topic}" durably; the fold is already in effect.`
-    const finish = `${stored} Do not call compress again this turn.`
-    return restoreDisposition
-        ? `${finish} Automatic compression finished. Continue the original work now, unless the preserved execution steps show it was already complete or awaiting the user.`
-        : finish
+// The receipt is the only post-compression message the agent sees. It stays in history unchanged, so
+// it never breaks the prompt cache, and the trigger message is hidden by then, so it says who asked.
+function buildCompressReceipt(
+    topic: string,
+    blockId: string,
+    requestedBy: "automatic" | "user" | undefined,
+): string {
+    const opening =
+        requestedBy === "automatic"
+            ? "Automatic context compression finished. The plugin started it because the conversation passed its automatic compression threshold."
+            : requestedBy === "user"
+              ? "Context compression finished, as the user requested with /compress manage."
+              : "Context compression finished."
+    return `${opening} Earlier messages are now summarized in block [${blockId}] "${topic}", which appears earlier in this conversation; the newest steps remain verbatim.\n\n${renderPostCompressionNotice()}`
 }
 
 export function createCompressTool(ctx: CompressToolContext): ToolDefinition<CompressInput> {
@@ -277,7 +285,11 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
                     summary,
                     estimatedCompressedTokens,
                     storedBlockId: storedBlock.label,
-                    continueTask: boundary.managementTurn?.source === "automatic",
+                    requestedBy: boundary.managementTurn
+                        ? boundary.managementTurn.source === "automatic"
+                            ? ("automatic" as const)
+                            : ("user" as const)
+                        : undefined,
                 }
             })
 
@@ -304,7 +316,7 @@ export function createCompressTool(ctx: CompressToolContext): ToolDefinition<Com
             const receipt = buildCompressReceipt(
                 outcome.topic,
                 outcome.storedBlockId,
-                outcome.continueTask,
+                outcome.requestedBy,
             )
             return receipt
         },

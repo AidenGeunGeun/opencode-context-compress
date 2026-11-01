@@ -266,7 +266,7 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                 },
             )
 
-            assert.match(receipt, /Compression complete/)
+            assert.match(receipt, /Context compression finished/)
             assert.deepEqual(manager.get(sessionID).compressSummaries[0].messageIds, [
                 "old-user",
                 "old-assistant",
@@ -324,7 +324,7 @@ describe("beta tool and automatic lifecycle compatibility", () => {
                 },
             )
 
-            assert.match(receipt, /Squash complete/)
+            assert.match(receipt, /^Squash finished\. Blocks/)
             assert.equal(state.compressSummaries.length, 1)
             assert.deepEqual(state.compressSummaries[0].messageIds, ["block-a", "block-b"])
         } finally {

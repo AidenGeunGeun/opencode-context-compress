@@ -182,7 +182,7 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
                     progress: async () => undefined,
                 },
             )
-            assert.match(result.content, /Compression complete/)
+            assert.match(result.content, /compression finished/i)
 
             const sideMessages = [
                 ...modelMessages.map((message) => structuredClone(message)),

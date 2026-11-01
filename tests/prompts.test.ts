@@ -82,14 +82,15 @@ describe("compression prompts", () => {
         assert.equal(SQUASH.trim(), loadPrompt("squash-tool-spec").trim())
     })
 
-    it("delivers a transient post-compression reread notice", () => {
+    it("gives compress and squash receipts the same guidance on what comes next", () => {
         const output = renderPostCompressionNotice()
-        assert.match(output, /context was compressed/i)
+        assert.match(output, /context maintenance, not a new task/)
+        assert.match(output, /continue the task that was in progress/i)
+        assert.match(output, /Reload a file, skill, or instruction only when/)
         assert.match(
             output,
-            /reload the skills and project instructions required by the active task/i,
+            /Do not call compress or squash again unless the user asks in a new message/,
         )
-        assert.match(output, /continue the original task/i)
         assert.doesNotMatch(output, RETIRED)
     })
 })

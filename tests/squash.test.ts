@@ -455,9 +455,9 @@ describe("squash tool", () => {
         try {
             assert.match(
                 result.receipt,
-                /^Automatic squash complete; it ran because the compressed blocks/,
+                /^Automatic squash finished\. The plugin started it because the compressed blocks/,
             )
-            assert.match(result.receipt, /Continue the original work now/)
+            assert.match(result.receipt, /continue the task that was in progress/i)
             assert.equal(result.state.compressSummaries.length, 5)
         } finally {
             await cleanup(result.sessionId)
@@ -469,11 +469,10 @@ describe("squash tool", () => {
         try {
             assert.match(
                 result.receipt,
-                /^Squash complete, as the user requested with \/compress squash\./,
+                /^Squash finished, as the user requested with \/compress squash\./,
             )
-            assert.match(result.receipt, /Replaced \[b1\]-\[b12\] with \[b1\]/)
-            assert.match(result.receipt, /Uncompressed history was untouched/)
-            assert.doesNotMatch(result.receipt, /Continue the original work/)
+            assert.match(result.receipt, /Blocks \[b1\]-\[b12\] are now one block, \[b1\]/)
+            assert.match(result.receipt, /the recent conversation is untouched/)
             assert.equal(result.state.compressSummaries.length, 9)
             assert.deepEqual(
                 result.state.compressSummaries.map((summary) => summary.anchorMessageId),
@@ -585,7 +584,10 @@ describe("squash tool", () => {
                     result.state.compressSummaries[from].summary,
                     result.replacementSummary,
                 )
-                assert.match(result.receipt, new RegExp(`Replaced \\[b${from}\\]-\\[b${to}\\]`))
+                assert.match(
+                    result.receipt,
+                    new RegExp(`Blocks \\[b${from}\\]-\\[b${to}\\] are now one block`),
+                )
             } finally {
                 await cleanup(result.sessionId)
             }
