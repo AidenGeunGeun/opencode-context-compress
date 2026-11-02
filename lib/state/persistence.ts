@@ -26,6 +26,7 @@ export interface PersistedCompressed {
 export interface PersistedSessionState {
     sessionName?: string
     compressed: PersistedCompressed
+    anthropicStubIds?: string[]
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     stats: SessionStats
@@ -300,6 +301,9 @@ export async function saveSessionState(
                 toolIds: [...sessionState.compressed.toolIds],
                 messageIds: [...sessionState.compressed.messageIds],
             },
+            ...(sessionState.anthropicStubIds
+                ? { anthropicStubIds: [...sessionState.anthropicStubIds] }
+                : {}),
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,

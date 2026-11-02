@@ -47,10 +47,14 @@ Background pruning (`lib/messages/prune.ts`) is programmatic and never prompts t
 live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event. On
 Anthropic it sends the prune frontier to the next primary request in the `x-opencode-cache-anchors`
 header, which the `anthropic-auth` plugin turns into a cache marker before signing. The prune rule
-prices Anthropic rewrites from that marker, so it depends on that plugin. Pruning is off for Anthropic
-(`lib/plugin.ts`): a changed message makes Anthropic drop every later thinking block, measured as about
-17k tokens of reasoning lost per prune on Claude Opus 5.5 (2026-11-02). The anchor code stays for when
-pruning returns there.
+prices Anthropic rewrites from that marker, so it depends on that plugin.
+
+Never change an earlier message in an Anthropic request. Anthropic drops every thinking block after a
+changed message, which cost Opus 5.5 its recent reasoning at every prune (2026-11-02). Anthropic requests
+show only the stubs in `anthropicStubIds`, fixed at a session's first Anthropic request; every later
+prune reaches Anthropic as server-side clearing (`clear_tool_uses_20250919`), which the API does not
+count as an edit. The `x-opencode-tool-clearing` header names the oldest call to keep and the protected
+tools, and `anthropic-auth` turns it into the clearing config before signing.
 
 OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exists only at the exact
 end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`

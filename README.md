@@ -5,9 +5,9 @@ three layers, so the agent rarely has to stop and summarize, and what it keeps s
 
 1. **Background pruning.** Before each request, outputs of tool calls older than the newest 10 steps
    become the stub `[Output pruned to save context.]`. No model call is involved. Edits, patches,
-   writes, and subagent, skill, todo, and question results always stay intact. Pruning is off on
-   Anthropic models for now: Anthropic drops every thinking block that follows a changed message, so a
-   prune there would discard the model's recent reasoning.
+   writes, and subagent, skill, todo, and question results always stay intact. On Anthropic models
+   the same outputs are cleared server-side instead, through the `anthropic-auth` plugin, because
+   Anthropic drops every thinking block that follows a message changed in the request.
 2. **Folds.** Near the context limit, the working agent itself writes a structured handoff into a
    compressed block `[bN]`, with no hidden summarizer. The newest steps stay verbatim.
 3. **Squash.** When a fold leaves more than 7 blocks or 100,000 summary characters, the agent merges
@@ -16,7 +16,9 @@ three layers, so the agent rarely has to stop and summarize, and what it keeps s
 Pruning keeps the provider's prompt cache warm. Request bytes change only when a prune fires, and
 prunes are batched: one fires once re-reading the stale outputs from the cache has cost two thirds of
 the cache rewrite the prune causes. That rewrite covers the whole conversation after the system
-prompt.
+prompt, except on Anthropic models, where `anthropic-auth` places a cache marker before the oldest
+prunable output so the rewrite starts there. Install `anthropic-auth` alongside this plugin for
+Anthropic models; without it, their prunes have no effect.
 
 A fold's handoff keeps the user's intended outcome and latest request, confirmed decisions apart from
 proposals, current evidence and work state, and the references needed to continue. After a fold,
@@ -59,9 +61,9 @@ checkout's absolute `dist` path.
 
 ## Configure
 
-Pruning runs on every non-Anthropic model while the plugin is enabled. Automatic folds and squashes
-are on by default and follow `autoCompression`. Optional settings live in `compress.jsonc` under the
-OpenCode config directory or in a project's `.opencode` directory:
+Pruning runs on every model while the plugin is enabled. Automatic folds and squashes are on by
+default and follow `autoCompression`. Optional settings live in `compress.jsonc` under the OpenCode
+config directory or in a project's `.opencode` directory:
 
 ```jsonc
 {

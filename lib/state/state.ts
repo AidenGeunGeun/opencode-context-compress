@@ -14,6 +14,7 @@ export interface SessionStateSyncResult {
 
 export function commitDurableSessionState(state: SessionState, candidate: SessionState): void {
     state.compressed = candidate.compressed
+    state.anthropicStubIds = candidate.anthropicStubIds
     state.compressSummaries = candidate.compressSummaries
     state.managementTurns = candidate.managementTurns
     state.stats = candidate.stats
@@ -41,6 +42,8 @@ function applyPersistedState(
         toolIds: new Set(persistedState.compressed.toolIds || []),
         messageIds: new Set(persistedState.compressed.messageIds || []),
     }
+    state.anthropicStubIds =
+        persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds)
     state.compressSummaries = persistedState.compressSummaries || []
     state.managementTurns = persistedState.managementTurns || []
     state.stats = {
@@ -255,6 +258,9 @@ export async function reconcileSessionLifecycle(
             messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
             toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id))),
         },
+        anthropicStubIds:
+            state.anthropicStubIds &&
+            new Set([...state.anthropicStubIds].filter((id) => !droppedTools.has(id))),
         compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary)),
     }
     if (!(await saveSessionState(candidate, logger))) {

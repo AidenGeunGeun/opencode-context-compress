@@ -11,7 +11,7 @@ const MEDIA_CHARS = 6_000
 // A prune may cost up to this multiple of the stale reads paid so far, in exchange for a smaller context.
 const REWRITE_TOLERANCE = 1.5
 // Change records, delegated work, plans, and the plugin's own machinery stay verbatim.
-const PROTECTED_TOOLS = new Set([
+export const PROTECTED_TOOLS = new Set([
     "patch",
     "edit",
     "write",

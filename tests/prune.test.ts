@@ -14,7 +14,9 @@ import {
 } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { pruneFrontier, pruneStaleToolOutputs } = await import("../lib/messages/prune.ts")
+const { PROTECTED_TOOLS, pruneFrontier, pruneStaleToolOutputs } = await import(
+    "../lib/messages/prune.ts"
+)
 const { setup } = await import("../lib/plugin.ts")
 const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
 const { Logger } = await import("../lib/logger.ts")
@@ -210,7 +212,7 @@ describe("background pruning", () => {
         assert.equal(pruneFrontier(messages, state), undefined)
     })
 
-    it("never prunes Anthropic requests and anchors their frontier for the next primary request only", async () => {
+    it("prunes Anthropic requests server-side, with both frontiers anchored for the next primary request", async () => {
         const messages = transcript(
             [
                 ["subagent", "s".repeat(300_000)],
@@ -241,16 +243,38 @@ describe("background pruning", () => {
                 event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
             }),
         )
-        const context = (providerID: string) =>
-            hooks.get("context")?.({
+        const context = async (providerID: string) => {
+            const event = {
                 sessionID: "s",
                 agent: "build",
                 model: { providerID, id: "model" },
                 system: [],
-                messages: modelRequest(messages),
+                // Each call gets its result, so a stub would show in the request.
+                messages: modelRequest(messages).flatMap((message) => [
+                    message,
+                    ...message.content.flatMap((part) =>
+                        part.type === "tool-call"
+                            ? [
+                                  {
+                                      role: "tool" as const,
+                                      content: [
+                                          {
+                                              type: "tool-result",
+                                              id: part.id,
+                                              result: { type: "text", value: "original" },
+                                          },
+                                      ],
+                                  },
+                              ]
+                            : [],
+                    ),
+                ]),
                 tools: {},
                 options: {},
-            })
+            }
+            await hooks.get("context")?.(event)
+            return JSON.stringify(event.messages).includes("[Output pruned to save context.]")
+        }
         const request = async (kind: ModelRequestHookInput["kind"]) => {
             const headers: Record<string, string> = {}
             await hooks.get("model.request")?.({
@@ -260,20 +284,22 @@ describe("background pruning", () => {
                 kind,
                 headers,
             })
-            return headers["x-opencode-cache-anchors"]
+            return [headers["x-opencode-cache-anchors"], headers["x-opencode-tool-clearing"]]
         }
+        const clearing = JSON.stringify({ from: "call-a4", exclude: [...PROTECTED_TOOLS] })
 
-        // A prune would move the frontier to call-a4; without one it stays at call-a1.
-        await context("anthropic")
-        assert.equal(await request("title"), undefined)
-        assert.equal(await request("primary"), "call-a1")
-        assert.equal(await request("primary"), undefined)
+        // The prune reaches Anthropic only as server-side clearing of the calls before call-a4.
+        assert.equal(await context("anthropic"), false)
+        assert.deepEqual(await request("title"), [undefined, undefined])
+        assert.deepEqual(await request("primary"), ["call-a1,call-a4", clearing])
+        assert.deepEqual(await request("primary"), [undefined, clearing])
 
-        await context("anthropic")
-        assert.equal(await request("primary"), "call-a1")
+        // A retry finds the prune already saved; the old frontier stays anchored until the next prune.
+        assert.equal(await context("anthropic"), false)
+        assert.deepEqual(await request("primary"), ["call-a1,call-a4", clearing])
 
-        await context("openai")
-        assert.equal(await request("primary"), undefined)
+        // Other providers see the stubs and send neither header.
+        assert.equal(await context("openai"), true)
     })
 
     it("does not prune while a management turn is open", async () => {

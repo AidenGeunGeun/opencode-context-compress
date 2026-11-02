@@ -6,7 +6,7 @@ import { getConfig } from "./config.js"
 import { generateNativeCompactionNoticeId } from "./commands/manage.js"
 import { handleCompressCommand } from "./commands/route.js"
 import { Logger } from "./logger.js"
-import { pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js"
+import { PROTECTED_TOOLS, pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js"
 import type { ModelMessage } from "./messages/v2-transform.js"
 import { transformV2Messages } from "./messages/v2-transform.js"
 import { isRecord } from "./shared-utils.js"
@@ -32,6 +32,7 @@ const NATIVE_AUTO_COMPACTION_NOTICE =
 // Tool call IDs a request should place a cache marker before; the anthropic-auth plugin applies them
 // to the wire body before it signs the request, because hook order between plugins is not fixed.
 const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors"
+const TOOL_CLEARING_HEADER = "x-opencode-tool-clearing"
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -104,10 +105,17 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
     // The frontier before each session's latest prune. It stays anchored until the next prune, so a retry of
     // a prune request that never reached the provider still resumes the cache there.
     const prunedFrontiers = new Map<string, string>()
+    // The frontier each session's latest Anthropic request anchored and cleared before. A prune on another
+    // provider moves the frontier too, so the next Anthropic request resumes the cache here.
+    const sentFrontiers = new Map<string, string>()
+    // Server-side clearing for each session's Anthropic requests: the calls before `from` are cleared. It
+    // stays set until the next context hook, so a retried request clears the same calls.
+    const clearings = new Map<string, string>()
     const applyCompression = async (event: SessionContext, kind: "context" | "generate") => {
         // Only Anthropic requests carry the anchor. Other providers have no markers; measured OpenAI reads
         // after an edit fall back to an earlier point, often the end of the system prompt.
-        const anchored = kind === "context" && event.model.providerID === "anthropic"
+        const anthropic = event.model.providerID === "anthropic"
+        const anchored = kind === "context" && anthropic
         if (kind === "context") anchors.delete(event.sessionID)
         setSessionSelection(client, event.sessionID, {
             agent: event.agent,
@@ -141,17 +149,18 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 if (!state.persistenceSynchronized)
                     throw new Error("Cannot load inherited fork compression state")
             }
+            // Anthropic drops every thinking block after a changed message. Fix the stubs it has seen before
+            // this request can prune; it sees later prunes only as server-side clearing (`clearings`).
+            if (anthropic) state.anthropicStubIds ??= new Set(state.compressed.toolIds)
+            const stubs = anthropic ? state.anthropicStubIds : undefined
             // A prune moves the frontier, so the request anchors both: it resumes the cache at the old
             // frontier and writes the new one for the next prune.
             const before = anchored ? pruneFrontier(messages, state) : undefined
-            // Anthropic drops every thinking block that follows a changed message, so a prune there
-            // discards the recent reasoning. Pruning stays off for Anthropic until it avoids that edit.
-            if (kind === "context" && event.model.providerID !== "anthropic")
-                await pruneStaleToolOutputs(messages, state, logger, anchored)
+            if (kind === "context") await pruneStaleToolOutputs(messages, state, logger, anchored)
             const after = anchored ? pruneFrontier(messages, state) : undefined
             transformed = transformV2Messages(
                 messages,
-                state,
+                stubs ? { ...state, compressed: { ...state.compressed, toolIds: stubs } } : state,
                 event.messages as unknown as ModelMessage[],
             )
             event.messages.splice(
@@ -159,12 +168,19 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 event.messages.length,
                 ...(transformed as unknown as typeof event.messages),
             )
-            if (before !== undefined && before !== after)
-                prunedFrontiers.set(event.sessionID, before)
+            const previous = sentFrontiers.get(event.sessionID) ?? before
+            if (anchored && previous !== undefined && previous !== after)
+                prunedFrontiers.set(event.sessionID, previous)
+            if (anchored && after !== undefined) sentFrontiers.set(event.sessionID, after)
             const ids = [...new Set([prunedFrontiers.get(event.sessionID), after])].filter(
                 (id) => id !== undefined,
             )
             if (anchored && ids.length > 0) anchors.set(event.sessionID, ids)
+            if (anchored)
+                clearings.set(
+                    event.sessionID,
+                    JSON.stringify({ from: after, exclude: [...PROTECTED_TOOLS] }),
+                )
         })
         if (kind === "context" && transformed)
             await logger.saveContext(event.sessionID, transformed)
@@ -179,6 +195,8 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
                 const ids = anchors.get(event.sessionID)
                 anchors.delete(event.sessionID)
                 if (ids) event.headers[CACHE_ANCHORS_HEADER] = ids.join(",")
+                const clearing = clearings.get(event.sessionID)
+                if (clearing) event.headers[TOOL_CLEARING_HEADER] = clearing
             },
             { providerID: "anthropic" },
         ),

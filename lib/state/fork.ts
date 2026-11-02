@@ -113,6 +113,10 @@ export async function inheritForkCompression(
                 parentState.state.compressed.toolIds.filter((id) => childTools.has(id)),
             ),
         },
+        // The fork replays the parent's thinking, so it must show Anthropic the same stubs.
+        anthropicStubIds:
+            parentState.state.anthropicStubIds &&
+            new Set(parentState.state.anthropicStubIds.filter((id) => childTools.has(id))),
         compressSummaries: summaries.map((summary) => ({
             ...summary,
             anchorMessageId: messageID(summary.anchorMessageId),
