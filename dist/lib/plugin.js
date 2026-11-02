@@ -120,7 +120,9 @@ export async function setup(context) {
             // A prune moves the frontier, so the request anchors both: it resumes the cache at the old
             // frontier and writes the new one for the next prune.
             const before = anchored ? pruneFrontier(messages, state) : undefined;
-            if (kind === "context")
+            // Anthropic drops every thinking block that follows a changed message, so a prune there
+            // discards the recent reasoning. Pruning stays off for Anthropic until it avoids that edit.
+            if (kind === "context" && event.model.providerID !== "anthropic")
                 await pruneStaleToolOutputs(messages, state, logger, anchored);
             const after = anchored ? pruneFrontier(messages, state) : undefined;
             transformed = transformV2Messages(messages, state, event.messages);

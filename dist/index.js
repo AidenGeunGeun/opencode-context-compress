@@ -4212,7 +4212,7 @@ async function setup(context) {
           throw new Error("Cannot load inherited fork compression state");
       }
       const before = anchored ? pruneFrontier(messages, state) : undefined;
-      if (kind === "context")
+      if (kind === "context" && event.model.providerID !== "anthropic")
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
       transformed = transformV2Messages(messages, state, event.messages);
@@ -4313,13 +4313,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var cc_work_default = Plugin.define({
+var context_compress_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  cc_work_default as default
+  context_compress_default as default
 };
 
-//# debugId=34778D5FA06DAD4C64756E2164756E21
+//# debugId=0ED557702E317C9064756E2164756E21
 //# sourceMappingURL=index.js.map
