@@ -22,7 +22,7 @@
         },
         "dailyLog": {
             "type": "boolean",
-            "description": "Write one-line activity entries to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only"
+            "description": "Write one-line activity entries to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only. Files older than 30 days are deleted"
         },
         "notification": {
             "type": "string",

@@ -69,7 +69,7 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
 export interface PluginConfig {
     enabled: boolean
     debug: boolean
-    /** Daily activity log. Follows `debug` when left unset. */
+    /** Daily activity log, kept for 30 days. Follows `debug` when left unset. */
     dailyLog?: boolean
     notification: "off" | "minimal" | "detailed"
     protectedTurns: number
