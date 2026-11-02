@@ -55,13 +55,4 @@ export async function handleStatsCommand(ctx: StatsCommandContext): Promise<void
     const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime)
 
     await sendIgnoredMessage(client, sessionId, message, logger)
-
-    logger.info("Stats command executed", {
-        sessionTokens,
-        sessionTools,
-        sessionMessages,
-        allTimeTokens: allTime.totalTokens,
-        allTimeTools: allTime.totalTools,
-        allTimeMessages: allTime.totalMessages,
-    })
 }

@@ -44,6 +44,4 @@ export async function handleHelpCommand(ctx: HelpCommandContext): Promise<void> 
     const message = formatHelpMessage()
 
     await sendIgnoredMessage(client, sessionId, message, logger)
-
-    logger.info("Help command executed")
 }

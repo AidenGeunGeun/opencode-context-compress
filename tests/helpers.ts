@@ -136,7 +136,12 @@ export interface HostFake {
     }
     readonly model: {
         readonly list: () => Promise<{
-            data: Array<{ id: string; providerID: string; limit: { context: number } }>
+            data: Array<{
+                id: string
+                providerID: string
+                limit: { context: number }
+                cost: Array<{ input: number; cache: { read: number } }>
+            }>
         }>
     }
     readonly event: { readonly subscribe: () => AsyncIterable<unknown> }

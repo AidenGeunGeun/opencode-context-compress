@@ -119,6 +119,7 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
                                     id: "gpt-test",
                                     providerID: "openai",
                                     limit: { context: 1000 },
+                                    cost: [{ input: 2, cache: { read: 0.1 } }],
                                 },
                             ],
                         }),
