@@ -125,6 +125,8 @@ export interface SessionState {
         providerId: string;
         modelId: string;
         contextLimit: number;
+        /** Cached read price as a fraction of the input price, when the host lists prices. */
+        cacheReadRatio?: number;
     };
     /** Runtime-only lock preventing duplicate threshold events from starting two turns. */
     autoCompressionStarting?: boolean;

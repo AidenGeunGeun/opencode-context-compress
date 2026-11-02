@@ -10,8 +10,9 @@ export declare const PROTECTED_TOOLS: Set<string>;
  * An event prunes every candidate at once, by rent or buy: stale outputs keep being re-read from the
  * cache until those reads reach 1 / REWRITE_TOLERANCE of the cost of the cache rewrite the prune
  * causes. This needs no guess of how long the session will run, and it never prunes on every step.
- * Costs count characters, since the tokenizer ratio cancels out; a cached read costs 0.1 of an
- * uncached input.
+ * Costs count characters, since the tokenizer ratio cancels out. A cached read costs the model's listed
+ * cache read price as a fraction of its input price (0.05 on Opus 5.5 and GPT-6.1), or 0.1 when the host lists
+ * none; a cache write costs the input price.
  *
  * A provider can only resume the cache at a marker an earlier request placed. Without one before the
  * first pruned output, the rewrite starts at the end of the system prompt and covers the whole

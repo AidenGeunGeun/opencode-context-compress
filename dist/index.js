@@ -3441,6 +3441,7 @@ var PROTECTED_TOOLS = new Set([
 async function pruneStaleToolOutputs(messages, state, logger, anchored) {
   if (findActiveManagementTurn(state, messages))
     return;
+  const read = state.modelContext?.cacheReadRatio ?? 0.1;
   const tail = currentTail(messages, state);
   const recent = new Set(deriveProtectedTailMessageIds(tail, PROTECTED_STEPS));
   const candidates = tail.flatMap((message, index) => recent.has(message.info.id) ? [] : message.parts.flatMap((part) => isPrunable(part, state) ? [{ index, part }] : []));
@@ -3453,8 +3454,8 @@ async function pruneStaleToolOutputs(messages, state, logger, anchored) {
     stepsAfter[index] = after;
     return after + message.parts.filter((part) => part.type === "step-start").length;
   }, 0);
-  const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * 0.1 * (stepsAfter[index] - PROTECTED_STEPS), 0);
-  const rewrite = (suffixChars - prunedChars) * 0.9;
+  const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * read * (stepsAfter[index] - PROTECTED_STEPS), 0);
+  const rewrite = (suffixChars - prunedChars) * (1 - read);
   if (rent * REWRITE_TOLERANCE < rewrite)
     return;
   const candidateState = {
@@ -4268,7 +4269,13 @@ async function resolveModelContext(context, model) {
   const match = result.data.find((value) => value.providerID === model.providerID && value.id === model.id && typeof value.limit.context === "number");
   if (!match)
     return;
-  return { providerId: model.providerID, modelId: model.id, contextLimit: match.limit.context };
+  const price = match.cost[0];
+  return {
+    providerId: model.providerID,
+    modelId: model.id,
+    contextLimit: match.limit.context,
+    cacheReadRatio: price && price.input > 0 ? price.cache.read / price.input : undefined
+  };
 }
 async function runEvents(events, automatic, client, stateManager, logger, context) {
   for (;; ) {
@@ -4341,5 +4348,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=096AEB2A985DAF6664756E2164756E21
+//# debugId=3D9BB2B6DF1025A464756E2164756E21
 //# sourceMappingURL=index.js.map
