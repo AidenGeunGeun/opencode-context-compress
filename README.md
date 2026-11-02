@@ -14,8 +14,8 @@ three layers, so the agent rarely has to stop and summarize, and what it keeps s
    a range of old blocks that it chooses.
 
 Pruning keeps the provider's prompt cache warm. Request bytes change only when a prune fires, and
-prunes are batched: one fires once re-reading the stale outputs from the cache has cost two thirds of
-the cache rewrite the prune causes. That rewrite covers the whole conversation after the system
+prunes are batched: one fires once re-reading the stale outputs from the cache, at the model's listed
+cache read price, has cost two thirds of the cache rewrite the prune causes. That rewrite covers the whole conversation after the system
 prompt, except on Anthropic models, where `anthropic-auth` places a cache marker before the oldest
 prunable output so the rewrite starts there. Install `anthropic-auth` alongside this plugin for
 Anthropic models; without it, their prunes have no effect.

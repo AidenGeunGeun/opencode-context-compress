@@ -118,6 +118,27 @@ describe("background pruning", () => {
         assert.equal(state.compressed.toolIds.size, 0)
     })
 
+    it("prices stale reads at the model's listed cache read ratio", async () => {
+        const outputs: Array<[string, string]> = [
+            ["read", "r".repeat(20_000)],
+            ...Array.from({ length: 20 }, (): [string, string] => ["shell", "s".repeat(3_000)]),
+        ]
+        const prune = async (cacheReadRatio?: number) => {
+            const state = freshState()
+            state.modelContext = {
+                providerId: "anthropic",
+                modelId: "m",
+                contextLimit: 1_000_000,
+                cacheReadRatio,
+            }
+            await pruneStaleToolOutputs(transcript(outputs, 0), state, logger, false)
+            return state.compressed.toolIds.size
+        }
+
+        assert.ok((await prune()) > 0)
+        assert.equal(await prune(0.05), 0)
+    })
+
     it("does not prune again when the only newly aged output has paid no reads yet", async () => {
         const outputs: Array<[string, string]> = [
             ...Array.from({ length: 40 }, (): [string, string] => ["read", "r".repeat(20_000)]),

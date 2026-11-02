@@ -231,7 +231,13 @@ async function resolveModelContext(
             typeof value.limit.context === "number",
     )
     if (!match) return
-    return { providerId: model.providerID, modelId: model.id, contextLimit: match.limit.context }
+    const price = match.cost[0]
+    return {
+        providerId: model.providerID,
+        modelId: model.id,
+        contextLimit: match.limit.context,
+        cacheReadRatio: price && price.input > 0 ? price.cache.read / price.input : undefined,
+    }
 }
 
 async function runEvents(
