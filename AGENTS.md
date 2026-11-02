@@ -49,6 +49,12 @@ Anthropic it sends the prune frontier to the next primary request in the `x-open
 header, which the `anthropic-auth` plugin turns into a cache marker before signing. The prune rule
 prices Anthropic rewrites from that marker, so it depends on that plugin.
 
+OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exists only at the exact
+end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`
+with "not supported on this model" (gpt-5.6-sol through gpt-6.1, measured 2026-11-02). After an
+OpenAI prune the cache resumes at an earlier request's end, usually the previous prune's resume point,
+so the rule prices the rewrite as the whole conversation.
+
 The compress and squash receipts are the only messages the agent gets after either operation. Keep
 them in the tool result: a message added to one request and dropped from the next breaks the cache.
 
