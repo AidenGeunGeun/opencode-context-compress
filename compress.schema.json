@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "compress.schema.json",
     "title": "Context Compress Configuration",
-    "description": "Configuration for Context Compress - manual and automatic context compression plugin",
+    "description": "Configuration for Context Compress: background pruning, agent-written folds, and squash for OpenCode sessions",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -22,7 +22,7 @@
         },
         "dailyLog": {
             "type": "boolean",
-            "description": "Write one-line activity log lines to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only"
+            "description": "Write one-line activity entries to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only"
         },
         "notification": {
             "type": "string",
@@ -43,13 +43,13 @@
         },
         "autoCompression": {
             "type": "object",
-            "description": "Automatically initiate model-directed compression before the context window fills",
+            "description": "Automatic folds and squashes before the context window fills. Background pruning does not depend on this",
             "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable plugin-owned automatic compression"
+                    "description": "Enable automatic folds and squashes"
                 },
                 "contextWindowRatio": {
                     "type": "number",

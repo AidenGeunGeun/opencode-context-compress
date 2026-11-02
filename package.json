@@ -3,7 +3,7 @@
     "name": "@skybluejacket/opencode-context-compress",
     "version": "1.0.0",
     "type": "module",
-    "description": "Model-directed manual and automatic context compression for OpenCode sessions",
+    "description": "Background pruning, agent-written folds, and automatic squash for OpenCode sessions",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "files": [
@@ -34,7 +34,8 @@
         "plugin",
         "context",
         "compression",
-        "compress"
+        "compress",
+        "pruning"
     ],
     "dependencies": {
         "@anthropic-ai/tokenizer": "^0.0.4",

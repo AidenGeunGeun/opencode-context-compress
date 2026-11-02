@@ -64,7 +64,8 @@ them in the tool result: a message added to one request and dropped from the nex
 - `lib/plugin.ts` registers commands, tools, hooks, and events.
 - `lib/commands` implements command behavior.
 - `lib/messages` owns projection, selection, transforms, and cleanup.
-- `lib/state` owns per-session locking, persistence, migration, and native-compaction reconciliation.
+- `lib/state` owns per-session locking, persistence, migration, fork remapping, and native-compaction
+  reconciliation.
 - `lib/tools` owns durable compress and squash writes.
 - `lib/sdk` owns the client and session message listing.
 - `lib/ui` owns notification rendering.
