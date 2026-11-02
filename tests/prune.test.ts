@@ -210,7 +210,7 @@ describe("background pruning", () => {
         assert.equal(pruneFrontier(messages, state), undefined)
     })
 
-    it("hands both frontiers of an Anthropic prune to the next primary request only", async () => {
+    it("never prunes Anthropic requests and anchors their frontier for the next primary request only", async () => {
         const messages = transcript(
             [
                 ["subagent", "s".repeat(300_000)],
@@ -263,14 +263,14 @@ describe("background pruning", () => {
             return headers["x-opencode-cache-anchors"]
         }
 
+        // A prune would move the frontier to call-a4; without one it stays at call-a1.
         await context("anthropic")
         assert.equal(await request("title"), undefined)
-        assert.equal(await request("primary"), "call-a1,call-a4")
+        assert.equal(await request("primary"), "call-a1")
         assert.equal(await request("primary"), undefined)
 
-        // A retry finds the prune already saved; the old frontier stays anchored until the next prune.
         await context("anthropic")
-        assert.equal(await request("primary"), "call-a1,call-a4")
+        assert.equal(await request("primary"), "call-a1")
 
         await context("openai")
         assert.equal(await request("primary"), undefined)

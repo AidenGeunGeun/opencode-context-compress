@@ -47,7 +47,10 @@ Background pruning (`lib/messages/prune.ts`) is programmatic and never prompts t
 live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event. On
 Anthropic it sends the prune frontier to the next primary request in the `x-opencode-cache-anchors`
 header, which the `anthropic-auth` plugin turns into a cache marker before signing. The prune rule
-prices Anthropic rewrites from that marker, so it depends on that plugin.
+prices Anthropic rewrites from that marker, so it depends on that plugin. Pruning is off for Anthropic
+(`lib/plugin.ts`): a changed message makes Anthropic drop every later thinking block, measured as about
+17k tokens of reasoning lost per prune on Claude Opus 5.5 (2026-11-02). The anchor code stays for when
+pruning returns there.
 
 OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exists only at the exact
 end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`
