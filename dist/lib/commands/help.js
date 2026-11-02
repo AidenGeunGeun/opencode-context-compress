@@ -21,6 +21,5 @@ export async function handleHelpCommand(ctx) {
     const { client, logger, sessionId } = ctx;
     const message = formatHelpMessage();
     await sendIgnoredMessage(client, sessionId, message, logger);
-    logger.info("Help command executed");
 }
 //# sourceMappingURL=help.js.map

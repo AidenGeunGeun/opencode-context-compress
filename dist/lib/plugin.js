@@ -28,7 +28,6 @@ export async function setup(context) {
     const logger = new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug });
     const stateManager = new SessionStateManager();
     const registrations = [];
-    logger.info("Context Compress initialized");
     if (config.commands.enabled) {
         registrations.push(await context.command.transform((draft) => {
             draft.add({

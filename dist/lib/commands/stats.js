@@ -31,13 +31,5 @@ export async function handleStatsCommand(ctx) {
     const allTime = await loadAllSessionStats(logger);
     const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime);
     await sendIgnoredMessage(client, sessionId, message, logger);
-    logger.info("Stats command executed", {
-        sessionTokens,
-        sessionTools,
-        sessionMessages,
-        allTimeTokens: allTime.totalTokens,
-        allTimeTools: allTime.totalTools,
-        allTimeMessages: allTime.totalMessages,
-    });
 }
 //# sourceMappingURL=stats.js.map

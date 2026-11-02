@@ -1,5 +1,6 @@
 export declare class Logger {
     private logDir;
+    private cleanedDay?;
     private dailyEnabled;
     private contextEnabled;
     constructor(options: {

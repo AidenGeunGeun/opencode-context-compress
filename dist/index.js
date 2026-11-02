@@ -183,10 +183,6 @@ async function saveSessionState(sessionState, logger, sessionName) {
     await writeFileAtomic(filePath, content);
     sessionState.hasPersistedState = true;
     sessionState.persistedLastUpdated = lastUpdated;
-    logger.info("Saved session state to disk", {
-      sessionId: sessionState.sessionId,
-      totalTokensSaved: state.stats.totalCompressTokens
-    });
     return true;
   } catch (error) {
     logger.error("Failed to save session state", {
@@ -323,7 +319,6 @@ async function loadAllSessionStats(logger) {
         }
       } catch {}
     }
-    logger.debug("Loaded all-time stats", { ...result });
   } catch (error) {
     logger.warn("Failed to load all-time stats", {
       error: error instanceof Error ? error.message : String(error)
@@ -3071,7 +3066,6 @@ async function handleHelpCommand(ctx) {
   const { client, logger, sessionId } = ctx;
   const message = formatHelpMessage();
   await sendIgnoredMessage(client, sessionId, message, logger);
-  logger.info("Help command executed");
 }
 
 // lib/commands/squash.ts
@@ -3151,14 +3145,6 @@ async function handleStatsCommand(ctx) {
   const allTime = await loadAllSessionStats(logger);
   const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime);
   await sendIgnoredMessage(client, sessionId, message, logger);
-  logger.info("Stats command executed", {
-    sessionTokens,
-    sessionTools,
-    sessionMessages,
-    allTimeTokens: allTime.totalTokens,
-    allTimeTools: allTime.totalTools,
-    allTimeMessages: allTime.totalMessages
-  });
 }
 
 // lib/commands/route.ts
@@ -3225,12 +3211,15 @@ async function handleCompressCommand(input, dependencies) {
 }
 
 // lib/logger.ts
-import { writeFile, mkdir as mkdir2 } from "fs/promises";
+import { mkdir as mkdir2, readdir as readdir2, rm as rm2, writeFile } from "fs/promises";
 import { join as join3 } from "path";
 import { existsSync as existsSync3 } from "fs";
 import { homedir as homedir3 } from "os";
+var DAILY_LOG_DAYS = 30;
+
 class Logger {
   logDir;
+  cleanedDay;
   dailyEnabled;
   contextEnabled;
   constructor(options) {
@@ -3298,8 +3287,14 @@ class Logger {
       if (!existsSync3(dailyLogDir)) {
         await mkdir2(dailyLogDir, { recursive: true });
       }
-      const logFile = join3(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`);
-      await writeFile(logFile, logLine, { flag: "a" });
+      const day = timestamp.split("T")[0];
+      await writeFile(join3(dailyLogDir, `${day}.log`), logLine, { flag: "a" });
+      if (this.cleanedDay !== day) {
+        this.cleanedDay = day;
+        const cutoff = new Date(Date.now() - DAILY_LOG_DAYS * 86400000).toISOString().split("T")[0];
+        const old = (await readdir2(dailyLogDir)).filter((name) => name.endsWith(".log") && name.slice(0, 10) < cutoff);
+        await Promise.all(old.map((name) => rm2(join3(dailyLogDir, name), { force: true })));
+      }
     } catch (error) {
       console.error("context-compress: failed to write daily log", error);
     }
@@ -4133,7 +4128,6 @@ async function setup(context) {
   const logger = new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug });
   const stateManager = new SessionStateManager;
   const registrations = [];
-  logger.info("Context Compress initialized");
   if (config.commands.enabled) {
     registrations.push(await context.command.transform((draft) => {
       draft.add({
@@ -4348,5 +4342,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=3D9BB2B6DF1025A464756E2164756E21
+//# debugId=C121310949636CFE64756E2164756E21
 //# sourceMappingURL=index.js.map

@@ -215,10 +215,6 @@ export async function saveSessionState(sessionState, logger, sessionName) {
         await writeFileAtomic(filePath, content);
         sessionState.hasPersistedState = true;
         sessionState.persistedLastUpdated = lastUpdated;
-        logger.info("Saved session state to disk", {
-            sessionId: sessionState.sessionId,
-            totalTokensSaved: state.stats.totalCompressTokens,
-        });
         return true;
     }
     catch (error) {
@@ -389,7 +385,6 @@ export async function loadAllSessionStats(logger) {
                 // Skip invalid files
             }
         }
-        logger.debug("Loaded all-time stats", { ...result });
     }
     catch (error) {
         logger.warn("Failed to load all-time stats", {

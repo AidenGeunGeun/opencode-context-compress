@@ -1,10 +1,13 @@
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isRecord } from "./shared-utils.js";
+// Daily logs older than this are deleted, so the folder does not grow for months.
+const DAILY_LOG_DAYS = 30;
 export class Logger {
     logDir;
+    cleanedDay;
     dailyEnabled;
     contextEnabled;
     constructor(options) {
@@ -77,8 +80,16 @@ export class Logger {
             if (!existsSync(dailyLogDir)) {
                 await mkdir(dailyLogDir, { recursive: true });
             }
-            const logFile = join(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`);
-            await writeFile(logFile, logLine, { flag: "a" });
+            const day = timestamp.split("T")[0];
+            await writeFile(join(dailyLogDir, `${day}.log`), logLine, { flag: "a" });
+            if (this.cleanedDay !== day) {
+                this.cleanedDay = day;
+                const cutoff = new Date(Date.now() - DAILY_LOG_DAYS * 86_400_000)
+                    .toISOString()
+                    .split("T")[0];
+                const old = (await readdir(dailyLogDir)).filter((name) => name.endsWith(".log") && name.slice(0, 10) < cutoff);
+                await Promise.all(old.map((name) => rm(join(dailyLogDir, name), { force: true })));
+            }
         }
         catch (error) {
             // The daily log is the failing channel here, so stderr is the only honest place left.
