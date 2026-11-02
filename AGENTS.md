@@ -54,7 +54,8 @@ changed message, which cost Opus 5.5 its recent reasoning at every prune (2026-1
 show only the stubs in `anthropicStubIds`, fixed at a session's first Anthropic request; every later
 prune reaches Anthropic as server-side clearing (`clear_tool_uses_20250919`), which the API does not
 count as an edit. The `x-opencode-tool-clearing` header names the oldest call to keep and the protected
-tools, and `anthropic-auth` turns it into the clearing config before signing.
+tools, and `anthropic-auth` turns it into the clearing config before signing. The full Anthropic thinking and cache
+rules are in `anthropic-auth`'s README, under Thinking and prompt cache.
 
 OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exists only at the exact
 end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`
