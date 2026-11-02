@@ -181,6 +181,9 @@ export async function saveSessionState(sessionState, logger, sessionName) {
                 toolIds: [...sessionState.compressed.toolIds],
                 messageIds: [...sessionState.compressed.messageIds],
             },
+            ...(sessionState.anthropicStubIds
+                ? { anthropicStubIds: [...sessionState.anthropicStubIds] }
+                : {}),
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,

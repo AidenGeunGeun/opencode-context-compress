@@ -101,6 +101,12 @@ export interface SessionState {
     hasPersistedState: boolean;
     persistedLastUpdated: string | null;
     compressed: Compressed;
+    /**
+     * Pruned calls that Anthropic requests already show as stubs, fixed at the session's first Anthropic
+     * request after pruning moved server-side. Anthropic binds thinking to the history it was produced
+     * with, so a call must keep looking the same to Anthropic; later prunes reach it as server-side clearing.
+     */
+    anthropicStubIds?: Set<string>;
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
     stats: SessionStats;

@@ -13,6 +13,7 @@ export interface PersistedCompressed {
 export interface PersistedSessionState {
     sessionName?: string;
     compressed: PersistedCompressed;
+    anthropicStubIds?: string[];
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
     stats: SessionStats;

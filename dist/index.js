@@ -161,6 +161,7 @@ async function saveSessionState(sessionState, logger, sessionName) {
         toolIds: [...sessionState.compressed.toolIds],
         messageIds: [...sessionState.compressed.messageIds]
       },
+      ...sessionState.anthropicStubIds ? { anthropicStubIds: [...sessionState.anthropicStubIds] } : {},
       compressSummaries: sessionState.compressSummaries,
       managementTurns: sessionState.managementTurns,
       stats: sessionState.stats,
@@ -357,6 +358,7 @@ function resetOnCompaction(state) {
 // lib/state/state.ts
 function commitDurableSessionState(state, candidate) {
   state.compressed = candidate.compressed;
+  state.anthropicStubIds = candidate.anthropicStubIds;
   state.compressSummaries = candidate.compressSummaries;
   state.managementTurns = candidate.managementTurns;
   state.stats = candidate.stats;
@@ -377,6 +379,7 @@ function applyPersistedState(state, persisted) {
     toolIds: new Set(persistedState.compressed.toolIds || []),
     messageIds: new Set(persistedState.compressed.messageIds || [])
   };
+  state.anthropicStubIds = persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
   state.compressSummaries = persistedState.compressSummaries || [];
   state.managementTurns = persistedState.managementTurns || [];
   state.stats = {
@@ -538,6 +541,7 @@ async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
       messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
       toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id)))
     },
+    anthropicStubIds: state.anthropicStubIds && new Set([...state.anthropicStubIds].filter((id) => !droppedTools.has(id))),
     compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary))
   };
   if (!await saveSessionState(candidate, logger)) {
@@ -3707,6 +3711,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
       messageIds: new Set(parentState.state.compressed.messageIds.filter((id) => mapped.has(id) && compressedMessages.has(messageID(id))).map(messageID)),
       toolIds: new Set(parentState.state.compressed.toolIds.filter((id) => childTools.has(id)))
     },
+    anthropicStubIds: parentState.state.anthropicStubIds && new Set(parentState.state.anthropicStubIds.filter((id) => childTools.has(id))),
     compressSummaries: summaries.map((summary) => ({
       ...summary,
       anchorMessageId: messageID(summary.anchorMessageId),
@@ -4116,6 +4121,7 @@ ${renderPostCompressionNotice()}`;
 // lib/plugin.ts
 var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' + "in your OpenCode config.";
 var CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
+var TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
 async function setup(context) {
   const client = pluginClient(context.session);
   const config = getConfig({ directory: context.location.directory });
@@ -4176,8 +4182,11 @@ async function setup(context) {
   }
   const anchors = new Map;
   const prunedFrontiers = new Map;
+  const sentFrontiers = new Map;
+  const clearings = new Map;
   const applyCompression = async (event, kind) => {
-    const anchored = kind === "context" && event.model.providerID === "anthropic";
+    const anthropic = event.model.providerID === "anthropic";
+    const anchored = kind === "context" && anthropic;
     if (kind === "context")
       anchors.delete(event.sessionID);
     setSessionSelection(client, event.sessionID, {
@@ -4211,17 +4220,25 @@ async function setup(context) {
         if (!state.persistenceSynchronized)
           throw new Error("Cannot load inherited fork compression state");
       }
+      if (anthropic)
+        state.anthropicStubIds ??= new Set(state.compressed.toolIds);
+      const stubs = anthropic ? state.anthropicStubIds : undefined;
       const before = anchored ? pruneFrontier(messages, state) : undefined;
-      if (kind === "context" && event.model.providerID !== "anthropic")
+      if (kind === "context")
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
-      transformed = transformV2Messages(messages, state, event.messages);
+      transformed = transformV2Messages(messages, stubs ? { ...state, compressed: { ...state.compressed, toolIds: stubs } } : state, event.messages);
       event.messages.splice(0, event.messages.length, ...transformed);
-      if (before !== undefined && before !== after)
-        prunedFrontiers.set(event.sessionID, before);
+      const previous = sentFrontiers.get(event.sessionID) ?? before;
+      if (anchored && previous !== undefined && previous !== after)
+        prunedFrontiers.set(event.sessionID, previous);
+      if (anchored && after !== undefined)
+        sentFrontiers.set(event.sessionID, after);
       const ids = [...new Set([prunedFrontiers.get(event.sessionID), after])].filter((id) => id !== undefined);
       if (anchored && ids.length > 0)
         anchors.set(event.sessionID, ids);
+      if (anchored)
+        clearings.set(event.sessionID, JSON.stringify({ from: after, exclude: [...PROTECTED_TOOLS] }));
     });
     if (kind === "context" && transformed)
       await logger.saveContext(event.sessionID, transformed);
@@ -4233,6 +4250,9 @@ async function setup(context) {
     anchors.delete(event.sessionID);
     if (ids)
       event.headers[CACHE_ANCHORS_HEADER] = ids.join(",");
+    const clearing = clearings.get(event.sessionID);
+    if (clearing)
+      event.headers[TOOL_CLEARING_HEADER] = clearing;
   }, { providerID: "anthropic" }));
   const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
   const events = context.event.subscribe()[Symbol.asyncIterator]();
@@ -4321,5 +4341,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=0ED557702E317C9064756E2164756E21
+//# debugId=096AEB2A985DAF6664756E2164756E21
 //# sourceMappingURL=index.js.map

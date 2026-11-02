@@ -1,5 +1,6 @@
 import type { Logger } from "../logger.js";
 import type { SessionState, WithParts } from "../state/index.js";
+export declare const PROTECTED_TOOLS: Set<string>;
 /**
  * Background pruning, invisible to the agent: outputs of tool calls older than the newest
  * PROTECTED_STEPS steps since the last fold become a one-line stub, and failed calls lose their

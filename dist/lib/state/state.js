@@ -2,6 +2,7 @@ import { loadSessionState, saveSessionState } from "./persistence.js";
 import { isCompletedNativeCompaction, findLastCompactionTimestamp, resetOnCompaction, } from "./utils.js";
 export function commitDurableSessionState(state, candidate) {
     state.compressed = candidate.compressed;
+    state.anthropicStubIds = candidate.anthropicStubIds;
     state.compressSummaries = candidate.compressSummaries;
     state.managementTurns = candidate.managementTurns;
     state.stats = candidate.stats;
@@ -23,6 +24,8 @@ function applyPersistedState(state, persisted) {
         toolIds: new Set(persistedState.compressed.toolIds || []),
         messageIds: new Set(persistedState.compressed.messageIds || []),
     };
+    state.anthropicStubIds =
+        persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
     state.compressSummaries = persistedState.compressSummaries || [];
     state.managementTurns = persistedState.managementTurns || [];
     state.stats = {
@@ -203,6 +206,8 @@ export async function reconcileSessionLifecycle(state, sessionId, logger, messag
             messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
             toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id))),
         },
+        anthropicStubIds: state.anthropicStubIds &&
+            new Set([...state.anthropicStubIds].filter((id) => !droppedTools.has(id))),
         compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary)),
     };
     if (!(await saveSessionState(candidate, logger))) {
