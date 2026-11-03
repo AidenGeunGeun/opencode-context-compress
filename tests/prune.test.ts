@@ -24,7 +24,7 @@ const { SessionStateManager } = await import("../lib/state/state.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
-const NOW = 1_800_000_000_000
+const NOW = Date.now()
 const MINUTE = 60_000
 
 const step = (
@@ -116,6 +116,21 @@ describe("background pruning", () => {
         await pruneStaleToolOutputs(transcript(outputs, 0), state, logger, false)
 
         assert.equal(state.compressed.toolIds.size, 0)
+    })
+
+    it("prunes regardless of rent once the cache has expired", async () => {
+        const outputs: Array<[string, string]> = [
+            ["read", "r".repeat(1_000)],
+            ...Array.from({ length: 12 }, (): [string, string] => ["shell", "s".repeat(10_000)]),
+        ]
+        const prune = async (idleMinutes: number) => {
+            const state = freshState()
+            await pruneStaleToolOutputs(transcript(outputs, idleMinutes), state, logger, false)
+            return state.compressed.toolIds.size
+        }
+
+        assert.equal(await prune(59), 0)
+        assert.equal(await prune(61), 3)
     })
 
     it("prices stale reads at the model's listed cache read ratio", async () => {

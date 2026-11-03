@@ -18,7 +18,9 @@ prunes are batched: one fires once re-reading the stale outputs from the cache, 
 cache read price, has cost two thirds of the cache rewrite the prune causes. That rewrite covers the whole conversation after the system
 prompt, except on Anthropic models, where `anthropic-auth` places a cache marker before the oldest
 prunable output so the rewrite starts there. Install `anthropic-auth` alongside this plugin for
-Anthropic models; without it, their prunes have no effect.
+Anthropic models; without it, their prunes have no effect. When a session's next request comes more
+than an hour after its last one, the cache has expired and the rewrite is paid anyway, so that request
+prunes every output older than the newest ten steps. Idle sessions are never woken to do this.
 
 A fold's handoff keeps the user's intended outcome and latest request, confirmed decisions apart from
 proposals, current evidence and work state, and the references needed to continue. After a fold,
