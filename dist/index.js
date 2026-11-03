@@ -259,6 +259,7 @@ async function loadSessionState(sessionId, logger, messages) {
   const result = {
     sessionName: state.sessionName,
     compressed: state.compressed,
+    ...Array.isArray(state.anthropicStubIds) ? { anthropicStubIds: state.anthropicStubIds } : {},
     compressSummaries,
     managementTurns,
     stats: state.stats,
@@ -4342,5 +4343,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=C121310949636CFE64756E2164756E21
+//# debugId=5D9BA41FF55DE3F564756E2164756E21
 //# sourceMappingURL=index.js.map

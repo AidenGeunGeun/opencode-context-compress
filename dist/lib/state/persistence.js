@@ -303,6 +303,11 @@ export async function loadSessionState(sessionId, logger, messages) {
     const result = {
         sessionName: state.sessionName,
         compressed: state.compressed,
+        // Losing this set on reload stubs results Anthropic had only cleared server-side, which rewrites
+        // the history: the cache restarts near the system prompt and every later thinking block drops.
+        ...(Array.isArray(state.anthropicStubIds)
+            ? { anthropicStubIds: state.anthropicStubIds }
+            : {}),
         compressSummaries,
         managementTurns,
         stats: state.stats,
