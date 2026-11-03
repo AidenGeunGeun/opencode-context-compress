@@ -3418,6 +3418,7 @@ class Logger {
 var PROTECTED_STEPS = 10;
 var MEDIA_CHARS = 6000;
 var REWRITE_TOLERANCE = 1.5;
+var CACHE_TTL_MS = 60 * 60000;
 var PROTECTED_TOOLS = new Set([
   "patch",
   "edit",
@@ -3452,7 +3453,9 @@ async function pruneStaleToolOutputs(messages, state, logger, anchored) {
   }, 0);
   const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * read * (stepsAfter[index] - PROTECTED_STEPS), 0);
   const rewrite = (suffixChars - prunedChars) * (1 - read);
-  if (rent * REWRITE_TOLERANCE < rewrite)
+  const last = messages.findLast((message) => message.info.role === "assistant" && message.info.time.completed !== undefined);
+  const cold = last !== undefined && Date.now() - last.info.time.created > CACHE_TTL_MS;
+  if (!cold && rent * REWRITE_TOLERANCE < rewrite)
     return;
   const candidateState = {
     ...state,
@@ -3477,7 +3480,8 @@ async function pruneStaleToolOutputs(messages, state, logger, anchored) {
     prunedChars,
     suffixChars,
     rent,
-    anchored
+    anchored,
+    cold
   });
 }
 function pruneFrontier(messages, state) {
@@ -4343,5 +4347,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=5D9BA41FF55DE3F564756E2164756E21
+//# debugId=682009452AED429A64756E2164756E21
 //# sourceMappingURL=index.js.map

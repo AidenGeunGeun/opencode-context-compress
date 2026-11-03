@@ -7,6 +7,8 @@ const PROTECTED_STEPS = 10;
 const MEDIA_CHARS = 6_000;
 // A prune may cost up to this multiple of the stale reads paid so far, in exchange for a smaller context.
 const REWRITE_TOLERANCE = 1.5;
+// After this long without a model request the provider cache has expired, so the rewrite is paid anyway.
+const CACHE_TTL_MS = 60 * 60_000;
 // Change records, delegated work, plans, and the plugin's own machinery stay verbatim.
 export const PROTECTED_TOOLS = new Set([
     "patch",
@@ -41,6 +43,10 @@ export const PROTECTED_TOOLS = new Set([
  * first pruned output, the rewrite starts at the end of the system prompt and covers the whole
  * conversation. `anchored` says the request carries a marker just before the prune frontier (see
  * `pruneFrontier`), so the rewrite starts there.
+ *
+ * When the session's last model request started over CACHE_TTL_MS ago, the cache has expired and the
+ * prune is free, so every candidate goes regardless of rent. Nothing wakes an idle session; this
+ * happens on its next request.
  */
 export async function pruneStaleToolOutputs(messages, state, logger, anchored) {
     // A management turn is about to fold the tail, which rewrites it anyway.
@@ -71,7 +77,10 @@ export async function pruneStaleToolOutputs(messages, state, logger, anchored) {
     // Reads paid so far for each candidate since it aged past the protected steps.
     const rent = candidates.reduce((total, { index, part }) => total + prunableChars(part) * read * (stepsAfter[index] - PROTECTED_STEPS), 0);
     const rewrite = (suffixChars - prunedChars) * (1 - read);
-    if (rent * REWRITE_TOLERANCE < rewrite)
+    // `completed` also covers tool runtime, so the request itself is dated by `created`.
+    const last = messages.findLast((message) => message.info.role === "assistant" && message.info.time.completed !== undefined);
+    const cold = last !== undefined && Date.now() - last.info.time.created > CACHE_TTL_MS;
+    if (!cold && rent * REWRITE_TOLERANCE < rewrite)
         return;
     const candidateState = {
         ...state,
@@ -97,6 +106,7 @@ export async function pruneStaleToolOutputs(messages, state, logger, anchored) {
         suffixChars,
         rent,
         anchored,
+        cold,
     });
 }
 /**
