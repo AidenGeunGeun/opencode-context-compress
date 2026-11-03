@@ -46,6 +46,7 @@ export type LoadSessionStateResult =
 interface PersistedSessionStateFile {
     sessionName?: string
     compressed: PersistedCompressed
+    anthropicStubIds?: string[]
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
     stats: SessionStats
@@ -445,6 +446,11 @@ export async function loadSessionState(
     const result: PersistedSessionState = {
         sessionName: state.sessionName,
         compressed: state.compressed,
+        // Losing this set on reload stubs results Anthropic had only cleared server-side, which rewrites
+        // the history: the cache restarts near the system prompt and every later thinking block drops.
+        ...(Array.isArray(state.anthropicStubIds)
+            ? { anthropicStubIds: state.anthropicStubIds }
+            : {}),
         compressSummaries,
         managementTurns,
         stats: state.stats,

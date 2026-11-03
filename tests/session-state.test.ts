@@ -409,6 +409,7 @@ describe("saveSessionState", () => {
             const state = createSessionState()
             state.sessionId = sessionId
             state.compressed.toolIds = new Set(["tool-1"])
+            state.anthropicStubIds = new Set(["tool-1"])
             state.compressed.messageIds = new Set(["m2", "m3"])
             state.compressSummaries = [
                 {
@@ -457,6 +458,7 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.status, "loaded")
 
             assert.deepEqual(loadResult.state.compressed.toolIds, ["tool-1"])
+            assert.deepEqual(loadResult.state.anthropicStubIds, ["tool-1"])
             assert.deepEqual(loadResult.state.compressed.messageIds, ["m2", "m3"])
             assert.deepEqual(loadResult.state.compressSummaries, [
                 {
@@ -502,6 +504,7 @@ describe("saveSessionState", () => {
             assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
             assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(reloadedState.lastCompaction, 123_456)
+            assert.deepEqual(reloadedState.anthropicStubIds, new Set(["tool-1"]))
         } finally {
             await cleanupSessionFiles(sessionId)
         }
