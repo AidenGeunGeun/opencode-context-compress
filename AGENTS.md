@@ -51,7 +51,8 @@ prices Anthropic rewrites from that marker, so it depends on that plugin.
 
 Never change an earlier message in an Anthropic request. Anthropic drops every thinking block after a
 changed message, which cost Opus 5.5 its recent reasoning at every prune (2026-11-02). Anthropic requests
-show only the stubs in `anthropicStubIds`, fixed at a session's first Anthropic request; every later
+show only the stubs in `anthropicStubIds`, fixed at a session's first Anthropic request and persisted with the
+session state, since losing it on reload stubs results Anthropic had only cleared; every later
 prune reaches Anthropic as server-side clearing (`clear_tool_uses_20250919`), which the API does not
 count as an edit. The `x-opencode-tool-clearing` header names the oldest call to keep and the protected
 tools, and `anthropic-auth` turns it into the clearing config before signing. The full Anthropic thinking and cache
@@ -61,7 +62,8 @@ OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exi
 end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`
 with "not supported on this model" (gpt-5.6-sol through gpt-6.1, measured 2026-11-02). After an
 OpenAI prune the cache resumes at an earlier request's end, usually the previous prune's resume point,
-so the rule prices the rewrite as the whole conversation.
+so the rule prices the rewrite as the whole conversation. Client-side stubs cost OpenAI no reasoning: token deltas
+show the encrypted reasoning of earlier steps carried through prunes and user turns (gpt-6.x, 2026-11-03).
 
 The compress and squash receipts are the only messages the agent gets after either operation. Keep
 them in the tool result: a message added to one request and dropped from the next breaks the cache.
@@ -98,7 +100,8 @@ Keep `dist/index.js` at the root of `dist`, because OpenCode configuration point
 directory. For host smoke tests, isolate both `XDG_CONFIG_HOME` and `XDG_DATA_HOME`; never use live
 services, databases, or configuration.
 
-For a live-loaded checkout, do not run `npm run build` or `npm test`: they clean and replace the watched `dist`. Prepare a candidate without activating it:
+For a live-loaded checkout, do not run `npm run build` or `npm test`: they clean and replace the watched `dist`.
+Prepare a candidate without activating it:
 
 ```bash
 npm run typecheck
@@ -108,4 +111,5 @@ compression_stage=$(mktemp -d /private/tmp/opencode-compress-stage.XXXXXX)
 bun build index.ts --outdir "$compression_stage/dist" --entry-naming index.js --target bun --format esm --packages external --sourcemap=linked
 ```
 
-Only replace active `dist` at an explicitly approved quiet boundary. Verify the live bundle hash is unchanged while preparing the candidate.
+Only replace active `dist` at an explicitly approved quiet boundary. Verify the live bundle hash is unchanged while
+preparing the candidate.
