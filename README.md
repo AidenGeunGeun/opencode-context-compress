@@ -83,6 +83,9 @@ config directory or in a project's `.opencode` directory:
 `contextWindowRatio` of the model's context window and `tokenThreshold`. Every setting is described in
 [compress.schema.json](compress.schema.json).
 
+Edits to `compress.jsonc` apply from the next request or `/compress` command, without a server restart.
+`enabled`, `commands.enabled`, a `deny` tool permission and the logging switches still need a restart.
+
 ## Use
 
 - `/compress manage [instruction]` asks the agent for one fold now.

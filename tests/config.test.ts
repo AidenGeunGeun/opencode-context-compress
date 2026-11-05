@@ -6,8 +6,13 @@ import { join } from "node:path"
 import { isolateHostDirs } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { DEFAULT_AUTO_COMPRESSION, getConfig, getInvalidConfigKeys, resolveProtectedTurnsSetting } =
-    await import("../lib/config.ts")
+const {
+    DEFAULT_AUTO_COMPRESSION,
+    getConfig,
+    getInvalidConfigKeys,
+    refreshConfig,
+    resolveProtectedTurnsSetting,
+} = await import("../lib/config.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const layerDirs = {
@@ -64,6 +69,33 @@ describe("protectedTurns configuration", () => {
             resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 9 } }, 2, true),
             2,
         )
+    })
+})
+
+describe("refreshConfig", () => {
+    it("reloads the same object after a file is edited, added or removed", async () => {
+        const config = await loadLayers({ global: { autoCompression: { tokenThreshold: 100 } } })
+        const ctx = { directory: join(root, "project") }
+        refreshConfig(config, ctx)
+        assert.equal(config.autoCompression.tokenThreshold, 100)
+
+        await writeFile(
+            join(layerDirs.global, "compress.jsonc"),
+            JSON.stringify({ autoCompression: { tokenThreshold: 500 } }),
+        )
+        refreshConfig(config, ctx)
+        assert.equal(config.autoCompression.tokenThreshold, 500)
+
+        await writeFile(
+            join(layerDirs.project, "compress.jsonc"),
+            JSON.stringify({ autoCompression: { tokenThreshold: 300 } }),
+        )
+        refreshConfig(config, ctx)
+        assert.equal(config.autoCompression.tokenThreshold, 300)
+
+        await rm(join(layerDirs.project, "compress.jsonc"))
+        refreshConfig(config, ctx)
+        assert.equal(config.autoCompression.tokenThreshold, 500)
     })
 })
 
