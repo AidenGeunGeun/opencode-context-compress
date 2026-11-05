@@ -384,10 +384,27 @@ function deepCloneConfig(config) {
         },
     };
 }
+// The file signature each loaded config was read at, so `refreshConfig` re-reads only after a file changes.
+const signatures = new WeakMap();
+function configSignature(paths) {
+    return [paths.global, paths.configDir, paths.project]
+        .map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "")
+        .join("|");
+}
+// Reloads `config` in place when a config file was added, removed or edited since it was read. Every
+// consumer holds this object, so new values apply from the next call without a server restart.
+export function refreshConfig(config, ctx) {
+    if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
+        return;
+    const fresh = getConfig(ctx);
+    Object.assign(config, fresh);
+    signatures.set(config, signatures.get(fresh) ?? "");
+}
 export function getConfig(ctx) {
     let config = deepCloneConfig(defaultConfig);
     let hasExplicitProtectedTurns = false;
     const configPaths = getConfigPaths(ctx);
+    const signature = configSignature(configPaths);
     // Load and merge global config
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global);
@@ -433,6 +450,7 @@ export function getConfig(ctx) {
                 hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
         }
     }
+    signatures.set(config, signature);
     return config;
 }
 //# sourceMappingURL=config.js.map

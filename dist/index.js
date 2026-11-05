@@ -2697,10 +2697,22 @@ function deepCloneConfig(config) {
     }
   };
 }
+var signatures = new WeakMap;
+function configSignature(paths) {
+  return [paths.global, paths.configDir, paths.project].map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "").join("|");
+}
+function refreshConfig(config, ctx) {
+  if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
+    return;
+  const fresh = getConfig(ctx);
+  Object.assign(config, fresh);
+  signatures.set(config, signatures.get(fresh) ?? "");
+}
 function getConfig(ctx) {
   let config = deepCloneConfig(defaultConfig);
   let hasExplicitProtectedTurns = false;
   const configPaths = getConfigPaths(ctx);
+  const signature = configSignature(configPaths);
   if (configPaths.global) {
     const result = loadConfigFile(configPaths.global);
     if (result.parseError) {
@@ -2742,6 +2754,7 @@ Using global/default values`);
       hasExplicitProtectedTurns = hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
     }
   }
+  signatures.set(config, signature);
   return config;
 }
 
@@ -4125,7 +4138,8 @@ var CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 var TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
 async function setup(context) {
   const client = pluginClient(context.session);
-  const config = getConfig({ directory: context.location.directory });
+  const configContext = { directory: context.location.directory };
+  const config = getConfig(configContext);
   if (!config.enabled)
     return () => {
       return;
@@ -4139,6 +4153,7 @@ async function setup(context) {
         name: "compress",
         description: "Manage deterministic context compression",
         execute: async (input) => {
+          refreshConfig(config, configContext);
           await handleCompressCommand({
             command: "compress",
             sessionID: input.sessionID,
@@ -4187,8 +4202,10 @@ async function setup(context) {
   const applyCompression = async (event, kind) => {
     const anthropic = event.model.providerID === "anthropic";
     const anchored = kind === "context" && anthropic;
-    if (kind === "context")
+    if (kind === "context") {
+      refreshConfig(config, configContext);
       anchors.delete(event.sessionID);
+    }
     setSessionSelection(client, event.sessionID, {
       agent: event.agent,
       model: {
@@ -4347,5 +4364,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=682009452AED429A64756E2164756E21
+//# debugId=17FB9DA3BDA8E93C64756E2164756E21
 //# sourceMappingURL=index.js.map

@@ -18,6 +18,10 @@ export declare const PROTECTED_TOOLS: Set<string>;
  * first pruned output, the rewrite starts at the end of the system prompt and covers the whole
  * conversation. `anchored` says the request carries a marker just before the prune frontier (see
  * `pruneFrontier`), so the rewrite starts there.
+ *
+ * When the session's last model request started over CACHE_TTL_MS ago, the cache has expired and the
+ * prune is free, so every candidate goes regardless of rent. Nothing wakes an idle session; this
+ * happens on its next request.
  */
 export declare function pruneStaleToolOutputs(messages: WithParts[], state: SessionState, logger: Logger, anchored: boolean): Promise<void>;
 /**

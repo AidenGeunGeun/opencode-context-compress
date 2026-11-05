@@ -21,7 +21,7 @@ export declare function resolveProtectedTurnsSetting(layer: Record<string, unkno
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
-    /** Daily activity log. Follows `debug` when left unset. */
+    /** Daily activity log, kept for 30 days. Follows `debug` when left unset. */
     dailyLog?: boolean;
     notification: "off" | "minimal" | "detailed";
     protectedTurns: number;
@@ -31,5 +31,6 @@ export interface PluginConfig {
 }
 export declare const VALID_CONFIG_KEYS: Set<string>;
 export declare function getInvalidConfigKeys(userConfig: Record<string, unknown>): string[];
+export declare function refreshConfig(config: PluginConfig, ctx: ConfigContext): void;
 export declare function getConfig(ctx: ConfigContext): PluginConfig;
 //# sourceMappingURL=config.d.ts.map

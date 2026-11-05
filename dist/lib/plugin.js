@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createAutomaticCompressionEventHandler } from "./auto-compression.js";
-import { getConfig } from "./config.js";
+import { getConfig, refreshConfig } from "./config.js";
 import { generateNativeCompactionNoticeId } from "./commands/manage.js";
 import { handleCompressCommand } from "./commands/route.js";
 import { Logger } from "./logger.js";
@@ -22,7 +22,8 @@ const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 const TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
 export async function setup(context) {
     const client = pluginClient(context.session);
-    const config = getConfig({ directory: context.location.directory });
+    const configContext = { directory: context.location.directory };
+    const config = getConfig(configContext);
     if (!config.enabled)
         return () => undefined;
     const logger = new Logger({ daily: config.dailyLog ?? config.debug, context: config.debug });
@@ -34,6 +35,7 @@ export async function setup(context) {
                 name: "compress",
                 description: "Manage deterministic context compression",
                 execute: async (input) => {
+                    refreshConfig(config, configContext);
                     await handleCompressCommand({
                         command: "compress",
                         sessionID: input.sessionID,
@@ -91,8 +93,11 @@ export async function setup(context) {
         // after an edit fall back to an earlier point, often the end of the system prompt.
         const anthropic = event.model.providerID === "anthropic";
         const anchored = kind === "context" && anthropic;
-        if (kind === "context")
+        if (kind === "context") {
+            // Settings apply without a restart: every request re-reads a changed config file first.
+            refreshConfig(config, configContext);
             anchors.delete(event.sessionID);
+        }
         setSessionSelection(client, event.sessionID, {
             agent: event.agent,
             model: {
