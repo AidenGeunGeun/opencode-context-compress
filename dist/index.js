@@ -664,7 +664,7 @@ Follow any \`<user-message>\` guidance for this request without sacrificing trut
 
 Then call \`compress\` once, before this turn ends, with \`summary\` and \`topic\`. Selection is automatic: existing blocks are excluded while preserving the newest configured execution steps verbatim.
 
-As part of the wrap-up, update applicable existing durable documentation only for verified facts, settled decisions, or state that actually changed, and only when the task authorizes those edits. Follow the project's documentation conventions; do not create reports, logs, or new continuity documents merely for compression. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
+As part of the wrap-up, load the \`librarian\` and \`librarian-audit\` skills and follow them to bring the project's documentation up to date; skip them only if they are not available. Compression is lossy: the summary replaces the verbatim conversation, and most of the context and performance lost after compression comes from detail that existed only there. Settled decisions, verified findings, and open questions recorded in documentation stay exact for every later agent; left only in the conversation, they survive as a shortened paraphrase. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
 
 Summary guidance (use short headings where helpful; omit empty sections):
 - User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
@@ -689,7 +689,7 @@ First bring the work in progress to a clean stopping point: finish and verify th
 
 Then call \`compress\` once, before this turn ends, with a faithful \`summary\` and short \`topic\`. Selection is automatic: existing blocks are excluded and the newest configured execution steps remain verbatim.
 
-As part of the wrap-up, update applicable existing durable documentation only for verified facts, settled decisions, or state that actually changed, and only when the task authorizes those edits. Follow the project's documentation conventions; do not create reports, logs, or new continuity documents merely for compression. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
+As part of the wrap-up, load the \`librarian\` and \`librarian-audit\` skills and follow them to bring the project's documentation up to date; skip them only if they are not available. Compression is lossy: the summary replaces the verbatim conversation, and most of the context and performance lost after compression comes from detail that existed only there. Settled decisions, verified findings, and open questions recorded in documentation stay exact for every later agent; left only in the conversation, they survive as a shortened paraphrase. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
 
 Summary guidance (use short headings where helpful; omit empty sections):
 - User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
@@ -738,6 +738,8 @@ Summary fidelity:
 - Compress only the selected historical trajectory, not the whole current state. Preserve the selected blocks' internal chronology, objectives, decisions, constraints, established outcomes, unresolved state at the end of that historical range, and load-bearing evidence that remains necessary.
 - Never reorder events, blend noncontiguous periods, or import later out-of-range events into the historical replacement as though they occurred inside the selected range.
 - You may consult newer out-of-range evidence only to avoid a plainly misleading condensation. Leave that newer evidence represented in its own later block or conversation rather than moving it backward.
+
+Squashing loses detail again, and the selected blocks are the only remaining record of their period. Before squashing, move settled decisions, verified findings, and open questions from those blocks that are not yet documented into the project's documentation. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are not available. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block the squash.
 
 Call \`squash\` once with \`from\`, \`to\`, \`summary\`, and \`topic\`.
 
@@ -4364,5 +4366,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=17FB9DA3BDA8E93C64756E2164756E21
+//# debugId=24D19EA8811FE55764756E2164756E21
 //# sourceMappingURL=index.js.map

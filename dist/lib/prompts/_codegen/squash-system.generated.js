@@ -20,6 +20,8 @@ Summary fidelity:
 - Never reorder events, blend noncontiguous periods, or import later out-of-range events into the historical replacement as though they occurred inside the selected range.
 - You may consult newer out-of-range evidence only to avoid a plainly misleading condensation. Leave that newer evidence represented in its own later block or conversation rather than moving it backward.
 
+Squashing loses detail again, and the selected blocks are the only remaining record of their period. Before squashing, move settled decisions, verified findings, and open questions from those blocks that are not yet documented into the project's documentation. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are not available. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block the squash.
+
 Call \`squash\` once with \`from\`, \`to\`, \`summary\`, and \`topic\`.
 
 Result handling:
