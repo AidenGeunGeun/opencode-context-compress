@@ -473,6 +473,8 @@ describe("squash tool", () => {
             )
             assert.match(result.receipt, /Blocks \[b1\]-\[b12\] are now one block, \[b1\]/)
             assert.match(result.receipt, /the recent conversation is untouched/)
+            assert.match(result.receipt, /- \[b13\] is now \[b2\]/)
+            assert.match(result.receipt, /- \[b19\] is now \[b8\]/)
             assert.equal(result.state.compressSummaries.length, 9)
             assert.deepEqual(
                 result.state.compressSummaries.map((summary) => summary.anchorMessageId),

@@ -67,6 +67,8 @@ show the encrypted reasoning of earlier steps carried through prunes and user tu
 
 The compress and squash receipts are the only messages the agent gets after either operation. Keep
 them in the tool result: a message added to one request and dropped from the next breaks the cache.
+The squash receipt lists every renumbered block, because block labels are positions: without that list, agents
+read a moved block under a reused label as one they had merged, and reported a squash as lost (3 of 7 squashes).
 
 ## Structure
 
