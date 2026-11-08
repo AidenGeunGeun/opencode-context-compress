@@ -749,6 +749,7 @@ Call \`squash\` once with \`from\`, \`to\`, \`summary\`, and \`topic\`.
 
 Result handling:
 - A success receipt means the replacement is durable and already active. Do not make a second squash or compress call this turn.
+- Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block. Check the receipt's label list before concluding that a summary is missing.
 - A failure means nothing changed. Surface the exact diagnostic before deciding whether a retry is warranted.
 </system-reminder>
 `;
@@ -768,7 +769,7 @@ Squash touches only existing compressed blocks. All uncompressed conversation an
 
 This is additional lossy compression of summaries: the hidden original messages are unavailable. Compress only the selected historical trajectory, not the whole current state. Preserve chronology, objectives, decisions, constraints, established outcomes, the unresolved state at the selected range's end, and necessary evidence. Never reorder events, combine noncontiguous periods, or move later out-of-range evidence backward. Prefer a materially verbose or redundant range while leaving independently valuable blocks intact.
 
-A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
+A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block; check the receipt's label list before concluding that a summary is missing. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
 `;
 
 // lib/prompts/_codegen/post-compression-notice.generated.ts
@@ -4165,13 +4166,22 @@ function createSquashTool(ctx) {
           selectedBlocks: selected.length,
           blocksBefore: orderedBlocks.length,
           blocksAfter: candidateSummaries.length,
+          moved: orderedBlocks.slice(toIndex + 1).map((block, index) => ({
+            from: block.label,
+            to: `b${fromIndex + 1 + index}`,
+            topic: block.summary.topic
+          })),
           oldVisibleTokens,
           newVisibleTokens
         };
       });
       await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
       const opening = outcome.requestedBy === "automatic" ? "Automatic squash finished. The plugin started it because the compressed blocks passed their automatic squash threshold." : outcome.requestedBy === "user" ? "Squash finished, as the user requested with /compress squash." : "Squash finished.";
-      return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}"; later blocks keep their order under new labels. Only those older summaries changed; the recent conversation is untouched.
+      const moved = outcome.moved.length ? ` Later blocks moved up, so only their labels changed:
+${outcome.moved.map((block) => `- [${block.from}] is now [${block.to}]${block.topic ? ` "${block.topic}"` : ""}`).join(`
+`)}
+Labels in earlier messages, including this call's from and to, use the old numbering.` : "";
+      return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}". No other block changed; each is still in context word for word, and the recent conversation is untouched.${moved}
 
 ${renderPostCompressionNotice()}`;
     }
@@ -4409,5 +4419,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=755283AA2B9643AD64756E2164756E21
+//# debugId=3758EF757DD7FD0964756E2164756E21
 //# sourceMappingURL=index.js.map

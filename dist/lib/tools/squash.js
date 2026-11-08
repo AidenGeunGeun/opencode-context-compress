@@ -138,6 +138,11 @@ export function createSquashTool(ctx) {
                     selectedBlocks: selected.length,
                     blocksBefore: orderedBlocks.length,
                     blocksAfter: candidateSummaries.length,
+                    moved: orderedBlocks.slice(toIndex + 1).map((block, index) => ({
+                        from: block.label,
+                        to: `b${fromIndex + 1 + index}`,
+                        topic: block.summary.topic,
+                    })),
                     oldVisibleTokens,
                     newVisibleTokens,
                 };
@@ -150,7 +155,13 @@ export function createSquashTool(ctx) {
                 : outcome.requestedBy === "user"
                     ? "Squash finished, as the user requested with /compress squash."
                     : "Squash finished.";
-            return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}"; later blocks keep their order under new labels. Only those older summaries changed; the recent conversation is untouched.\n\n${renderPostCompressionNotice()}`;
+            // Labels are positions, so every later block is renumbered while this call's from/to and the agent's
+            // earlier reasoning keep the old numbers. Without the mapping, agents read a moved block under a reused
+            // label as one they just merged and concluded the squash lost it.
+            const moved = outcome.moved.length
+                ? ` Later blocks moved up, so only their labels changed:\n${outcome.moved.map((block) => `- [${block.from}] is now [${block.to}]${block.topic ? ` "${block.topic}"` : ""}`).join("\n")}\nLabels in earlier messages, including this call's from and to, use the old numbering.`
+                : "";
+            return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}". No other block changed; each is still in context word for word, and the recent conversation is untouched.${moved}\n\n${renderPostCompressionNotice()}`;
         },
     };
 }

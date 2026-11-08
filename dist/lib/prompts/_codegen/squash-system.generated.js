@@ -26,6 +26,7 @@ Call \`squash\` once with \`from\`, \`to\`, \`summary\`, and \`topic\`.
 
 Result handling:
 - A success receipt means the replacement is durable and already active. Do not make a second squash or compress call this turn.
+- Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block. Check the receipt's label list before concluding that a summary is missing.
 - A failure means nothing changed. Surface the exact diagnostic before deciding whether a retry is warranted.
 </system-reminder>
 `;
