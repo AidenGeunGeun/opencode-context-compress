@@ -69,6 +69,9 @@ The compress and squash receipts are the only messages the agent gets after eith
 them in the tool result: a message added to one request and dropped from the next breaks the cache.
 The squash receipt lists every renumbered block, because block labels are positions: without that list, agents
 read a moved block under a reused label as one they had merged, and reported a squash as lost (3 of 7 squashes).
+The compress and squash tool descriptions go out with every request, so changing one drops every Anthropic
+session's thinking and rewrites its cache once. Batch such changes; put turn-specific guidance in receipts or the
+per-turn system prompts instead.
 
 ## Structure
 
