@@ -12,6 +12,7 @@ function formatHelpMessage() {
     lines.push("- `/compress manage [instruction]` — Manage context now, optionally with specific compression guidance");
     lines.push("- `/compress squash [instruction]` — Replace one agent-selected range of existing compressed blocks");
     lines.push("- `/compress auto [status|on|off|threshold N|ratio N|reset]` — Control automatic compression for this session");
+    lines.push("- `/compress prune [status|on|off]` — Pause or resume background pruning for this session; pruned outputs stay pruned");
     lines.push("- `/compress help` — Show this command list");
     lines.push("");
     lines.push("Session `auto off` disables all automatic compression, including both absolute and ratio triggers, until you turn it back on.");

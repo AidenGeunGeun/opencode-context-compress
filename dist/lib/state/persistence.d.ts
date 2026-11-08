@@ -17,6 +17,7 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
     stats: SessionStats;
+    pruneOff?: boolean;
     autoCompressionEnabledOverride?: boolean;
     autoCompressionTokenThresholdOverride?: number;
     autoCompressionContextWindowRatioOverride?: number;

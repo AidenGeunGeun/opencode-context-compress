@@ -187,6 +187,7 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,
+            ...(sessionState.pruneOff ? { pruneOff: true } : {}),
             ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
                 ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
                 : {}),
@@ -311,6 +312,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         compressSummaries,
         managementTurns,
         stats: state.stats,
+        ...(state.pruneOff === true ? { pruneOff: true } : {}),
         ...(typeof state.autoCompressionEnabledOverride === "boolean"
             ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }
             : {}),

@@ -4,6 +4,7 @@ import { handleAutoCommand } from "./auto.js";
 import { handleContextCommand } from "./context.js";
 import { handleHelpCommand } from "./help.js";
 import { handleManageCommand } from "./manage.js";
+import { handlePruneCommand } from "./prune.js";
 import { handleSquashCommand } from "./squash.js";
 import { handleStatsCommand } from "./stats.js";
 export async function handleCompressCommand(input, dependencies) {
@@ -58,6 +59,17 @@ export async function handleCompressCommand(input, dependencies) {
             stateManager,
             state,
             config,
+            logger,
+            sessionId: input.sessionID,
+            arguments: args.slice(1),
+        });
+        return true;
+    }
+    if (subcommand === "prune") {
+        await handlePruneCommand({
+            client,
+            stateManager,
+            state,
             logger,
             sessionId: input.sessionID,
             arguments: args.slice(1),

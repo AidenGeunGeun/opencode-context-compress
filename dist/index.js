@@ -165,6 +165,7 @@ async function saveSessionState(sessionState, logger, sessionName) {
       compressSummaries: sessionState.compressSummaries,
       managementTurns: sessionState.managementTurns,
       stats: sessionState.stats,
+      ...sessionState.pruneOff ? { pruneOff: true } : {},
       ...typeof sessionState.autoCompressionEnabledOverride === "boolean" ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride } : {},
       ...sessionState.autoCompressionTokenThresholdOverride !== undefined ? {
         autoCompressionTokenThresholdOverride: sessionState.autoCompressionTokenThresholdOverride
@@ -263,6 +264,7 @@ async function loadSessionState(sessionId, logger, messages) {
     compressSummaries,
     managementTurns,
     stats: state.stats,
+    ...state.pruneOff === true ? { pruneOff: true } : {},
     ...typeof state.autoCompressionEnabledOverride === "boolean" ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride } : {},
     ...typeof state.autoCompressionTokenThresholdOverride === "number" && Number.isSafeInteger(state.autoCompressionTokenThresholdOverride) && state.autoCompressionTokenThresholdOverride > 0 ? {
       autoCompressionTokenThresholdOverride: state.autoCompressionTokenThresholdOverride
@@ -358,6 +360,7 @@ function commitDurableSessionState(state, candidate) {
   state.compressSummaries = candidate.compressSummaries;
   state.managementTurns = candidate.managementTurns;
   state.stats = candidate.stats;
+  state.pruneOff = candidate.pruneOff;
   state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
   state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
   state.autoCompressionContextWindowRatioOverride = candidate.autoCompressionContextWindowRatioOverride;
@@ -382,6 +385,7 @@ function applyPersistedState(state, persisted) {
     compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
     totalCompressTokens: persistedState.stats?.totalCompressTokens || 0
   };
+  state.pruneOff = persistedState.pruneOff;
   state.autoCompressionEnabledOverride = persistedState.autoCompressionEnabledOverride;
   state.autoCompressionTokenThresholdOverride = persistedState.autoCompressionTokenThresholdOverride;
   state.autoCompressionContextWindowRatioOverride = persistedState.autoCompressionContextWindowRatioOverride;
@@ -3072,6 +3076,7 @@ function formatHelpMessage() {
   lines.push("- `/compress manage [instruction]` \u2014 Manage context now, optionally with specific compression guidance");
   lines.push("- `/compress squash [instruction]` \u2014 Replace one agent-selected range of existing compressed blocks");
   lines.push("- `/compress auto [status|on|off|threshold N|ratio N|reset]` \u2014 Control automatic compression for this session");
+  lines.push("- `/compress prune [status|on|off]` \u2014 Pause or resume background pruning for this session; pruned outputs stay pruned");
   lines.push("- `/compress help` \u2014 Show this command list");
   lines.push("");
   lines.push("Session `auto off` disables all automatic compression, including both absolute and ratio triggers, until you turn it back on.");
@@ -3082,6 +3087,32 @@ async function handleHelpCommand(ctx) {
   const { client, logger, sessionId } = ctx;
   const message = formatHelpMessage();
   await sendIgnoredMessage(client, sessionId, message, logger);
+}
+
+// lib/commands/prune.ts
+var PRUNE_USAGE = "Usage: `/compress prune [status|on|off]`";
+async function handlePruneCommand(ctx) {
+  const action = ctx.arguments.length <= 1 ? ctx.arguments[0]?.toLowerCase() ?? "status" : "";
+  const response = ["status", "on", "off"].includes(action) ? await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
+    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
+    if (!ctx.state.persistenceSynchronized)
+      return "Pruning settings are unavailable because saved session state could not be loaded. Nothing was changed.";
+    const off = ctx.state.pruneOff === true;
+    if (action === "status")
+      return `Background pruning is ${off ? "off" : "on"} for this session.`;
+    if (action === "off" === off)
+      return `Background pruning is already ${action} for this session.`;
+    const candidate = {
+      ...ctx.state,
+      pruneOff: action === "off" ? true : undefined
+    };
+    if (!await saveSessionState(candidate, ctx.logger))
+      return "Pruning settings could not be saved. Nothing was changed.";
+    commitDurableSessionState(ctx.state, candidate);
+    return action === "off" ? "Background pruning is off for this session. Outputs pruned so far stay pruned." : "Background pruning is on for this session.";
+  }) : PRUNE_USAGE;
+  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
 }
 
 // lib/commands/squash.ts
@@ -3216,6 +3247,17 @@ async function handleCompressCommand(input, dependencies) {
       stateManager,
       state,
       config,
+      logger,
+      sessionId: input.sessionID,
+      arguments: args.slice(1)
+    });
+    return true;
+  }
+  if (subcommand === "prune") {
+    await handlePruneCommand({
+      client,
+      stateManager,
+      state,
       logger,
       sessionId: input.sessionID,
       arguments: args.slice(1)
@@ -3741,6 +3783,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
       ...turn.protectedMessageIds ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) } : {}
     })),
     stats: { ...parentState.state.stats },
+    pruneOff: parentState.state.pruneOff,
     autoCompressionEnabledOverride: parentState.state.autoCompressionEnabledOverride,
     autoCompressionTokenThresholdOverride: parentState.state.autoCompressionTokenThresholdOverride,
     autoCompressionContextWindowRatioOverride: parentState.state.autoCompressionContextWindowRatioOverride,
@@ -4243,7 +4286,7 @@ async function setup(context) {
         state.anthropicStubIds ??= new Set(state.compressed.toolIds);
       const stubs = anthropic ? state.anthropicStubIds : undefined;
       const before = anchored ? pruneFrontier(messages, state) : undefined;
-      if (kind === "context")
+      if (kind === "context" && !state.pruneOff)
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
       transformed = transformV2Messages(messages, stubs ? { ...state, compressed: { ...state.compressed, toolIds: stubs } } : state, event.messages);
@@ -4366,5 +4409,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=24D19EA8811FE55764756E2164756E21
+//# debugId=755283AA2B9643AD64756E2164756E21
 //# sourceMappingURL=index.js.map
