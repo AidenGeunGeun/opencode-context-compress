@@ -15,6 +15,6 @@ Squash touches only existing compressed blocks. All uncompressed conversation an
 
 This is additional lossy compression of summaries: the hidden original messages are unavailable. Compress only the selected historical trajectory, not the whole current state. Preserve chronology, objectives, decisions, constraints, established outcomes, the unresolved state at the selected range's end, and necessary evidence. Never reorder events, combine noncontiguous periods, or move later out-of-range evidence backward. Prefer a materially verbose or redundant range while leaving independently valuable blocks intact.
 
-A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block; check the receipt's label list before concluding that a summary is missing. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
+A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
 `;
 //# sourceMappingURL=squash.generated.js.map
