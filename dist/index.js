@@ -713,7 +713,7 @@ A failure means nothing was compressed. Surface the exact diagnostic and do not 
 var COMPRESS = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED CONTEXT COMPRESSION IN THE CURRENT TURN OR AUTOMATIC COMPRESSION HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization.
 
 Call once with:
-- \`summary\`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion. Write it in English, whatever language the conversation uses.
+- \`summary\`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion. Write it in English, whatever language the conversation uses. Name earlier periods by date or event, not by block label: labels are positions that change when blocks are squashed, so a label written into a summary later points at the wrong block.
 - \`topic\`: A short title for the new compressed block.
 
 Update existing durable documentation only for changed, verified information when authorized; skip edits when already current or the user requested no changes. Read-only agents return findings to the parent instead. Documentation work is not the compression itself, and missing write authority does not block compression.
@@ -760,7 +760,7 @@ var SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK S
 When requested, call it once with four required non-empty values:
 - \`from\`: The inclusive first current positional block label, such as \`b1\`.
 - \`to\`: The inclusive last current positional block label, such as \`b12\`.
-- \`summary\`: A truthful replacement for only that selected block range, written in English whatever language the blocks use.
+- \`summary\`: A truthful replacement for only that selected block range, written in English whatever language the blocks use. Name its scope and other periods by date or event, not by block label, since labels change with every squash.
 - \`topic\`: A short replacement block title.
 
 Choose exactly one contiguous inclusive range containing at least two existing compressed blocks. Both endpoints are yours to choose unless the user's \`<user-message>\` gives more specific guidance. \`[bN]\` labels are current positions, not stable durable identities.
@@ -769,7 +769,7 @@ Squash touches only existing compressed blocks. All uncompressed conversation an
 
 This is additional lossy compression of summaries: the hidden original messages are unavailable. Compress only the selected historical trajectory, not the whole current state. Preserve chronology, objectives, decisions, constraints, established outcomes, the unresolved state at the selected range's end, and necessary evidence. Never reorder events, combine noncontiguous periods, or move later out-of-range evidence backward. Prefer a materially verbose or redundant range while leaving independently valuable blocks intact.
 
-A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
+A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block; check the receipt's label list before concluding that a summary is missing. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
 `;
 
 // lib/prompts/_codegen/post-compression-notice.generated.ts
@@ -4419,5 +4419,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=67BB022E359E2ECE64756E2164756E21
+//# debugId=741CAF169CBF61EE64756E2164756E21
 //# sourceMappingURL=index.js.map
