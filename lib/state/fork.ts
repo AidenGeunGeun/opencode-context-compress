@@ -136,6 +136,7 @@ export async function inheritForkCompression(
                 : {}),
         })),
         stats: { ...parentState.state.stats },
+        pruneOff: parentState.state.pruneOff,
         autoCompressionEnabledOverride: parentState.state.autoCompressionEnabledOverride,
         autoCompressionTokenThresholdOverride:
             parentState.state.autoCompressionTokenThresholdOverride,

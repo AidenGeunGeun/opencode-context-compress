@@ -21,6 +21,7 @@ const { setup } = await import("../lib/plugin.ts")
 const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
 const { Logger } = await import("../lib/logger.ts")
 const { SessionStateManager } = await import("../lib/state/state.ts")
+const { saveSessionState } = await import("../lib/state/persistence.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
@@ -336,6 +337,78 @@ describe("background pruning", () => {
 
         // Other providers see the stubs and send neither header.
         assert.equal(await context("openai"), true)
+    })
+
+    it("does not prune a session with pruning turned off", async () => {
+        const messages = transcript(
+            [
+                ["subagent", "s".repeat(300_000)],
+                ...Array.from({ length: 3 }, (): [string, string] => ["shell", "x".repeat(3_000)]),
+                ...Array.from({ length: 10 }, (): [string, string] => ["shell", "ok"]),
+            ],
+            0,
+        )
+        const off = new SessionStateManager().get("s-off")
+        off.persistenceSynchronized = true
+        await saveSessionState({ ...off, pruneOff: true }, logger)
+        const hooks = new Map<string, (input: ModelHookInput) => Promise<void> | void>()
+        const registration = { dispose: async () => undefined }
+        await setup(
+            hostContext({
+                location: { directory: root },
+                command: { transform: async () => registration },
+                tool: { transform: async () => registration },
+                session: {
+                    ...fakeSession({ context: async () => messages }),
+                    get: async () => sessionInfo({ location: { directory: root } }),
+                    hook: async (name, callback) => {
+                        hooks.set(name, callback as (input: ModelHookInput) => Promise<void> | void)
+                        return registration
+                    },
+                },
+                model: { list: async () => ({ data: [] }) },
+                event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
+            }),
+        )
+        const event = {
+            sessionID: "s-off",
+            agent: "build",
+            model: { providerID: "openai", id: "model" },
+            system: [],
+            // Each call gets its result, so a stub would show in the request.
+            messages: modelRequest(messages).flatMap((message) => [
+                message,
+                ...message.content.flatMap((part) =>
+                    part.type === "tool-call"
+                        ? [
+                              {
+                                  role: "tool" as const,
+                                  content: [
+                                      {
+                                          type: "tool-result",
+                                          id: part.id,
+                                          result: { type: "text", value: "original" },
+                                      },
+                                  ],
+                              },
+                          ]
+                        : [],
+                ),
+            ]),
+            tools: {},
+            options: {},
+        }
+        // An Anthropic request prunes this transcript (as in the test above), and OpenAI would then show stubs.
+        await hooks.get("context")?.({
+            ...event,
+            model: { providerID: "anthropic", id: "model" },
+            messages: structuredClone(event.messages),
+        })
+        await hooks.get("context")?.(event)
+        assert.equal(
+            JSON.stringify(event.messages).includes("[Output pruned to save context.]"),
+            false,
+        )
     })
 
     it("does not prune while a management turn is open", async () => {

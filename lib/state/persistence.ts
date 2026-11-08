@@ -30,6 +30,7 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     stats: SessionStats
+    pruneOff?: boolean
     autoCompressionEnabledOverride?: boolean
     autoCompressionTokenThresholdOverride?: number
     autoCompressionContextWindowRatioOverride?: number
@@ -50,6 +51,7 @@ interface PersistedSessionStateFile {
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
     stats: SessionStats
+    pruneOff?: unknown
     autoCompressionEnabledOverride?: unknown
     autoCompressionTokenThresholdOverride?: unknown
     autoCompressionContextWindowRatioOverride?: unknown
@@ -308,6 +310,7 @@ export async function saveSessionState(
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             stats: sessionState.stats,
+            ...(sessionState.pruneOff ? { pruneOff: true } : {}),
             ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
                 ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
                 : {}),
@@ -454,6 +457,7 @@ export async function loadSessionState(
         compressSummaries,
         managementTurns,
         stats: state.stats,
+        ...(state.pruneOff === true ? { pruneOff: true } : {}),
         ...(typeof state.autoCompressionEnabledOverride === "boolean"
             ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }
             : {}),

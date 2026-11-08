@@ -111,6 +111,11 @@ export interface SessionState {
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     stats: SessionStats
+    /**
+     * Set by `/compress prune off`: no new background prunes. Already pruned outputs stay pruned, because
+     * restoring them would rewrite the prompt cache and grow the context at once.
+     */
+    pruneOff?: boolean
     /** Session-local override. Missing inherits the process-level auto setting. */
     autoCompressionEnabledOverride?: boolean
     /** Session-local absolute threshold override in tokens. */

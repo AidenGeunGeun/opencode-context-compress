@@ -91,6 +91,8 @@ Edits to `compress.jsonc` apply from the next request or `/compress` command, wi
 - `/compress manage [instruction]` asks the agent for one fold now.
 - `/compress squash [instruction]` replaces one contiguous range of existing blocks.
 - `/compress auto [status|on|off|threshold N|ratio N|reset]` controls this session's automatic policy.
+- `/compress prune [status|on|off]` pauses or resumes background pruning for this session. Outputs pruned so far
+  stay pruned, because restoring them would rewrite the prompt cache and grow the context at once.
 - `/compress context`, `/compress stats`, and `/compress help` post feedback without a model call.
   OpenCode may hold that feedback in the session queue until the next delivery.
 - `compress({ summary, topic })` folds all eligible uncompressed history after the newest block.

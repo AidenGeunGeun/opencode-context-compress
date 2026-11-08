@@ -269,3 +269,29 @@ describe("session automatic-compression commands", () => {
         }
     })
 })
+
+describe("session pruning command", () => {
+    it("persists prune off and on, and a fresh state manager reads it back", async () => {
+        const sessionId = `session-prune-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        await cleanupSessionFile(sessionId)
+        const messages = [userMessage("u1", sessionId), assistantMessage("a1", sessionId)]
+        const { run } = createHarness(sessionId, messages)
+
+        try {
+            assert.match(await run("prune"), /pruning is on for this session/)
+            assert.match(await run("prune on"), /already on/)
+            assert.match(
+                await run("prune off"),
+                /off for this session\. Outputs pruned so far stay pruned/,
+            )
+            assert.equal((await loadSessionState(sessionId, logger)).status, "loaded")
+            const fresh = createHarness(sessionId, messages)
+            assert.match(await fresh.run("prune status"), /pruning is off/)
+            assert.match(await fresh.run("prune on"), /pruning is on for this session/)
+            assert.match(await createHarness(sessionId, messages).run("prune"), /pruning is on/)
+            assert.match(await run("prune maybe"), /Usage: `\/compress prune/)
+        } finally {
+            await cleanupSessionFile(sessionId)
+        }
+    })
+})

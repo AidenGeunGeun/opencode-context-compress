@@ -18,6 +18,7 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.compressSummaries = candidate.compressSummaries
     state.managementTurns = candidate.managementTurns
     state.stats = candidate.stats
+    state.pruneOff = candidate.pruneOff
     state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride
     state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride
     state.autoCompressionContextWindowRatioOverride =
@@ -50,6 +51,7 @@ function applyPersistedState(
         compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
         totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
     }
+    state.pruneOff = persistedState.pruneOff
     state.autoCompressionEnabledOverride = persistedState.autoCompressionEnabledOverride
     state.autoCompressionTokenThresholdOverride =
         persistedState.autoCompressionTokenThresholdOverride
