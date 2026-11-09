@@ -20,6 +20,9 @@ const NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started i
 // to the wire body before it signs the request, because hook order between plugins is not fixed.
 const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 const TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
+// Claude accounts served by the anthropic-auth plugin, which reads the two headers above: `anthropic` and any extra
+// account it adds as `anthropic-<n>`.
+const isAnthropic = (providerID) => providerID === "anthropic" || providerID.startsWith("anthropic-");
 export async function setup(context) {
     const client = pluginClient(context.session);
     const configContext = { directory: context.location.directory };
@@ -91,7 +94,7 @@ export async function setup(context) {
     const applyCompression = async (event, kind) => {
         // Only Anthropic requests carry the anchor. Other providers have no markers; measured OpenAI reads
         // after an edit fall back to an earlier point, often the end of the system prompt.
-        const anthropic = event.model.providerID === "anthropic";
+        const anthropic = isAnthropic(event.model.providerID);
         const anchored = kind === "context" && anthropic;
         if (kind === "context") {
             // Settings apply without a restart: every request re-reads a changed config file first.
@@ -157,7 +160,7 @@ export async function setup(context) {
             await logger.saveContext(event.sessionID, transformed);
     };
     registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("model.request", (event) => {
-        if (event.kind !== "primary")
+        if (event.kind !== "primary" || !isAnthropic(event.model.providerID))
             return;
         const ids = anchors.get(event.sessionID);
         anchors.delete(event.sessionID);
@@ -166,7 +169,7 @@ export async function setup(context) {
         const clearing = clearings.get(event.sessionID);
         if (clearing)
             event.headers[TOOL_CLEARING_HEADER] = clearing;
-    }, { providerID: "anthropic" }));
+    }));
     const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
     const events = context.event.subscribe()[Symbol.asyncIterator]();
     const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);

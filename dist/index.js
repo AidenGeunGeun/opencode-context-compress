@@ -4191,6 +4191,7 @@ ${renderPostCompressionNotice()}`;
 var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' + "in your OpenCode config.";
 var CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 var TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
+var isAnthropic = (providerID) => providerID === "anthropic" || providerID.startsWith("anthropic-");
 async function setup(context) {
   const client = pluginClient(context.session);
   const configContext = { directory: context.location.directory };
@@ -4255,7 +4256,7 @@ async function setup(context) {
   const sentFrontiers = new Map;
   const clearings = new Map;
   const applyCompression = async (event, kind) => {
-    const anthropic = event.model.providerID === "anthropic";
+    const anthropic = isAnthropic(event.model.providerID);
     const anchored = kind === "context" && anthropic;
     if (kind === "context") {
       refreshConfig(config, configContext);
@@ -4316,7 +4317,7 @@ async function setup(context) {
       await logger.saveContext(event.sessionID, transformed);
   };
   registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("model.request", (event) => {
-    if (event.kind !== "primary")
+    if (event.kind !== "primary" || !isAnthropic(event.model.providerID))
       return;
     const ids = anchors.get(event.sessionID);
     anchors.delete(event.sessionID);
@@ -4325,7 +4326,7 @@ async function setup(context) {
     const clearing = clearings.get(event.sessionID);
     if (clearing)
       event.headers[TOOL_CLEARING_HEADER] = clearing;
-  }, { providerID: "anthropic" }));
+  }));
   const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
   const events = context.event.subscribe()[Symbol.asyncIterator]();
   const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
@@ -4419,5 +4420,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=741CAF169CBF61EE64756E2164756E21
+//# debugId=3CC50253C2A46E2664756E2164756E21
 //# sourceMappingURL=index.js.map
