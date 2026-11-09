@@ -33,6 +33,9 @@ const NATIVE_AUTO_COMPACTION_NOTICE =
 // to the wire body before it signs the request, because hook order between plugins is not fixed.
 const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors"
 const TOOL_CLEARING_HEADER = "x-opencode-tool-clearing"
+// Claude accounts served by the anthropic-auth plugin, which reads the two headers above: `anthropic` and any extra
+// account it adds as `anthropic-<n>`.
+const isAnthropic = (providerID: string) => providerID === "anthropic" || providerID.startsWith("anthropic-")
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -115,7 +118,7 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
     const applyCompression = async (event: SessionContext, kind: "context" | "generate") => {
         // Only Anthropic requests carry the anchor. Other providers have no markers; measured OpenAI reads
         // after an edit fall back to an earlier point, often the end of the system prompt.
-        const anthropic = event.model.providerID === "anthropic"
+        const anthropic = isAnthropic(event.model.providerID)
         const anchored = kind === "context" && anthropic
         if (kind === "context") {
             // Settings apply without a restart: every request re-reads a changed config file first.
@@ -194,18 +197,14 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
     registrations.push(
         await context.session.hook("context", (event) => applyCompression(event, "context")),
         await context.session.hook("generate", (event) => applyCompression(event, "generate")),
-        await context.session.hook(
-            "model.request",
-            (event) => {
-                if (event.kind !== "primary") return
-                const ids = anchors.get(event.sessionID)
-                anchors.delete(event.sessionID)
-                if (ids) event.headers[CACHE_ANCHORS_HEADER] = ids.join(",")
-                const clearing = clearings.get(event.sessionID)
-                if (clearing) event.headers[TOOL_CLEARING_HEADER] = clearing
-            },
-            { providerID: "anthropic" },
-        ),
+        await context.session.hook("model.request", (event) => {
+            if (event.kind !== "primary" || !isAnthropic(event.model.providerID)) return
+            const ids = anchors.get(event.sessionID)
+            anchors.delete(event.sessionID)
+            if (ids) event.headers[CACHE_ANCHORS_HEADER] = ids.join(",")
+            const clearing = clearings.get(event.sessionID)
+            if (clearing) event.headers[TOOL_CLEARING_HEADER] = clearing
+        }),
     )
 
     const automatic = createAutomaticCompressionEventHandler(
