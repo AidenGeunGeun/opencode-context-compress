@@ -61,10 +61,6 @@ export interface WithParts {
     info: Message;
     parts: Part[];
 }
-export interface SessionStats {
-    compressTokenCounter: number;
-    totalCompressTokens: number;
-}
 export interface CompressSummary {
     anchorMessageId: string;
     messageIds: string[];
@@ -109,20 +105,11 @@ export interface SessionState {
     anthropicStubIds?: Set<string>;
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
-    stats: SessionStats;
     /**
      * Set by `/compress prune off`: no new background prunes. Already pruned outputs stay pruned, because
      * restoring them would rewrite the prompt cache and grow the context at once.
      */
     pruneOff?: boolean;
-    /** Session-local override. Missing inherits the process-level auto setting. */
-    autoCompressionEnabledOverride?: boolean;
-    /** Session-local absolute threshold override in tokens. */
-    autoCompressionTokenThresholdOverride?: number;
-    /** Session-local context-window ratio override in the 0-1 representation. */
-    autoCompressionContextWindowRatioOverride?: number;
-    /** Assistant message carrying the most recent successful `compress` call. */
-    compressionCooldownAfterMessageId?: string;
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number;
     /** Runtime-only model metadata resolved from the host model list on each model request. */
@@ -133,9 +120,5 @@ export interface SessionState {
         /** Cached read price as a fraction of the input price, when the host lists prices. */
         cacheReadRatio?: number;
     };
-    /** Runtime-only lock preventing duplicate threshold events from starting two turns. */
-    autoCompressionStarting?: boolean;
-    /** Runtime-only deduplication marker for repeated step ends of the last triggering message. */
-    lastAutoTriggeredMessageId?: string;
 }
 //# sourceMappingURL=types.d.ts.map

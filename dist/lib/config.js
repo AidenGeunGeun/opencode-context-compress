@@ -9,26 +9,12 @@ export const DEFAULT_AUTO_COMPRESSION = {
     tokenThreshold: 432_000,
 };
 // One rule per numeric field, shared by validation warnings and layer merging.
-function isProtectedTurns(value) {
-    return typeof value === "number" && Number.isInteger(value) && value >= 0;
-}
 function isContextWindowRatio(value) {
     return typeof value === "number" && value > 0 && value <= 1;
 }
 function isTokenThreshold(value) {
     return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
-export function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-    if (isProtectedTurns(layer.protectedTurns))
-        return layer.protectedTurns;
-    if (hasExplicitTopLevel)
-        return fallback;
-    const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
-    return isProtectedTurns(autoCompression.protectedTurns)
-        ? autoCompression.protectedTurns
-        : fallback;
-}
-const NOTIFICATIONS = ["off", "minimal", "detailed"];
 const PERMISSIONS = ["ask", "allow", "deny"];
 function isOneOf(values, value) {
     return values.some((candidate) => candidate === value);
@@ -40,21 +26,15 @@ export const VALID_CONFIG_KEYS = new Set([
     "enabled",
     "debug",
     "dailyLog",
-    "notification",
-    // Retired with toasts; still accepted so older configs load without warnings.
-    "notificationType",
-    "protectedTurns",
     "autoCompression",
     "autoCompression.enabled",
     "autoCompression.contextWindowRatio",
     "autoCompression.tokenThreshold",
-    "autoCompression.protectedTurns",
     "commands",
     "commands.enabled",
     "tools",
     "tools.compress",
     "tools.compress.permission",
-    "tools.compress.showCompression",
 ]);
 // Extract all key paths from a config object for validation
 function getConfigKeyPaths(obj, prefix = "") {
@@ -90,22 +70,6 @@ function validateConfigTypes(config) {
     if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
         errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) });
     }
-    if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
-        errors.push({
-            key: "protectedTurns",
-            expected: "non-negative integer",
-            actual: JSON.stringify(config.protectedTurns),
-        });
-    }
-    if (config.notification !== undefined) {
-        if (!isOneOf(NOTIFICATIONS, config.notification)) {
-            errors.push({
-                key: "notification",
-                expected: '"off" | "minimal" | "detailed"',
-                actual: JSON.stringify(config.notification),
-            });
-        }
-    }
     const autoCompression = config.autoCompression;
     if (autoCompression !== undefined) {
         if (!isRecord(autoCompression)) {
@@ -138,14 +102,6 @@ function validateConfigTypes(config) {
                     key: "autoCompression.tokenThreshold",
                     expected: "positive finite number",
                     actual: JSON.stringify(autoCompression.tokenThreshold),
-                });
-            }
-            if (autoCompression.protectedTurns !== undefined &&
-                !isProtectedTurns(autoCompression.protectedTurns)) {
-                errors.push({
-                    key: "autoCompression.protectedTurns",
-                    expected: "non-negative integer",
-                    actual: JSON.stringify(autoCompression.protectedTurns),
                 });
             }
         }
@@ -183,14 +139,6 @@ function validateConfigTypes(config) {
                 });
             }
         }
-        if (compress.showCompression !== undefined &&
-            typeof compress.showCompression !== "boolean") {
-            errors.push({
-                key: "tools.compress.showCompression",
-                expected: "boolean",
-                actual: typeName(compress.showCompression),
-            });
-        }
     }
     return errors;
 }
@@ -221,8 +169,6 @@ function showConfigValidationWarnings(configPath, configData, isProject) {
 const defaultConfig = {
     enabled: true,
     debug: false,
-    notification: "detailed",
-    protectedTurns: 3,
     commands: {
         enabled: true,
     },
@@ -230,7 +176,6 @@ const defaultConfig = {
     tools: {
         compress: {
             permission: "allow",
-            showCompression: false,
         },
     },
 };
@@ -334,9 +279,6 @@ function mergeTools(base, override) {
             permission: isOneOf(PERMISSIONS, compress.permission)
                 ? compress.permission
                 : base.compress.permission,
-            showCompression: typeof compress.showCompression === "boolean"
-                ? compress.showCompression
-                : base.compress.showCompression,
         },
     };
 }
@@ -360,15 +302,11 @@ function mergeAutoCompression(base, override) {
             : base.tokenThreshold,
     };
 }
-function mergeConfigLayer(config, data, hasExplicitProtectedTurns) {
+function mergeConfigLayer(config, data) {
     return {
         enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
         debug: typeof data.debug === "boolean" ? data.debug : config.debug,
         dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
-        notification: isOneOf(NOTIFICATIONS, data.notification)
-            ? data.notification
-            : config.notification,
-        protectedTurns: resolveProtectedTurnsSetting(data, config.protectedTurns, hasExplicitProtectedTurns),
         commands: mergeCommands(config.commands, data.commands),
         autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
         tools: mergeTools(config.tools, data.tools),
@@ -402,7 +340,6 @@ export function refreshConfig(config, ctx) {
 }
 export function getConfig(ctx) {
     let config = deepCloneConfig(defaultConfig);
-    let hasExplicitProtectedTurns = false;
     const configPaths = getConfigPaths(ctx);
     const signature = configSignature(configPaths);
     // Load and merge global config
@@ -414,8 +351,7 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false);
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-            hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns);
+            config = mergeConfigLayer(config, result.data);
         }
     }
     else {
@@ -431,9 +367,7 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true);
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-            hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
+            config = mergeConfigLayer(config, result.data);
         }
     }
     // Load and merge project config (overrides global)
@@ -445,9 +379,7 @@ export function getConfig(ctx) {
         else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true);
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-            hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
+            config = mergeConfigLayer(config, result.data);
         }
     }
     signatures.set(config, signature);

@@ -31,9 +31,4 @@ export function countTokens(text, providerId) {
         return Math.ceil(text.length / 4);
     }
 }
-export function estimateTokensBatch(texts, providerId) {
-    if (texts.length === 0)
-        return 0;
-    return countTokens(texts.join(" "), providerId);
-}
 //# sourceMappingURL=token-utils.js.map

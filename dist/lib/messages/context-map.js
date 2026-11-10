@@ -1,4 +1,3 @@
-import { stripV2MachineryForCompressionSelection, transformMessagesForSearch, } from "./compress-transform.js";
 export function deriveProtectedTailMessageIds(messages, protectedTurns) {
     if (protectedTurns <= 0 || messages.length === 0)
         return [];
@@ -15,50 +14,5 @@ export function deriveProtectedTailMessageIds(messages, protectedTurns) {
         protectedStart = Math.max(0, messages.length - protectedTurns);
     }
     return messages.slice(protectedStart).map((message) => message.info.id);
-}
-/**
- * Select every uncompressed physical message after the newest durable block, while
- * preserving the configured newest execution steps verbatim.
- */
-export function selectDeterministicCompressionSpan(rawHistory, state, protectedTurns) {
-    const search = transformMessagesForSearch(rawHistory, state);
-    const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
-    const syntheticMap = search.syntheticMap;
-    const representedBlockAnchors = new Set([...syntheticMap.values()].map((summary) => summary.anchorMessageId));
-    const missingBlock = state.compressSummaries.find((summary) => !representedBlockAnchors.has(summary.anchorMessageId));
-    if (missingBlock) {
-        throw new Error("compress could not reconcile an existing compressed block with the current transcript. Nothing was compressed.");
-    }
-    let newestBlockIndex = -1;
-    for (let index = transformed.length - 1; index >= 0; index--) {
-        if (syntheticMap.has(transformed[index].info.id)) {
-            newestBlockIndex = index;
-            break;
-        }
-    }
-    const existingBlockMessageIds = new Set();
-    for (const summary of state.compressSummaries) {
-        existingBlockMessageIds.add(summary.anchorMessageId);
-        for (const messageId of summary.messageIds)
-            existingBlockMessageIds.add(messageId);
-    }
-    const candidates = transformed
-        .slice(newestBlockIndex + 1)
-        .filter((message) => !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
-    const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns);
-    const protectedIds = new Set(protectedMessageIds);
-    const messages = candidates.filter((message) => !protectedIds.has(message.info.id));
-    return {
-        messages,
-        messageIds: messages.map((message) => message.info.id),
-        protectedMessageIds,
-    };
-}
-export function deriveAutomaticProtectedTail(rawMessages, state, protectedTurns) {
-    const span = selectDeterministicCompressionSpan(rawMessages, state, protectedTurns);
-    return {
-        protectedMessageIds: span.protectedMessageIds,
-        hasSelectableMessages: span.messageIds.length > 0,
-    };
 }
 //# sourceMappingURL=context-map.js.map

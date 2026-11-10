@@ -3,7 +3,7 @@
  * Persists compressed tool IDs across sessions so they survive OpenCode restarts.
  * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
  */
-import type { SessionState, SessionStats, CompressSummary, ManagementTurn, WithParts } from "./types.js";
+import type { SessionState, CompressSummary, ManagementTurn, WithParts } from "./types.js";
 import type { Logger } from "../logger.js";
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
 export interface PersistedCompressed {
@@ -16,12 +16,7 @@ export interface PersistedSessionState {
     anthropicStubIds?: string[];
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
-    stats: SessionStats;
     pruneOff?: boolean;
-    autoCompressionEnabledOverride?: boolean;
-    autoCompressionTokenThresholdOverride?: number;
-    autoCompressionContextWindowRatioOverride?: number;
-    compressionCooldownAfterMessageId?: string;
     lastCompaction?: number;
     lastUpdated: string;
 }
@@ -39,12 +34,5 @@ type MaybeBackfilledCompressSummary = Omit<CompressSummary, "messageIds"> & {
 export declare function backfillCompressSummaryMessageIds(summaries: MaybeBackfilledCompressSummary[], messages: WithParts[], compressedMessageIds: Set<string>): CompressSummary[];
 export declare function saveSessionState(sessionState: SessionState, logger: Logger, sessionName?: string): Promise<boolean>;
 export declare function loadSessionState(sessionId: string, logger: Logger, messages?: WithParts[]): Promise<LoadSessionStateResult>;
-export interface AggregatedStats {
-    totalTokens: number;
-    totalTools: number;
-    totalMessages: number;
-    sessionCount: number;
-}
-export declare function loadAllSessionStats(logger: Logger): Promise<AggregatedStats>;
 export {};
 //# sourceMappingURL=persistence.d.ts.map

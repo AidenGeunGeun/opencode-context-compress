@@ -6,14 +6,11 @@ export interface SessionPromptInput {
     parts: Array<Record<string, unknown>>;
     noReply?: boolean;
     messageId?: string;
-    metadata?: {
-        "opencode.context-compress.management": true;
-    };
 }
 export interface PluginClient {
     readonly kind: "promise-plugin";
     readonly selections: Map<string, V2SessionSelection>;
-    readonly session: Pick<Plugin.Context["session"], "context" | "prompt" | "synthetic">;
+    readonly session: Pick<Plugin.Context["session"], "compact" | "context" | "prompt" | "synthetic">;
 }
 export declare function pluginClient(session: PluginClient["session"]): PluginClient;
 export declare function setSessionSelection(client: PluginClient, sessionID: string, selection: V2SessionSelection): void;

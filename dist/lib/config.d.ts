@@ -3,7 +3,6 @@ export interface ConfigContext {
 }
 export interface CompressTool {
     permission: "ask" | "allow" | "deny";
-    showCompression: boolean;
 }
 export interface Tools {
     compress: CompressTool;
@@ -17,14 +16,11 @@ export interface AutoCompression {
     tokenThreshold: number;
 }
 export declare const DEFAULT_AUTO_COMPRESSION: AutoCompression;
-export declare function resolveProtectedTurnsSetting(layer: Record<string, unknown>, fallback?: number, hasExplicitTopLevel?: boolean): number;
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
     /** Daily activity log, kept for 30 days. Follows `debug` when left unset. */
     dailyLog?: boolean;
-    notification: "off" | "minimal" | "detailed";
-    protectedTurns: number;
     commands: Commands;
     autoCompression: AutoCompression;
     tools: Tools;

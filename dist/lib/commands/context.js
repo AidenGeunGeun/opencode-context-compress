@@ -17,8 +17,7 @@
  *   SYSTEM = firstAssistant.input + cache.read - tokenizer(firstUserMessage)
  *            The first response's input contains system + first user message.
  *
- *   TOOLS  = tokenizer(toolInputs + toolOutputs) - compressedTokens
- *            We must tokenize tools anyway for compression decisions.
+ *   TOOLS  = tokenizer(toolInputs + toolOutputs), skipping pruned outputs
  *
  *   USER   = tokenizer(all user messages)
  *            User messages are typically small, so estimation is acceptable.
@@ -48,9 +47,7 @@ function analyzeTokens(state, messages, providerId) {
         assistant: 0,
         tools: 0,
         toolCount: 0,
-        compressedTokens: state.stats.totalCompressTokens,
         compressedToolCount: state.compressed.toolIds.size,
-        compressedMessageCount: state.compressed.messageIds.size,
         total: 0,
     };
     let firstAssistant;
@@ -176,22 +173,7 @@ function formatContextMessage(breakdown) {
     lines.push("─".repeat(60));
     lines.push("");
     lines.push("Summary:");
-    if (breakdown.compressedTokens > 0) {
-        const withoutCompression = breakdown.total + breakdown.compressedTokens;
-        const compressed = [];
-        if (breakdown.compressedToolCount > 0) {
-            compressed.push(`${breakdown.compressedToolCount} tools`);
-        }
-        if (breakdown.compressedMessageCount > 0) {
-            compressed.push(`${breakdown.compressedMessageCount} messages`);
-        }
-        lines.push(`  Compressed:      ${compressed.join(", ")} (~${formatTokenCount(breakdown.compressedTokens)})`);
-        lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
-        lines.push(`  Without plugin:  ~${formatTokenCount(withoutCompression)}`);
-    }
-    else {
-        lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
-    }
+    lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
     lines.push("");
     return lines.join("\n");
 }

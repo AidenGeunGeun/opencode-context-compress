@@ -5,13 +5,7 @@ export function commitDurableSessionState(state, candidate) {
     state.anthropicStubIds = candidate.anthropicStubIds;
     state.compressSummaries = candidate.compressSummaries;
     state.managementTurns = candidate.managementTurns;
-    state.stats = candidate.stats;
     state.pruneOff = candidate.pruneOff;
-    state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
-    state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
-    state.autoCompressionContextWindowRatioOverride =
-        candidate.autoCompressionContextWindowRatioOverride;
-    state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId;
     state.lastCompaction = candidate.lastCompaction;
     state.hasPersistedState = candidate.hasPersistedState;
     state.persistedLastUpdated = candidate.persistedLastUpdated;
@@ -29,17 +23,7 @@ function applyPersistedState(state, persisted) {
         persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
     state.compressSummaries = persistedState.compressSummaries || [];
     state.managementTurns = persistedState.managementTurns || [];
-    state.stats = {
-        compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
-        totalCompressTokens: persistedState.stats?.totalCompressTokens || 0,
-    };
     state.pruneOff = persistedState.pruneOff;
-    state.autoCompressionEnabledOverride = persistedState.autoCompressionEnabledOverride;
-    state.autoCompressionTokenThresholdOverride =
-        persistedState.autoCompressionTokenThresholdOverride;
-    state.autoCompressionContextWindowRatioOverride =
-        persistedState.autoCompressionContextWindowRatioOverride;
-    state.compressionCooldownAfterMessageId = persistedState.compressionCooldownAfterMessageId;
     state.lastCompaction = persistedState.lastCompaction ?? 0;
     state.hasPersistedState = true;
     state.persistedLastUpdated = persistedState.lastUpdated || null;
@@ -51,14 +35,6 @@ function clearPersistedCompressionState(state) {
     };
     state.compressSummaries = [];
     state.managementTurns = [];
-    state.stats = {
-        compressTokenCounter: 0,
-        totalCompressTokens: 0,
-    };
-    state.autoCompressionEnabledOverride = undefined;
-    state.autoCompressionTokenThresholdOverride = undefined;
-    state.autoCompressionContextWindowRatioOverride = undefined;
-    state.compressionCooldownAfterMessageId = undefined;
     state.lastCompaction = 0;
     state.hasPersistedState = false;
     state.persistedLastUpdated = null;
@@ -309,17 +285,7 @@ export function createSessionState() {
         },
         compressSummaries: [],
         managementTurns: [],
-        stats: {
-            compressTokenCounter: 0,
-            totalCompressTokens: 0,
-        },
-        autoCompressionEnabledOverride: undefined,
-        autoCompressionTokenThresholdOverride: undefined,
-        autoCompressionContextWindowRatioOverride: undefined,
-        compressionCooldownAfterMessageId: undefined,
         lastCompaction: 0,
-        autoCompressionStarting: false,
-        lastAutoTriggeredMessageId: undefined,
     };
 }
 export async function ensureSessionInitialized(state, sessionId, logger, messages) {

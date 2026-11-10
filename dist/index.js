@@ -5,840 +5,11 @@ import { Plugin } from "@opencode/plugin";
 // lib/plugin.ts
 import { z } from "zod";
 
-// lib/commands/manage.ts
-import { createHash as createHash2 } from "crypto";
-
-// lib/state/persistence.ts
-import * as fs from "fs/promises";
-import { existsSync } from "fs";
+// lib/config.ts
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
-import { join } from "path";
-var STORAGE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "opencode", "storage", "plugin", "compress");
-var LEGACY_STORAGE_DIR = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "opencode", "storage", "plugin", "dcp");
-async function ensureStorageDir() {
-  if (!existsSync(STORAGE_DIR)) {
-    await fs.mkdir(STORAGE_DIR, { recursive: true });
-  }
-}
-async function writeFileAtomic(filePath, content) {
-  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  let tempFileCreated = false;
-  try {
-    const handle = await fs.open(tempPath, "w");
-    tempFileCreated = true;
-    try {
-      await handle.writeFile(content, "utf-8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(tempPath, filePath);
-    tempFileCreated = false;
-  } finally {
-    if (tempFileCreated) {
-      await fs.rm(tempPath, { force: true }).catch(() => {
-        return;
-      });
-    }
-  }
-}
-async function readJsonFile(filePath) {
-  try {
-    const content = await fs.readFile(filePath, "utf-8");
-    return {
-      status: "loaded",
-      data: JSON.parse(content)
-    };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { status: "missing" };
-    }
-    return {
-      status: "error",
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-function getSessionFilePath(sessionId) {
-  return join(STORAGE_DIR, `${sessionId}.json`);
-}
-function getLegacySessionFilePath(sessionId) {
-  return join(LEGACY_STORAGE_DIR, `${sessionId}.json`);
-}
-function remapLegacyState(legacy) {
-  return {
-    sessionName: legacy.sessionName,
-    compressed: {
-      toolIds: legacy.prune?.toolIds ?? [],
-      messageIds: legacy.prune?.messageIds ?? []
-    },
-    compressSummaries: legacy.compressSummaries ?? [],
-    managementTurns: [],
-    stats: {
-      compressTokenCounter: legacy.stats?.pruneTokenCounter ?? 0,
-      totalCompressTokens: legacy.stats?.totalPruneTokens ?? 0
-    },
-    lastUpdated: legacy.lastUpdated
-  };
-}
-function normalizeManagementTurns(turns) {
-  if (!Array.isArray(turns)) {
-    return [];
-  }
-  const normalized = [];
-  const seen = new Set;
-  for (const turn of turns) {
-    if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
-      continue;
-    }
-    if (seen.has(turn.triggerMessageId)) {
-      continue;
-    }
-    seen.add(turn.triggerMessageId);
-    normalized.push({
-      triggerMessageId: turn.triggerMessageId,
-      ...turn.cleanupVersion === 2 ? { cleanupVersion: 2 } : {},
-      ...typeof turn.retainedText === "string" && turn.retainedText.length > 0 ? { retainedText: turn.retainedText } : {},
-      ...typeof turn.completedAt === "string" && turn.completedAt.length > 0 ? { completedAt: turn.completedAt } : {},
-      ...typeof turn.completedMessageId === "string" && turn.completedMessageId.length > 0 ? { completedMessageId: turn.completedMessageId } : {},
-      ...turn.source === "automatic" || turn.source === "squash" ? { source: turn.source } : {},
-      ...typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0 ? { triggeredByMessageId: turn.triggeredByMessageId } : {},
-      ...Array.isArray(turn.protectedMessageIds) ? {
-        protectedMessageIds: [
-          ...new Set(turn.protectedMessageIds.filter((messageId) => typeof messageId === "string" && messageId.length > 0))
-        ]
-      } : {},
-      ...typeof turn.contextTokens === "number" && Number.isFinite(turn.contextTokens) ? { contextTokens: turn.contextTokens } : {},
-      ...typeof turn.thresholdTokens === "number" && Number.isFinite(turn.thresholdTokens) ? { thresholdTokens: turn.thresholdTokens } : {}
-    });
-  }
-  return normalized;
-}
-function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
-  return summaries.map((summary) => {
-    if (Array.isArray(summary.messageIds) && summary.messageIds.length > 0) {
-      return {
-        anchorMessageId: summary.anchorMessageId,
-        messageIds: [...new Set(summary.messageIds)],
-        summary: summary.summary,
-        ...summary.topic && { topic: summary.topic }
-      };
-    }
-    const anchorIndex = messages.findIndex((msg) => msg.info.id === summary.anchorMessageId);
-    const messageIds = [];
-    if (anchorIndex !== -1 && compressedMessageIds.has(summary.anchorMessageId)) {
-      for (let i = anchorIndex;i < messages.length; i++) {
-        const messageId = messages[i].info.id;
-        if (!compressedMessageIds.has(messageId)) {
-          break;
-        }
-        if (!messageIds.includes(messageId)) {
-          messageIds.push(messageId);
-        }
-      }
-    }
-    if (messageIds.length === 0) {
-      messageIds.push(summary.anchorMessageId);
-    }
-    return {
-      anchorMessageId: summary.anchorMessageId,
-      messageIds,
-      summary: summary.summary,
-      ...summary.topic && { topic: summary.topic }
-    };
-  });
-}
-async function saveSessionState(sessionState, logger, sessionName) {
-  try {
-    if (!sessionState.sessionId) {
-      return false;
-    }
-    await ensureStorageDir();
-    const lastUpdated = new Date().toISOString();
-    const state = {
-      sessionName,
-      compressed: {
-        toolIds: [...sessionState.compressed.toolIds],
-        messageIds: [...sessionState.compressed.messageIds]
-      },
-      ...sessionState.anthropicStubIds ? { anthropicStubIds: [...sessionState.anthropicStubIds] } : {},
-      compressSummaries: sessionState.compressSummaries,
-      managementTurns: sessionState.managementTurns,
-      stats: sessionState.stats,
-      ...sessionState.pruneOff ? { pruneOff: true } : {},
-      ...typeof sessionState.autoCompressionEnabledOverride === "boolean" ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride } : {},
-      ...sessionState.autoCompressionTokenThresholdOverride !== undefined ? {
-        autoCompressionTokenThresholdOverride: sessionState.autoCompressionTokenThresholdOverride
-      } : {},
-      ...sessionState.autoCompressionContextWindowRatioOverride !== undefined ? {
-        autoCompressionContextWindowRatioOverride: sessionState.autoCompressionContextWindowRatioOverride
-      } : {},
-      ...sessionState.compressionCooldownAfterMessageId ? {
-        compressionCooldownAfterMessageId: sessionState.compressionCooldownAfterMessageId
-      } : {},
-      ...sessionState.lastCompaction > 0 ? { lastCompaction: sessionState.lastCompaction } : {},
-      lastUpdated
-    };
-    const filePath = getSessionFilePath(sessionState.sessionId);
-    const content = JSON.stringify(state, null, 2);
-    await writeFileAtomic(filePath, content);
-    sessionState.hasPersistedState = true;
-    sessionState.persistedLastUpdated = lastUpdated;
-    return true;
-  } catch (error) {
-    logger.error("Failed to save session state", {
-      sessionId: sessionState.sessionId,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return false;
-  }
-}
-async function loadSessionState(sessionId, logger, messages) {
-  const filePath = getSessionFilePath(sessionId);
-  const primaryResult = await readJsonFile(filePath);
-  let state;
-  let migrated = false;
-  if (primaryResult.status === "loaded") {
-    state = primaryResult.data;
-  } else if (primaryResult.status === "error") {
-    logger.warn("Failed to load session state", {
-      sessionId,
-      path: filePath,
-      error: primaryResult.error
-    });
-    return { status: "error" };
-  } else {
-    const legacyPath = getLegacySessionFilePath(sessionId);
-    const legacyResult = await readJsonFile(legacyPath);
-    if (legacyResult.status === "missing") {
-      return { status: "missing" };
-    }
-    if (legacyResult.status === "error") {
-      logger.warn("Failed to load legacy session state", {
-        sessionId,
-        path: legacyPath,
-        error: legacyResult.error
-      });
-      return { status: "error" };
-    }
-    logger.info("Found legacy state file, migrating", { sessionId });
-    state = remapLegacyState(legacyResult.data);
-    migrated = true;
-  }
-  if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
-    logger.warn("Invalid session state file, preserving in-memory state", {
-      sessionId,
-      path: migrated ? getLegacySessionFilePath(sessionId) : filePath
-    });
-    return { status: "error" };
-  }
-  if (!Array.isArray(state.compressed.messageIds)) {
-    state.compressed.messageIds = [];
-  }
-  let compressSummaries = [];
-  if (Array.isArray(state.compressSummaries)) {
-    const validSummaries = state.compressSummaries.filter((s) => s !== null && typeof s === "object" && typeof s.anchorMessageId === "string" && typeof s.summary === "string" && (s.messageIds === undefined || Array.isArray(s.messageIds) && s.messageIds.every((messageId) => typeof messageId === "string")));
-    if (validSummaries.length !== state.compressSummaries.length) {
-      logger.warn("Filtered out malformed compressSummaries entries", {
-        sessionId,
-        original: state.compressSummaries.length,
-        valid: validSummaries.length
-      });
-    }
-    if (messages) {
-      compressSummaries = backfillCompressSummaryMessageIds(validSummaries, messages, new Set(state.compressed.messageIds));
-    } else {
-      compressSummaries = validSummaries.map((summary) => ({
-        anchorMessageId: summary.anchorMessageId,
-        messageIds: Array.isArray(summary.messageIds) && summary.messageIds.length > 0 ? [...new Set(summary.messageIds)] : [summary.anchorMessageId],
-        summary: summary.summary,
-        ...summary.topic && { topic: summary.topic }
-      }));
-    }
-  }
-  const managementTurns = normalizeManagementTurns(state.managementTurns);
-  const result = {
-    sessionName: state.sessionName,
-    compressed: state.compressed,
-    ...Array.isArray(state.anthropicStubIds) ? { anthropicStubIds: state.anthropicStubIds } : {},
-    compressSummaries,
-    managementTurns,
-    stats: state.stats,
-    ...state.pruneOff === true ? { pruneOff: true } : {},
-    ...typeof state.autoCompressionEnabledOverride === "boolean" ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride } : {},
-    ...typeof state.autoCompressionTokenThresholdOverride === "number" && Number.isSafeInteger(state.autoCompressionTokenThresholdOverride) && state.autoCompressionTokenThresholdOverride > 0 ? {
-      autoCompressionTokenThresholdOverride: state.autoCompressionTokenThresholdOverride
-    } : {},
-    ...typeof state.autoCompressionContextWindowRatioOverride === "number" && Number.isFinite(state.autoCompressionContextWindowRatioOverride) && state.autoCompressionContextWindowRatioOverride > 0 && state.autoCompressionContextWindowRatioOverride < 1 ? {
-      autoCompressionContextWindowRatioOverride: state.autoCompressionContextWindowRatioOverride
-    } : {},
-    ...typeof state.compressionCooldownAfterMessageId === "string" && state.compressionCooldownAfterMessageId.length > 0 ? {
-      compressionCooldownAfterMessageId: state.compressionCooldownAfterMessageId
-    } : {},
-    ...typeof state.lastCompaction === "number" && Number.isFinite(state.lastCompaction) && state.lastCompaction > 0 ? { lastCompaction: state.lastCompaction } : {},
-    lastUpdated: state.lastUpdated
-  };
-  if (migrated) {
-    try {
-      await ensureStorageDir();
-      const newFilePath = getSessionFilePath(sessionId);
-      await writeFileAtomic(newFilePath, JSON.stringify(result, null, 2));
-      logger.info("Migrated legacy state to compress path", { sessionId });
-    } catch (saveError) {
-      logger.warn("Failed to save migrated state (will retry next load)", {
-        sessionId,
-        error: saveError instanceof Error ? saveError.message : String(saveError)
-      });
-    }
-  }
-  return {
-    status: "loaded",
-    state: result
-  };
-}
-async function loadAllSessionStats(logger) {
-  const result = {
-    totalTokens: 0,
-    totalTools: 0,
-    totalMessages: 0,
-    sessionCount: 0
-  };
-  try {
-    if (!existsSync(STORAGE_DIR)) {
-      return result;
-    }
-    const files = await fs.readdir(STORAGE_DIR);
-    const jsonFiles = files.filter((f) => f.endsWith(".json"));
-    for (const file of jsonFiles) {
-      try {
-        const filePath = join(STORAGE_DIR, file);
-        const content = await fs.readFile(filePath, "utf-8");
-        const state = JSON.parse(content);
-        if (state?.stats?.totalCompressTokens && state?.compressed?.toolIds) {
-          result.totalTokens += state.stats.totalCompressTokens;
-          result.totalTools += state.compressed.toolIds.length;
-          result.totalMessages += state.compressed.messageIds?.length || 0;
-          result.sessionCount++;
-        }
-      } catch {}
-    }
-  } catch (error) {
-    logger.warn("Failed to load all-time stats", {
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-  return result;
-}
-
-// lib/state/utils.ts
-function isCompletedNativeCompaction(message) {
-  const info = message.info;
-  return info.role === "assistant" && info.summary === true && !!info.finish && !info.error;
-}
-function findLastCompactionTimestamp(messages) {
-  for (let i = messages.length - 1;i >= 0; i--) {
-    const msg = messages[i];
-    if (isCompletedNativeCompaction(msg)) {
-      return msg.info.time.created;
-    }
-  }
-  return 0;
-}
-function resetOnCompaction(state) {
-  state.compressed.toolIds = new Set;
-  state.compressed.messageIds = new Set;
-  state.compressSummaries = [];
-  state.managementTurns = [];
-  state.autoCompressionStarting = false;
-  state.lastAutoTriggeredMessageId = undefined;
-}
-
-// lib/state/state.ts
-function commitDurableSessionState(state, candidate) {
-  state.compressed = candidate.compressed;
-  state.anthropicStubIds = candidate.anthropicStubIds;
-  state.compressSummaries = candidate.compressSummaries;
-  state.managementTurns = candidate.managementTurns;
-  state.stats = candidate.stats;
-  state.pruneOff = candidate.pruneOff;
-  state.autoCompressionEnabledOverride = candidate.autoCompressionEnabledOverride;
-  state.autoCompressionTokenThresholdOverride = candidate.autoCompressionTokenThresholdOverride;
-  state.autoCompressionContextWindowRatioOverride = candidate.autoCompressionContextWindowRatioOverride;
-  state.compressionCooldownAfterMessageId = candidate.compressionCooldownAfterMessageId;
-  state.lastCompaction = candidate.lastCompaction;
-  state.hasPersistedState = candidate.hasPersistedState;
-  state.persistedLastUpdated = candidate.persistedLastUpdated;
-}
-function applyPersistedState(state, persisted) {
-  if (persisted?.status !== "loaded") {
-    return;
-  }
-  const persistedState = persisted.state;
-  state.compressed = {
-    toolIds: new Set(persistedState.compressed.toolIds || []),
-    messageIds: new Set(persistedState.compressed.messageIds || [])
-  };
-  state.anthropicStubIds = persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
-  state.compressSummaries = persistedState.compressSummaries || [];
-  state.managementTurns = persistedState.managementTurns || [];
-  state.stats = {
-    compressTokenCounter: persistedState.stats?.compressTokenCounter || 0,
-    totalCompressTokens: persistedState.stats?.totalCompressTokens || 0
-  };
-  state.pruneOff = persistedState.pruneOff;
-  state.autoCompressionEnabledOverride = persistedState.autoCompressionEnabledOverride;
-  state.autoCompressionTokenThresholdOverride = persistedState.autoCompressionTokenThresholdOverride;
-  state.autoCompressionContextWindowRatioOverride = persistedState.autoCompressionContextWindowRatioOverride;
-  state.compressionCooldownAfterMessageId = persistedState.compressionCooldownAfterMessageId;
-  state.lastCompaction = persistedState.lastCompaction ?? 0;
-  state.hasPersistedState = true;
-  state.persistedLastUpdated = persistedState.lastUpdated || null;
-}
-function clearPersistedCompressionState(state) {
-  state.compressed = {
-    toolIds: new Set,
-    messageIds: new Set
-  };
-  state.compressSummaries = [];
-  state.managementTurns = [];
-  state.stats = {
-    compressTokenCounter: 0,
-    totalCompressTokens: 0
-  };
-  state.autoCompressionEnabledOverride = undefined;
-  state.autoCompressionTokenThresholdOverride = undefined;
-  state.autoCompressionContextWindowRatioOverride = undefined;
-  state.compressionCooldownAfterMessageId = undefined;
-  state.lastCompaction = 0;
-  state.hasPersistedState = false;
-  state.persistedLastUpdated = null;
-}
-async function refreshPersistedSessionState(state, sessionId, logger, messages) {
-  const persisted = await loadSessionState(sessionId, logger, messages);
-  if (persisted.status === "missing") {
-    state.persistenceSynchronized = true;
-    if (state.hasPersistedState) {
-      clearPersistedCompressionState(state);
-      return {
-        source: "disk-cleared",
-        lastUpdated: null
-      };
-    }
-    return {
-      source: "memory",
-      lastUpdated: state.persistedLastUpdated
-    };
-  }
-  if (persisted.status === "error") {
-    state.persistenceSynchronized = false;
-    return {
-      source: "memory",
-      lastUpdated: state.persistedLastUpdated
-    };
-  }
-  state.persistenceSynchronized = true;
-  if (!state.hasPersistedState) {
-    applyPersistedState(state, persisted);
-    return {
-      source: "disk-load",
-      lastUpdated: state.persistedLastUpdated
-    };
-  }
-  if (state.persistedLastUpdated !== persisted.state.lastUpdated) {
-    applyPersistedState(state, persisted);
-    return {
-      source: "disk-reload",
-      lastUpdated: state.persistedLastUpdated
-    };
-  }
-  return {
-    source: "memory",
-    lastUpdated: state.persistedLastUpdated
-  };
-}
-function findLastCompactionIndex(messages) {
-  for (let index = messages.length - 1;index >= 0; index--) {
-    const message = messages[index];
-    if (isCompletedNativeCompaction(message)) {
-      return index;
-    }
-  }
-  return -1;
-}
-function getCompressionStateCompactionOrder(state, messages, compactionIndex) {
-  const referencedMessageIds = new Set(state.compressed.messageIds);
-  for (const summary of state.compressSummaries) {
-    referencedMessageIds.add(summary.anchorMessageId);
-    for (const messageId of summary.messageIds)
-      referencedMessageIds.add(messageId);
-  }
-  for (const turn of state.managementTurns) {
-    referencedMessageIds.add(turn.triggerMessageId);
-    if (turn.completedMessageId)
-      referencedMessageIds.add(turn.completedMessageId);
-  }
-  const hasCompressionState = referencedMessageIds.size > 0 || state.compressed.toolIds.size > 0 || state.compressSummaries.length > 0 || state.managementTurns.length > 0;
-  if (!hasCompressionState)
-    return "after";
-  if (referencedMessageIds.size === 0)
-    return "unknown";
-  const indexByMessageId = new Map(messages.map((message, index) => [message.info.id, index]));
-  let missingReference = false;
-  for (const messageId of referencedMessageIds) {
-    const messageIndex = indexByMessageId.get(messageId);
-    if (messageIndex === undefined) {
-      missingReference = true;
-    } else if (messageIndex < compactionIndex) {
-      return "before";
-    }
-  }
-  return missingReference ? "unknown" : "after";
-}
-async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
-  const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages);
-  if (!state.persistenceSynchronized)
-    return syncResult;
-  const compactionTimestamp = findLastCompactionTimestamp(messages);
-  const compactionIndex = findLastCompactionIndex(messages);
-  const compactionOrder = compactionIndex === -1 ? "after" : getCompressionStateCompactionOrder(state, messages, compactionIndex);
-  const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction;
-  const requiresCompactionReset = compactionIndex !== -1 && (compactionOrder === "before" || compactionOrder === "unknown" && unresolvedNewCompaction);
-  if (requiresCompactionReset || unresolvedNewCompaction) {
-    const candidate = {
-      ...state,
-      ...requiresCompactionReset ? {
-        compressed: {
-          toolIds: new Set,
-          messageIds: new Set
-        },
-        compressSummaries: [],
-        managementTurns: []
-      } : {},
-      ...unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}
-    };
-    const persisted = await saveSessionState(candidate, logger);
-    if (!persisted) {
-      state.persistenceSynchronized = false;
-      return syncResult;
-    }
-    commitDurableSessionState(state, candidate);
-    if (requiresCompactionReset) {
-      resetOnCompaction(state);
-      logger.info("Reconciled native compaction against durable compression state", {
-        timestamp: compactionTimestamp
-      });
-    }
-  }
-  const present = new Set(messages.map((message) => message.info.id));
-  const stale = state.compressSummaries.filter((summary) => cutByRewind(summary, present));
-  if (stale.length === 0)
-    return syncResult;
-  const dropped = new Set(stale.flatMap((summary) => [summary.anchorMessageId, ...summary.messageIds]));
-  const droppedTools = new Set(messages.filter((message) => dropped.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
-  const candidate = {
-    ...state,
-    compressed: {
-      messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
-      toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id)))
-    },
-    anthropicStubIds: state.anthropicStubIds && new Set([...state.anthropicStubIds].filter((id) => !droppedTools.has(id))),
-    compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary))
-  };
-  if (!await saveSessionState(candidate, logger)) {
-    state.persistenceSynchronized = false;
-    return syncResult;
-  }
-  commitDurableSessionState(state, candidate);
-  logger.info("Dropped compression blocks for rewound messages", { blocks: stale.length });
-  return syncResult;
-}
-function cutByRewind(summary, present) {
-  const cut = summary.messageIds.findIndex((id) => !present.has(id));
-  if (cut < 0)
-    return false;
-  if (summary.messageIds.slice(cut).some((id) => present.has(id)))
-    return false;
-  return present.has(summary.anchorMessageId) === cut > 0;
-}
-
-class SessionStateManager {
-  sessions = new Map;
-  mutationTails = new Map;
-  get(sessionId) {
-    let state = this.sessions.get(sessionId);
-    if (!state) {
-      state = createSessionState();
-      state.sessionId = sessionId;
-      this.sessions.set(sessionId, state);
-    }
-    return state;
-  }
-  has(sessionId) {
-    return this.sessions.has(sessionId);
-  }
-  delete(sessionId) {
-    this.sessions.delete(sessionId);
-    this.mutationTails.delete(sessionId);
-  }
-  size() {
-    return this.sessions.size;
-  }
-  async runExclusive(sessionId, operation) {
-    const previous = this.mutationTails.get(sessionId) ?? Promise.resolve();
-    let release;
-    const gate = new Promise((resolve) => {
-      release = resolve;
-    });
-    const tail = previous.then(() => gate, () => gate);
-    this.mutationTails.set(sessionId, tail);
-    await previous.catch(() => {
-      return;
-    });
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.mutationTails.get(sessionId) === tail) {
-        this.mutationTails.delete(sessionId);
-      }
-    }
-  }
-}
-var checkSession = async (state, logger, messages) => {
-  if (!state.sessionId) {
-    return {
-      source: "memory",
-      lastUpdated: null
-    };
-  }
-  const unreconciled = {
-    source: "memory",
-    lastUpdated: state.persistedLastUpdated
-  };
-  try {
-    return await reconcileSessionLifecycle(state, state.sessionId, logger, messages);
-  } catch (err) {
-    logger.error("Failed to initialize session state", {
-      error: err instanceof Error ? err.message : String(err)
-    });
-    return unreconciled;
-  }
-};
-function createSessionState() {
-  return {
-    sessionId: null,
-    initialized: false,
-    persistenceSynchronized: false,
-    hasPersistedState: false,
-    persistedLastUpdated: null,
-    compressed: {
-      toolIds: new Set,
-      messageIds: new Set
-    },
-    compressSummaries: [],
-    managementTurns: [],
-    stats: {
-      compressTokenCounter: 0,
-      totalCompressTokens: 0
-    },
-    autoCompressionEnabledOverride: undefined,
-    autoCompressionTokenThresholdOverride: undefined,
-    autoCompressionContextWindowRatioOverride: undefined,
-    compressionCooldownAfterMessageId: undefined,
-    lastCompaction: 0,
-    autoCompressionStarting: false,
-    lastAutoTriggeredMessageId: undefined
-  };
-}
-async function ensureSessionInitialized(state, sessionId, logger, messages) {
-  if (state.sessionId && state.sessionId !== sessionId) {
-    throw new Error(`Session state mismatch: existing=${state.sessionId}, requested=${sessionId}`);
-  }
-  state.sessionId = sessionId;
-  state.initialized = true;
-  return await refreshPersistedSessionState(state, sessionId, logger, messages);
-}
-
-// lib/prompts/_codegen/system.generated.ts
-var SYSTEM = `<system-reminder>
-CONTEXT MANAGEMENT REQUESTED
-The user ran \`/compress manage\`. Preserve enough context for another agent to pursue the same intended outcome without reinterpreting the user's decisions. Compression is context maintenance, not task completion.
-
-Follow any \`<user-message>\` guidance for this request without sacrificing truthfulness. Unless it asks for compression right away, compression is not urgent: if work is in progress, first bring it to a clean stopping point by finishing and verifying the current step, leaving no edit, command, or line of reasoning half-done, and starting no new large work. A deliberate wrap-up produces a better handoff than a hurried compression.
-
-Then call \`compress\` once, before this turn ends, with \`summary\` and \`topic\`. Selection is automatic: existing blocks are excluded while preserving the newest configured execution steps verbatim.
-
-As part of the wrap-up, load the \`librarian\` and \`librarian-audit\` skills and follow them to bring the project's documentation up to date; skip them only if they are not available. Compression is lossy: the summary replaces the verbatim conversation, and most of the context and performance lost after compression comes from detail that existed only there. Settled decisions, verified findings, and open questions recorded in documentation stay exact for every later agent; left only in the conversation, they survive as a shortened paraphrase. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
-
-Summary guidance (use short headings where helpful; omit empty sections):
-- User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
-- Decisions and boundaries: confirmed requirements, constraints, permissions, and agreed protocols. Separate user decisions from your assumptions, proposals, and unresolved discussion; compression grants no new authority.
-- Current state: completed work with its evidence, incomplete work, material failures or uncertainty, and whether a final response was already delivered.
-- Continuation: the approach being pursued and the next concrete action, if one exists. Preserve relevant running jobs or subagents and their IDs; check their status rather than launching duplicates.
-- References: exact paths, commands, identifiers, and findings needed to continue without repeating investigation.
-
-Keep a compact handoff, not a transcript. Preserve decision-relevant rationale and evidence, not every conversational exchange or raw output. Later evidence supersedes stale plans; never invent facts, approvals, results, or completion. The retained recent execution steps may further update the summary.
-
-A success receipt confirms a durable save and an active fold; do not compress again this turn. Follow the user's requested next step and preserve the actual task disposition: continue authorized active work, but do not reopen completed work, duplicate a final response, or manufacture work while awaiting the user.
-A failure means nothing was compressed. Surface the exact diagnostic before deciding whether a retry is warranted.
-</system-reminder>
-`;
-
-// lib/prompts/_codegen/automatic-system.generated.ts
-var AUTOMATIC_SYSTEM = `<system-reminder>
-AUTOMATIC CONTEXT COMPRESSION DUE
-Working context reached ~{{context_tokens}} tokens; the effective threshold is ~{{threshold_tokens}} tokens ({{threshold_reason}}). Automatic compression has been invoked for this turn. It is due, not urgent: preserve the user's intent and current work so execution can continue across compression; this is not a task-status transition.
-
-First bring the work in progress to a clean stopping point: finish and verify the current step, and leave no edit, command, or line of reasoning half-done. Do not start new large work. A deliberate wrap-up produces a better handoff than a hurried compression.
-
-Then call \`compress\` once, before this turn ends, with a faithful \`summary\` and short \`topic\`. Selection is automatic: existing blocks are excluded and the newest configured execution steps remain verbatim.
-
-As part of the wrap-up, load the \`librarian\` and \`librarian-audit\` skills and follow them to bring the project's documentation up to date; skip them only if they are not available. Compression is lossy: the summary replaces the verbatim conversation, and most of the context and performance lost after compression comes from detail that existed only there. Settled decisions, verified findings, and open questions recorded in documentation stay exact for every later agent; left only in the conversation, they survive as a shortened paraphrase. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block compression.
-
-Summary guidance (use short headings where helpful; omit empty sections):
-- User intent: the ultimate outcome and newest active request, including corrections to earlier direction.
-- Decisions and boundaries: confirmed requirements, constraints, permissions, and agreed protocols. Separate user decisions from your assumptions, proposals, and unresolved discussion; compression grants no new authority.
-- Current state: completed work with its evidence, incomplete work, material failures or uncertainty, and whether a final response was already delivered.
-- Continuation: the approach being pursued and the next concrete action, if one exists. Preserve relevant running jobs or subagents and their IDs; check their status rather than launching duplicates.
-- References: exact paths, commands, identifiers, and findings needed to continue without repeating investigation.
-
-Keep a compact handoff, not a transcript. Preserve decision-relevant rationale and evidence, not every conversational exchange or raw output. Later evidence supersedes stale plans; never invent facts, approvals, results, or completion. The retained recent execution steps may further update the summary.
-
-A success receipt confirms a durable save and an active fold. Make no more compression calls this turn. Continue immediately only when work was genuinely active, within the agreed scope and existing authority; do not pause merely to report that compression finished. Preserve completed or awaiting-user status instead of reopening work or duplicating a final response.
-A failure means nothing was compressed. Surface the exact diagnostic and do not retry automatically.
-</system-reminder>
-`;
-
-// lib/prompts/_codegen/compress.generated.ts
-var COMPRESS = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED CONTEXT COMPRESSION IN THE CURRENT TURN OR AUTOMATIC COMPRESSION HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization.
-
-Call once with:
-- \`summary\`: A compact, structured handoff preserving the ultimate user intent and newest request; confirmed decisions and permissions separately from assumptions or unresolved proposals; completed work and evidence; current approach, real remaining work, and next action; and necessary paths, identifiers, and running-job references. Omit empty sections and transcript-like detail. Later evidence supersedes stale plans; preserve material uncertainty and never invent facts or completion. Write it in English, whatever language the conversation uses. Name earlier periods by date or event, not by block label: labels are positions that change when blocks are squashed, so a label written into a summary later points at the wrong block.
-- \`topic\`: A short title for the new compressed block.
-
-Update existing durable documentation only for changed, verified information when authorized; skip edits when already current or the user requested no changes. Read-only agents return findings to the parent instead. Documentation work is not the compression itself, and missing write authority does not block compression.
-
-Existing blocks are excluded; recent execution steps remain verbatim and may supersede the summary. A success receipt confirms a durable save and an active fold; do not compress again that turn. Continue authorized active work according to the latest user guidance, without reopening completed work or duplicating a final response. Automatic compression is not a reason to stop for review.
-
-A failure means nothing changed. Surface the exact diagnostic; do not retry automatically after an automatic compression failure.
-`;
-
-// lib/prompts/_codegen/squash-system.generated.ts
-var SQUASH_SYSTEM = `<system-reminder>
-CONTEXT SQUASH REQUESTED
-{{reason}} Review the current positional compressed blocks and make exactly one successful \`squash\` call.
-
-If a \`<user-message>\` block is present, it contains the user's specific instructions for this squash turn. Follow it while preserving truthfulness and chronology.
-
-Selection:
-- \`[bN]\` values are current positional labels, not stable durable identities.
-- Choose exactly one contiguous inclusive range containing at least two existing compressed blocks. Choose both endpoints unless \`<user-message>\` gives more specific guidance.
-- Prefer a materially verbose or redundant range. Leave independently valuable older or newer blocks intact; do not maximize the range merely because it is selectable.
-- Squash touches only the selected existing compressed blocks. All uncompressed conversation and all out-of-range blocks remain unchanged.
-- The replacement is inserted at the selected range's first position. Later blocks keep their relative order and receive new positional labels.
-
-Summary fidelity:
-- This is additional lossy compression of summaries. The hidden original messages are unavailable and cannot be restored or reread.
-- Compress only the selected historical trajectory, not the whole current state. Preserve the selected blocks' internal chronology, objectives, decisions, constraints, established outcomes, unresolved state at the end of that historical range, and load-bearing evidence that remains necessary.
-- Never reorder events, blend noncontiguous periods, or import later out-of-range events into the historical replacement as though they occurred inside the selected range.
-- You may consult newer out-of-range evidence only to avoid a plainly misleading condensation. Leave that newer evidence represented in its own later block or conversation rather than moving it backward.
-
-Squashing loses detail again, and the selected blocks are the only remaining record of their period. Before squashing, move settled decisions, verified findings, and open questions from those blocks that are not yet documented into the project's documentation. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are not available. If documentation is already current or the user requested no edits, skip that work. Read-only agents return candidate findings to the parent; lack of write authority must not block the squash.
-
-Call \`squash\` once with \`from\`, \`to\`, \`summary\`, and \`topic\`.
-
-Result handling:
-- A success receipt means the replacement is durable and already active. Do not make a second squash or compress call this turn.
-- Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block. Check the receipt's label list before concluding that a summary is missing.
-- A failure means nothing changed. Surface the exact diagnostic before deciding whether a retry is warranted.
-</system-reminder>
-`;
-
-// lib/prompts/_codegen/squash.generated.ts
-var SQUASH = `DO NOT CALL THIS TOOL UNLESS THE USER EXPLICITLY REQUESTED BLOCK SQUASHING IN THE CURRENT TURN OR AUTOMATIC SQUASH HAS BEEN INVOKED FOR THIS TURN. High context usage, tool availability, or your own judgment alone is not authorization. Runtime does not persist an authorization marker; this is a strict agent contract.
-
-When requested, call it once with four required non-empty values:
-- \`from\`: The inclusive first current positional block label, such as \`b1\`.
-- \`to\`: The inclusive last current positional block label, such as \`b12\`.
-- \`summary\`: A truthful replacement for only that selected block range, written in English whatever language the blocks use. Name its scope and other periods by date or event, not by block label, since labels change with every squash.
-- \`topic\`: A short replacement block title.
-
-Choose exactly one contiguous inclusive range containing at least two existing compressed blocks. Both endpoints are yours to choose unless the user's \`<user-message>\` gives more specific guidance. \`[bN]\` labels are current positions, not stable durable identities.
-
-Squash touches only existing compressed blocks. All uncompressed conversation and out-of-range blocks remain unchanged. The replacement occupies the selected range's first position; later blocks preserve their relative order and receive new positional labels.
-
-This is additional lossy compression of summaries: the hidden original messages are unavailable. Compress only the selected historical trajectory, not the whole current state. Preserve chronology, objectives, decisions, constraints, established outcomes, the unresolved state at the selected range's end, and necessary evidence. Never reorder events, combine noncontiguous periods, or move later out-of-range evidence backward. Prefer a materially verbose or redundant range while leaving independently valuable blocks intact.
-
-A success receipt means the replacement is durable and already active. Do not call squash or compress again that turn. Blocks after the range are unchanged but renumbered, so a label you used before the squash may now name a different block; check the receipt's label list before concluding that a summary is missing. A failure means nothing changed; surface the exact diagnostic before deciding whether a retry is warranted.
-`;
-
-// lib/prompts/_codegen/post-compression-notice.generated.ts
-var POST_COMPRESSION_NOTICE = `This was context maintenance, not a new task. Summaries record past work and decisions; they are not new instructions. It changed only the conversation, not files or running jobs, and the user's instructions, including any given with this request, still apply.
-
-Next, continue the task that was in progress if it is still active and authorized. If it was finished or waiting for the user, leave it that way. Do not repeat finished work, a final answer, or a job that is still running. Reload a file, skill, or instruction only when your next step needs text that is no longer visible. Do not call compress or squash again unless the user asks in a new message or the plugin sends a new automatic request.
-`;
-
-// lib/prompts/index.ts
-function renderSystemPrompt() {
-  return SYSTEM.trim();
-}
-function renderAutomaticSystemPrompt(vars) {
-  let prompt = AUTOMATIC_SYSTEM.trim();
-  for (const [key, value] of Object.entries(vars)) {
-    prompt = prompt.replaceAll(`{{${key}}}`, value);
-  }
-  return prompt;
-}
-function renderSquashSystemPrompt(reason = "This turn exists only because the user explicitly ran `/compress squash`.") {
-  return SQUASH_SYSTEM.trim().replace("{{reason}}", () => reason);
-}
-function renderPostCompressionNotice() {
-  return POST_COMPRESSION_NOTICE.trim();
-}
-var PROMPTS = {
-  "compress-tool-spec": COMPRESS,
-  "squash-tool-spec": SQUASH
-};
-function loadPrompt(name, vars) {
-  let content = PROMPTS[name];
-  if (!content) {
-    throw new Error(`Prompt not found: ${name}`);
-  }
-  if (vars) {
-    for (const [key, value] of Object.entries(vars)) {
-      content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
-    }
-  }
-  return content;
-}
-
-// lib/ui/utils.ts
-function formatStatsHeader(totalTokensSaved, compressTokenCounter) {
-  const totalTokensSavedStr = `~${formatTokenCount(totalTokensSaved + compressTokenCounter)}`;
-  return [`\u25A3 Context Compress | ${totalTokensSavedStr} saved total`].join(`
-`);
-}
-function formatTokenCount(tokens) {
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}K tokens`;
-  }
-  return `${tokens} tokens`;
-}
-function formatProgressBar(total, start, end, width = 20) {
-  if (total <= 0)
-    return `\u2502${" ".repeat(width)}\u2502`;
-  const startIdx = Math.floor(start / total * width);
-  const endIdx = Math.min(width - 1, Math.floor(end / total * width));
-  let bar = "";
-  for (let i = 0;i < width; i++) {
-    if (i >= startIdx && i <= endIdx) {
-      bar += "\u2591";
-    } else {
-      bar += "\u2588";
-    }
-  }
-  return `\u2502${bar}\u2502`;
-}
+import { parse } from "jsonc-parser";
 
 // lib/messages/utils.ts
 import { ulid } from "ulid";
@@ -909,6 +80,355 @@ var getLastUserMessage = (messages, startIndex) => {
 };
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// lib/config.ts
+var DEFAULT_AUTO_COMPRESSION = {
+  enabled: true,
+  contextWindowRatio: 0.9,
+  tokenThreshold: 432000
+};
+function isContextWindowRatio(value) {
+  return typeof value === "number" && value > 0 && value <= 1;
+}
+function isTokenThreshold(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+var PERMISSIONS = ["ask", "allow", "deny"];
+function isOneOf(values, value) {
+  return values.some((candidate) => candidate === value);
+}
+var VALID_CONFIG_KEYS = new Set([
+  "$schema",
+  "enabled",
+  "debug",
+  "dailyLog",
+  "autoCompression",
+  "autoCompression.enabled",
+  "autoCompression.contextWindowRatio",
+  "autoCompression.tokenThreshold",
+  "commands",
+  "commands.enabled",
+  "tools",
+  "tools.compress",
+  "tools.compress.permission"
+]);
+function getConfigKeyPaths(obj, prefix = "") {
+  const keys = [];
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    keys.push(fullKey);
+    if (isRecord(value)) {
+      keys.push(...getConfigKeyPaths(value, fullKey));
+    }
+  }
+  return keys;
+}
+function getInvalidConfigKeys(userConfig) {
+  const userKeys = getConfigKeyPaths(userConfig);
+  return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
+}
+function typeName(value) {
+  if (value === null)
+    return "null";
+  return Array.isArray(value) ? "array" : typeof value;
+}
+function validateConfigTypes(config) {
+  const errors = [];
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) });
+  }
+  if (config.debug !== undefined && typeof config.debug !== "boolean") {
+    errors.push({ key: "debug", expected: "boolean", actual: typeName(config.debug) });
+  }
+  if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
+    errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) });
+  }
+  const autoCompression = config.autoCompression;
+  if (autoCompression !== undefined) {
+    if (!isRecord(autoCompression)) {
+      errors.push({
+        key: "autoCompression",
+        expected: "object",
+        actual: typeName(autoCompression)
+      });
+    } else {
+      if (autoCompression.enabled !== undefined && typeof autoCompression.enabled !== "boolean") {
+        errors.push({
+          key: "autoCompression.enabled",
+          expected: "boolean",
+          actual: typeName(autoCompression.enabled)
+        });
+      }
+      if (autoCompression.contextWindowRatio !== undefined && !isContextWindowRatio(autoCompression.contextWindowRatio)) {
+        errors.push({
+          key: "autoCompression.contextWindowRatio",
+          expected: "number greater than 0 and at most 1",
+          actual: JSON.stringify(autoCompression.contextWindowRatio)
+        });
+      }
+      if (autoCompression.tokenThreshold !== undefined && !isTokenThreshold(autoCompression.tokenThreshold)) {
+        errors.push({
+          key: "autoCompression.tokenThreshold",
+          expected: "positive finite number",
+          actual: JSON.stringify(autoCompression.tokenThreshold)
+        });
+      }
+    }
+  }
+  const commands = config.commands;
+  if (commands !== undefined) {
+    if (isRecord(commands)) {
+      if (commands.enabled !== undefined && typeof commands.enabled !== "boolean") {
+        errors.push({
+          key: "commands.enabled",
+          expected: "boolean",
+          actual: typeName(commands.enabled)
+        });
+      }
+    } else {
+      errors.push({
+        key: "commands",
+        expected: "{ enabled: boolean }",
+        actual: typeName(commands)
+      });
+    }
+  }
+  const tools = config.tools;
+  if (isRecord(tools) && isRecord(tools.compress)) {
+    const compress = tools.compress;
+    if (compress.permission !== undefined) {
+      if (!isOneOf(PERMISSIONS, compress.permission)) {
+        errors.push({
+          key: "tools.compress.permission",
+          expected: '"ask" | "allow" | "deny"',
+          actual: JSON.stringify(compress.permission)
+        });
+      }
+    }
+  }
+  return errors;
+}
+function showConfigValidationWarnings(configPath, configData, isProject) {
+  const invalidKeys = getInvalidConfigKeys(configData);
+  const typeErrors = validateConfigTypes(configData);
+  if (invalidKeys.length === 0 && typeErrors.length === 0) {
+    return;
+  }
+  const configType = isProject ? "project config" : "config";
+  const messages = [];
+  if (invalidKeys.length > 0) {
+    const keyList = invalidKeys.slice(0, 3).join(", ");
+    const suffix = invalidKeys.length > 3 ? ` (+${invalidKeys.length - 3} more)` : "";
+    messages.push(`Unknown keys: ${keyList}${suffix}`);
+  }
+  if (typeErrors.length > 0) {
+    for (const err of typeErrors.slice(0, 2)) {
+      messages.push(`${err.key}: expected ${err.expected}, got ${err.actual}`);
+    }
+    if (typeErrors.length > 2) {
+      messages.push(`(+${typeErrors.length - 2} more type errors)`);
+    }
+  }
+  console.warn(`Context Compress: Invalid ${configType}
+${configPath}
+${messages.join(`
+`)}`);
+}
+var defaultConfig = {
+  enabled: true,
+  debug: false,
+  commands: {
+    enabled: true
+  },
+  autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
+  tools: {
+    compress: {
+      permission: "allow"
+    }
+  }
+};
+var GLOBAL_CONFIG_DIR = process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, "opencode") : join(homedir(), ".config", "opencode");
+var GLOBAL_CONFIG_PATH_JSONC = join(GLOBAL_CONFIG_DIR, "compress.jsonc");
+var GLOBAL_CONFIG_PATH_JSON = join(GLOBAL_CONFIG_DIR, "compress.json");
+function findOpencodeDir(startDir) {
+  let current = startDir;
+  while (current !== "/") {
+    const candidate = join(current, ".opencode");
+    if (existsSync(candidate) && statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current)
+      break;
+    current = parent;
+  }
+  return null;
+}
+function getConfigPaths(ctx) {
+  let globalPath = null;
+  if (existsSync(GLOBAL_CONFIG_PATH_JSONC)) {
+    globalPath = GLOBAL_CONFIG_PATH_JSONC;
+  } else if (existsSync(GLOBAL_CONFIG_PATH_JSON)) {
+    globalPath = GLOBAL_CONFIG_PATH_JSON;
+  }
+  let configDirPath = null;
+  const opencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  if (opencodeConfigDir) {
+    const configJsonc = join(opencodeConfigDir, "compress.jsonc");
+    const configJson = join(opencodeConfigDir, "compress.json");
+    if (existsSync(configJsonc)) {
+      configDirPath = configJsonc;
+    } else if (existsSync(configJson)) {
+      configDirPath = configJson;
+    }
+  }
+  let projectPath = null;
+  if (ctx?.directory) {
+    const opencodeDir = findOpencodeDir(ctx.directory);
+    if (opencodeDir) {
+      const projectJsonc = join(opencodeDir, "compress.jsonc");
+      const projectJson = join(opencodeDir, "compress.json");
+      if (existsSync(projectJsonc)) {
+        projectPath = projectJsonc;
+      } else if (existsSync(projectJson)) {
+        projectPath = projectJson;
+      }
+    }
+  }
+  return { global: globalPath, configDir: configDirPath, project: projectPath };
+}
+function createDefaultConfig() {
+  if (!existsSync(GLOBAL_CONFIG_DIR)) {
+    mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
+  }
+  const configContent = `{
+  "$schema": "https://unpkg.com/@skybluejacket/opencode-context-compress@1/compress.schema.json"
+}
+`;
+  writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
+}
+function loadConfigFile(configPath) {
+  let fileContent;
+  try {
+    fileContent = readFileSync(configPath, "utf-8");
+  } catch {
+    return { data: null };
+  }
+  try {
+    const parsed = parse(fileContent);
+    if (!isRecord(parsed)) {
+      return { data: null, parseError: "Config file is empty or invalid" };
+    }
+    return { data: parsed };
+  } catch (error) {
+    return {
+      data: null,
+      parseError: error instanceof Error && error.message ? error.message : "Failed to parse config"
+    };
+  }
+}
+function mergeTools(base, override) {
+  if (!isRecord(override))
+    return base;
+  const compress = isRecord(override.compress) ? override.compress : {};
+  return {
+    compress: {
+      permission: isOneOf(PERMISSIONS, compress.permission) ? compress.permission : base.compress.permission
+    }
+  };
+}
+function mergeCommands(base, override) {
+  if (!isRecord(override))
+    return base;
+  return {
+    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled
+  };
+}
+function mergeAutoCompression(base, override) {
+  if (!isRecord(override))
+    return base;
+  return {
+    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
+    contextWindowRatio: isContextWindowRatio(override.contextWindowRatio) ? override.contextWindowRatio : base.contextWindowRatio,
+    tokenThreshold: isTokenThreshold(override.tokenThreshold) ? override.tokenThreshold : base.tokenThreshold
+  };
+}
+function mergeConfigLayer(config, data) {
+  return {
+    enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
+    debug: typeof data.debug === "boolean" ? data.debug : config.debug,
+    dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
+    commands: mergeCommands(config.commands, data.commands),
+    autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
+    tools: mergeTools(config.tools, data.tools)
+  };
+}
+function deepCloneConfig(config) {
+  return {
+    ...config,
+    commands: { ...config.commands },
+    autoCompression: { ...config.autoCompression },
+    tools: {
+      compress: { ...config.tools.compress }
+    }
+  };
+}
+var signatures = new WeakMap;
+function configSignature(paths) {
+  return [paths.global, paths.configDir, paths.project].map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "").join("|");
+}
+function refreshConfig(config, ctx) {
+  if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
+    return;
+  const fresh = getConfig(ctx);
+  Object.assign(config, fresh);
+  signatures.set(config, signatures.get(fresh) ?? "");
+}
+function getConfig(ctx) {
+  let config = deepCloneConfig(defaultConfig);
+  const configPaths = getConfigPaths(ctx);
+  const signature = configSignature(configPaths);
+  if (configPaths.global) {
+    const result = loadConfigFile(configPaths.global);
+    if (result.parseError) {
+      console.warn(`Context Compress: Invalid config
+${configPaths.global}
+${result.parseError}
+Using default values`);
+    } else if (result.data) {
+      showConfigValidationWarnings(configPaths.global, result.data, false);
+      config = mergeConfigLayer(config, result.data);
+    }
+  } else {
+    createDefaultConfig();
+  }
+  if (configPaths.configDir) {
+    const result = loadConfigFile(configPaths.configDir);
+    if (result.parseError) {
+      console.warn(`Context Compress: Invalid configDir config
+${configPaths.configDir}
+${result.parseError}
+Using global/default values`);
+    } else if (result.data) {
+      showConfigValidationWarnings(configPaths.configDir, result.data, true);
+      config = mergeConfigLayer(config, result.data);
+    }
+  }
+  if (configPaths.project) {
+    const result = loadConfigFile(configPaths.project);
+    if (result.parseError) {
+      console.warn(`Context Compress: Invalid project config
+${configPaths.project}
+${result.parseError}
+Using global/default values`);
+    } else if (result.data) {
+      showConfigValidationWarnings(configPaths.project, result.data, true);
+      config = mergeConfigLayer(config, result.data);
+    }
+  }
+  signatures.set(config, signature);
+  return config;
 }
 
 // lib/messages/v2-adapter.ts
@@ -1157,81 +677,569 @@ async function promptSession(client, input) {
     sessionID: input.sessionId,
     text,
     id: input.messageId,
-    ...input.metadata ? { metadata: input.metadata } : {},
     delivery: "steer",
     resume: true
   });
 }
 
-// lib/ui/notification.ts
-async function sendSquashNotification(client, logger, config, sessionId, outcome) {
-  if (config.notification === "off")
-    return;
-  const delta = outcome.oldVisibleTokens - outcome.newVisibleTokens;
-  const change = delta > 0 ? "reduced" : delta < 0 ? "increased" : "unchanged";
-  const message = [
-    "\u25A3 Context Squash | Complete",
-    `\u2192 Replaced: [${outcome.oldFrom}]-[${outcome.oldTo}] \u2192 [${outcome.newLabel}] (${outcome.selectedBlocks} blocks \u2192 1)`,
-    `\u2192 Total blocks: ${outcome.blocksBefore} \u2192 ${outcome.blocksAfter} (${outcome.blocksBefore} - ${outcome.selectedBlocks} + 1)`,
-    `\u2192 Selected-block context (estimated): ${formatTokenCount(outcome.oldVisibleTokens)} \u2192 ${formatTokenCount(outcome.newVisibleTokens)}; ${change} by ${formatTokenCount(Math.abs(delta))}`,
-    ...config.notification === "detailed" ? [`\u2192 Topic: ${outcome.topic}`] : []
-  ].join(`
-`);
-  await sendIgnoredMessage(client, sessionId, message, logger);
-}
-function buildMinimalMessage(state) {
-  return formatStatsHeader(state.stats.totalCompressTokens, state.stats.compressTokenCounter);
-}
-function buildDetailedMessage(args) {
-  const {
-    state,
-    toolIds,
-    itemCount,
-    topic,
-    summary,
-    startResult,
-    endResult,
-    totalMessages,
-    rangeTokenEstimate,
-    showCompression
-  } = args;
-  let message = formatStatsHeader(state.stats.totalCompressTokens, state.stats.compressTokenCounter);
-  const rangeTokenCount = rangeTokenEstimate ?? state.stats.compressTokenCounter;
-  const rangeTokenCountLabel = `~${formatTokenCount(rangeTokenCount)}`;
-  const progressBar = formatProgressBar(totalMessages, startResult.messageIndex, endResult.messageIndex, 25);
-  message += `
-
-\u25A3 Compressed (${rangeTokenCountLabel}) ${progressBar}`;
-  message += `
-\u2192 Topic: ${topic}`;
-  message += `
-\u2192 Items: ${itemCount} ${itemCount === 1 ? "entry" : "entries"}`;
-  message += toolIds.length > 0 ? ` and ${toolIds.length} tools condensed` : " condensed";
-  if (showCompression) {
-    message += `
-\u2192 Compression: ${summary}`;
+// lib/state/persistence.ts
+import * as fs from "fs/promises";
+import { existsSync as existsSync2 } from "fs";
+import { homedir as homedir2 } from "os";
+import { join as join2 } from "path";
+var STORAGE_DIR = join2(process.env.XDG_DATA_HOME || join2(homedir2(), ".local", "share"), "opencode", "storage", "plugin", "compress");
+var LEGACY_STORAGE_DIR = join2(process.env.XDG_DATA_HOME || join2(homedir2(), ".local", "share"), "opencode", "storage", "plugin", "dcp");
+async function ensureStorageDir() {
+  if (!existsSync2(STORAGE_DIR)) {
+    await fs.mkdir(STORAGE_DIR, { recursive: true });
   }
-  return message;
 }
-async function sendCompressNotification(client, logger, config, state, sessionId, toolIds, itemCount, topic, summary, startResult, endResult, totalMessages, rangeTokenEstimate) {
-  if (config.notification === "off") {
+async function writeFileAtomic(filePath, content) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let tempFileCreated = false;
+  try {
+    const handle = await fs.open(tempPath, "w");
+    tempFileCreated = true;
+    try {
+      await handle.writeFile(content, "utf-8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tempPath, filePath);
+    tempFileCreated = false;
+  } finally {
+    if (tempFileCreated) {
+      await fs.rm(tempPath, { force: true }).catch(() => {
+        return;
+      });
+    }
+  }
+}
+async function readJsonFile(filePath) {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    return {
+      status: "loaded",
+      data: JSON.parse(content)
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { status: "missing" };
+    }
+    return {
+      status: "error",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+function getSessionFilePath(sessionId) {
+  return join2(STORAGE_DIR, `${sessionId}.json`);
+}
+function getLegacySessionFilePath(sessionId) {
+  return join2(LEGACY_STORAGE_DIR, `${sessionId}.json`);
+}
+function remapLegacyState(legacy) {
+  return {
+    sessionName: legacy.sessionName,
+    compressed: {
+      toolIds: legacy.prune?.toolIds ?? [],
+      messageIds: legacy.prune?.messageIds ?? []
+    },
+    compressSummaries: legacy.compressSummaries ?? [],
+    managementTurns: [],
+    lastUpdated: legacy.lastUpdated
+  };
+}
+function normalizeManagementTurns(turns) {
+  if (!Array.isArray(turns)) {
+    return [];
+  }
+  const normalized = [];
+  const seen = new Set;
+  for (const turn of turns) {
+    if (!turn || typeof turn.triggerMessageId !== "string" || turn.triggerMessageId.length === 0) {
+      continue;
+    }
+    if (seen.has(turn.triggerMessageId)) {
+      continue;
+    }
+    seen.add(turn.triggerMessageId);
+    normalized.push({
+      triggerMessageId: turn.triggerMessageId,
+      ...turn.cleanupVersion === 2 ? { cleanupVersion: 2 } : {},
+      ...typeof turn.retainedText === "string" && turn.retainedText.length > 0 ? { retainedText: turn.retainedText } : {},
+      ...typeof turn.completedAt === "string" && turn.completedAt.length > 0 ? { completedAt: turn.completedAt } : {},
+      ...typeof turn.completedMessageId === "string" && turn.completedMessageId.length > 0 ? { completedMessageId: turn.completedMessageId } : {},
+      ...turn.source === "automatic" || turn.source === "squash" ? { source: turn.source } : {},
+      ...typeof turn.triggeredByMessageId === "string" && turn.triggeredByMessageId.length > 0 ? { triggeredByMessageId: turn.triggeredByMessageId } : {},
+      ...Array.isArray(turn.protectedMessageIds) ? {
+        protectedMessageIds: [
+          ...new Set(turn.protectedMessageIds.filter((messageId) => typeof messageId === "string" && messageId.length > 0))
+        ]
+      } : {},
+      ...typeof turn.contextTokens === "number" && Number.isFinite(turn.contextTokens) ? { contextTokens: turn.contextTokens } : {},
+      ...typeof turn.thresholdTokens === "number" && Number.isFinite(turn.thresholdTokens) ? { thresholdTokens: turn.thresholdTokens } : {}
+    });
+  }
+  return normalized;
+}
+function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
+  return summaries.map((summary) => {
+    if (Array.isArray(summary.messageIds) && summary.messageIds.length > 0) {
+      return {
+        anchorMessageId: summary.anchorMessageId,
+        messageIds: [...new Set(summary.messageIds)],
+        summary: summary.summary,
+        ...summary.topic && { topic: summary.topic }
+      };
+    }
+    const anchorIndex = messages.findIndex((msg) => msg.info.id === summary.anchorMessageId);
+    const messageIds = [];
+    if (anchorIndex !== -1 && compressedMessageIds.has(summary.anchorMessageId)) {
+      for (let i = anchorIndex;i < messages.length; i++) {
+        const messageId = messages[i].info.id;
+        if (!compressedMessageIds.has(messageId)) {
+          break;
+        }
+        if (!messageIds.includes(messageId)) {
+          messageIds.push(messageId);
+        }
+      }
+    }
+    if (messageIds.length === 0) {
+      messageIds.push(summary.anchorMessageId);
+    }
+    return {
+      anchorMessageId: summary.anchorMessageId,
+      messageIds,
+      summary: summary.summary,
+      ...summary.topic && { topic: summary.topic }
+    };
+  });
+}
+async function saveSessionState(sessionState, logger, sessionName) {
+  try {
+    if (!sessionState.sessionId) {
+      return false;
+    }
+    await ensureStorageDir();
+    const lastUpdated = new Date().toISOString();
+    const state = {
+      sessionName,
+      compressed: {
+        toolIds: [...sessionState.compressed.toolIds],
+        messageIds: [...sessionState.compressed.messageIds]
+      },
+      ...sessionState.anthropicStubIds ? { anthropicStubIds: [...sessionState.anthropicStubIds] } : {},
+      compressSummaries: sessionState.compressSummaries,
+      managementTurns: sessionState.managementTurns,
+      ...sessionState.pruneOff ? { pruneOff: true } : {},
+      ...sessionState.lastCompaction > 0 ? { lastCompaction: sessionState.lastCompaction } : {},
+      lastUpdated
+    };
+    const filePath = getSessionFilePath(sessionState.sessionId);
+    const content = JSON.stringify({ ...state, stats: {} }, null, 2);
+    await writeFileAtomic(filePath, content);
+    sessionState.hasPersistedState = true;
+    sessionState.persistedLastUpdated = lastUpdated;
+    return true;
+  } catch (error) {
+    logger.error("Failed to save session state", {
+      sessionId: sessionState.sessionId,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return false;
   }
-  const message = config.notification === "minimal" ? buildMinimalMessage(state) : buildDetailedMessage({
-    state,
-    toolIds,
-    itemCount,
-    topic,
-    summary,
-    startResult,
-    endResult,
-    totalMessages,
-    rangeTokenEstimate,
-    showCompression: config.tools.compress.showCompression
-  });
-  await sendIgnoredMessage(client, sessionId, message, logger);
-  return true;
 }
+async function loadSessionState(sessionId, logger, messages) {
+  const filePath = getSessionFilePath(sessionId);
+  const primaryResult = await readJsonFile(filePath);
+  let state;
+  let migrated = false;
+  if (primaryResult.status === "loaded") {
+    state = primaryResult.data;
+  } else if (primaryResult.status === "error") {
+    logger.warn("Failed to load session state", {
+      sessionId,
+      path: filePath,
+      error: primaryResult.error
+    });
+    return { status: "error" };
+  } else {
+    const legacyPath = getLegacySessionFilePath(sessionId);
+    const legacyResult = await readJsonFile(legacyPath);
+    if (legacyResult.status === "missing") {
+      return { status: "missing" };
+    }
+    if (legacyResult.status === "error") {
+      logger.warn("Failed to load legacy session state", {
+        sessionId,
+        path: legacyPath,
+        error: legacyResult.error
+      });
+      return { status: "error" };
+    }
+    logger.info("Found legacy state file, migrating", { sessionId });
+    state = remapLegacyState(legacyResult.data);
+    migrated = true;
+  }
+  if (!state?.compressed || !Array.isArray(state.compressed.toolIds)) {
+    logger.warn("Invalid session state file, preserving in-memory state", {
+      sessionId,
+      path: migrated ? getLegacySessionFilePath(sessionId) : filePath
+    });
+    return { status: "error" };
+  }
+  if (!Array.isArray(state.compressed.messageIds)) {
+    state.compressed.messageIds = [];
+  }
+  let compressSummaries = [];
+  if (Array.isArray(state.compressSummaries)) {
+    const validSummaries = state.compressSummaries.filter((s) => s !== null && typeof s === "object" && typeof s.anchorMessageId === "string" && typeof s.summary === "string" && (s.messageIds === undefined || Array.isArray(s.messageIds) && s.messageIds.every((messageId) => typeof messageId === "string")));
+    if (validSummaries.length !== state.compressSummaries.length) {
+      logger.warn("Filtered out malformed compressSummaries entries", {
+        sessionId,
+        original: state.compressSummaries.length,
+        valid: validSummaries.length
+      });
+    }
+    if (messages) {
+      compressSummaries = backfillCompressSummaryMessageIds(validSummaries, messages, new Set(state.compressed.messageIds));
+    } else {
+      compressSummaries = validSummaries.map((summary) => ({
+        anchorMessageId: summary.anchorMessageId,
+        messageIds: Array.isArray(summary.messageIds) && summary.messageIds.length > 0 ? [...new Set(summary.messageIds)] : [summary.anchorMessageId],
+        summary: summary.summary,
+        ...summary.topic && { topic: summary.topic }
+      }));
+    }
+  }
+  const managementTurns = normalizeManagementTurns(state.managementTurns);
+  const result = {
+    sessionName: state.sessionName,
+    compressed: state.compressed,
+    ...Array.isArray(state.anthropicStubIds) ? { anthropicStubIds: state.anthropicStubIds } : {},
+    compressSummaries,
+    managementTurns,
+    ...state.pruneOff === true ? { pruneOff: true } : {},
+    ...typeof state.lastCompaction === "number" && Number.isFinite(state.lastCompaction) && state.lastCompaction > 0 ? { lastCompaction: state.lastCompaction } : {},
+    lastUpdated: state.lastUpdated
+  };
+  if (migrated) {
+    try {
+      await ensureStorageDir();
+      const newFilePath = getSessionFilePath(sessionId);
+      await writeFileAtomic(newFilePath, JSON.stringify(result, null, 2));
+      logger.info("Migrated legacy state to compress path", { sessionId });
+    } catch (saveError) {
+      logger.warn("Failed to save migrated state (will retry next load)", {
+        sessionId,
+        error: saveError instanceof Error ? saveError.message : String(saveError)
+      });
+    }
+  }
+  return {
+    status: "loaded",
+    state: result
+  };
+}
+// lib/state/utils.ts
+function isCompletedNativeCompaction(message) {
+  const info = message.info;
+  return info.role === "assistant" && info.summary === true && !!info.finish && !info.error;
+}
+function findLastCompactionTimestamp(messages) {
+  for (let i = messages.length - 1;i >= 0; i--) {
+    const msg = messages[i];
+    if (isCompletedNativeCompaction(msg)) {
+      return msg.info.time.created;
+    }
+  }
+  return 0;
+}
+function resetOnCompaction(state) {
+  state.compressed.toolIds = new Set;
+  state.compressed.messageIds = new Set;
+  state.compressSummaries = [];
+  state.managementTurns = [];
+}
+
+// lib/state/state.ts
+function commitDurableSessionState(state, candidate) {
+  state.compressed = candidate.compressed;
+  state.anthropicStubIds = candidate.anthropicStubIds;
+  state.compressSummaries = candidate.compressSummaries;
+  state.managementTurns = candidate.managementTurns;
+  state.pruneOff = candidate.pruneOff;
+  state.lastCompaction = candidate.lastCompaction;
+  state.hasPersistedState = candidate.hasPersistedState;
+  state.persistedLastUpdated = candidate.persistedLastUpdated;
+}
+function applyPersistedState(state, persisted) {
+  if (persisted?.status !== "loaded") {
+    return;
+  }
+  const persistedState = persisted.state;
+  state.compressed = {
+    toolIds: new Set(persistedState.compressed.toolIds || []),
+    messageIds: new Set(persistedState.compressed.messageIds || [])
+  };
+  state.anthropicStubIds = persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
+  state.compressSummaries = persistedState.compressSummaries || [];
+  state.managementTurns = persistedState.managementTurns || [];
+  state.pruneOff = persistedState.pruneOff;
+  state.lastCompaction = persistedState.lastCompaction ?? 0;
+  state.hasPersistedState = true;
+  state.persistedLastUpdated = persistedState.lastUpdated || null;
+}
+function clearPersistedCompressionState(state) {
+  state.compressed = {
+    toolIds: new Set,
+    messageIds: new Set
+  };
+  state.compressSummaries = [];
+  state.managementTurns = [];
+  state.lastCompaction = 0;
+  state.hasPersistedState = false;
+  state.persistedLastUpdated = null;
+}
+async function refreshPersistedSessionState(state, sessionId, logger, messages) {
+  const persisted = await loadSessionState(sessionId, logger, messages);
+  if (persisted.status === "missing") {
+    state.persistenceSynchronized = true;
+    if (state.hasPersistedState) {
+      clearPersistedCompressionState(state);
+      return {
+        source: "disk-cleared",
+        lastUpdated: null
+      };
+    }
+    return {
+      source: "memory",
+      lastUpdated: state.persistedLastUpdated
+    };
+  }
+  if (persisted.status === "error") {
+    state.persistenceSynchronized = false;
+    return {
+      source: "memory",
+      lastUpdated: state.persistedLastUpdated
+    };
+  }
+  state.persistenceSynchronized = true;
+  if (!state.hasPersistedState) {
+    applyPersistedState(state, persisted);
+    return {
+      source: "disk-load",
+      lastUpdated: state.persistedLastUpdated
+    };
+  }
+  if (state.persistedLastUpdated !== persisted.state.lastUpdated) {
+    applyPersistedState(state, persisted);
+    return {
+      source: "disk-reload",
+      lastUpdated: state.persistedLastUpdated
+    };
+  }
+  return {
+    source: "memory",
+    lastUpdated: state.persistedLastUpdated
+  };
+}
+function findLastCompactionIndex(messages) {
+  for (let index = messages.length - 1;index >= 0; index--) {
+    const message = messages[index];
+    if (isCompletedNativeCompaction(message)) {
+      return index;
+    }
+  }
+  return -1;
+}
+function getCompressionStateCompactionOrder(state, messages, compactionIndex) {
+  const referencedMessageIds = new Set(state.compressed.messageIds);
+  for (const summary of state.compressSummaries) {
+    referencedMessageIds.add(summary.anchorMessageId);
+    for (const messageId of summary.messageIds)
+      referencedMessageIds.add(messageId);
+  }
+  for (const turn of state.managementTurns) {
+    referencedMessageIds.add(turn.triggerMessageId);
+    if (turn.completedMessageId)
+      referencedMessageIds.add(turn.completedMessageId);
+  }
+  const hasCompressionState = referencedMessageIds.size > 0 || state.compressed.toolIds.size > 0 || state.compressSummaries.length > 0 || state.managementTurns.length > 0;
+  if (!hasCompressionState)
+    return "after";
+  if (referencedMessageIds.size === 0)
+    return "unknown";
+  const indexByMessageId = new Map(messages.map((message, index) => [message.info.id, index]));
+  let missingReference = false;
+  for (const messageId of referencedMessageIds) {
+    const messageIndex = indexByMessageId.get(messageId);
+    if (messageIndex === undefined) {
+      missingReference = true;
+    } else if (messageIndex < compactionIndex) {
+      return "before";
+    }
+  }
+  return missingReference ? "unknown" : "after";
+}
+async function reconcileSessionLifecycle(state, sessionId, logger, messages) {
+  const syncResult = await ensureSessionInitialized(state, sessionId, logger, messages);
+  if (!state.persistenceSynchronized)
+    return syncResult;
+  const compactionTimestamp = findLastCompactionTimestamp(messages);
+  const compactionIndex = findLastCompactionIndex(messages);
+  const compactionOrder = compactionIndex === -1 ? "after" : getCompressionStateCompactionOrder(state, messages, compactionIndex);
+  const unresolvedNewCompaction = compactionTimestamp > state.lastCompaction;
+  const requiresCompactionReset = compactionIndex !== -1 && (compactionOrder === "before" || compactionOrder === "unknown" && unresolvedNewCompaction);
+  if (requiresCompactionReset || unresolvedNewCompaction) {
+    const candidate = {
+      ...state,
+      ...requiresCompactionReset ? {
+        compressed: {
+          toolIds: new Set,
+          messageIds: new Set
+        },
+        compressSummaries: [],
+        managementTurns: []
+      } : {},
+      ...unresolvedNewCompaction ? { lastCompaction: compactionTimestamp } : {}
+    };
+    const persisted = await saveSessionState(candidate, logger);
+    if (!persisted) {
+      state.persistenceSynchronized = false;
+      return syncResult;
+    }
+    commitDurableSessionState(state, candidate);
+    if (requiresCompactionReset) {
+      resetOnCompaction(state);
+      logger.info("Reconciled native compaction against durable compression state", {
+        timestamp: compactionTimestamp
+      });
+    }
+  }
+  const present = new Set(messages.map((message) => message.info.id));
+  const stale = state.compressSummaries.filter((summary) => cutByRewind(summary, present));
+  if (stale.length === 0)
+    return syncResult;
+  const dropped = new Set(stale.flatMap((summary) => [summary.anchorMessageId, ...summary.messageIds]));
+  const droppedTools = new Set(messages.filter((message) => dropped.has(message.info.id)).flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part.callID] : [])));
+  const candidate = {
+    ...state,
+    compressed: {
+      messageIds: new Set([...state.compressed.messageIds].filter((id) => !dropped.has(id))),
+      toolIds: new Set([...state.compressed.toolIds].filter((id) => !droppedTools.has(id)))
+    },
+    anthropicStubIds: state.anthropicStubIds && new Set([...state.anthropicStubIds].filter((id) => !droppedTools.has(id))),
+    compressSummaries: state.compressSummaries.filter((summary) => !stale.includes(summary))
+  };
+  if (!await saveSessionState(candidate, logger)) {
+    state.persistenceSynchronized = false;
+    return syncResult;
+  }
+  commitDurableSessionState(state, candidate);
+  logger.info("Dropped compression blocks for rewound messages", { blocks: stale.length });
+  return syncResult;
+}
+function cutByRewind(summary, present) {
+  const cut = summary.messageIds.findIndex((id) => !present.has(id));
+  if (cut < 0)
+    return false;
+  if (summary.messageIds.slice(cut).some((id) => present.has(id)))
+    return false;
+  return present.has(summary.anchorMessageId) === cut > 0;
+}
+
+class SessionStateManager {
+  sessions = new Map;
+  mutationTails = new Map;
+  get(sessionId) {
+    let state = this.sessions.get(sessionId);
+    if (!state) {
+      state = createSessionState();
+      state.sessionId = sessionId;
+      this.sessions.set(sessionId, state);
+    }
+    return state;
+  }
+  has(sessionId) {
+    return this.sessions.has(sessionId);
+  }
+  delete(sessionId) {
+    this.sessions.delete(sessionId);
+    this.mutationTails.delete(sessionId);
+  }
+  size() {
+    return this.sessions.size;
+  }
+  async runExclusive(sessionId, operation) {
+    const previous = this.mutationTails.get(sessionId) ?? Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate, () => gate);
+    this.mutationTails.set(sessionId, tail);
+    await previous.catch(() => {
+      return;
+    });
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.mutationTails.get(sessionId) === tail) {
+        this.mutationTails.delete(sessionId);
+      }
+    }
+  }
+}
+var checkSession = async (state, logger, messages) => {
+  if (!state.sessionId) {
+    return {
+      source: "memory",
+      lastUpdated: null
+    };
+  }
+  const unreconciled = {
+    source: "memory",
+    lastUpdated: state.persistedLastUpdated
+  };
+  try {
+    return await reconcileSessionLifecycle(state, state.sessionId, logger, messages);
+  } catch (err) {
+    logger.error("Failed to initialize session state", {
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return unreconciled;
+  }
+};
+function createSessionState() {
+  return {
+    sessionId: null,
+    initialized: false,
+    persistenceSynchronized: false,
+    hasPersistedState: false,
+    persistedLastUpdated: null,
+    compressed: {
+      toolIds: new Set,
+      messageIds: new Set
+    },
+    compressSummaries: [],
+    managementTurns: [],
+    lastCompaction: 0
+  };
+}
+async function ensureSessionInitialized(state, sessionId, logger, messages) {
+  if (state.sessionId && state.sessionId !== sessionId) {
+    throw new Error(`Session state mismatch: existing=${state.sessionId}, requested=${sessionId}`);
+  }
+  state.sessionId = sessionId;
+  state.initialized = true;
+  return await refreshPersistedSessionState(state, sessionId, logger, messages);
+}
+// lib/ui/notification.ts
 async function sendIgnoredMessage(client, sessionID, text, logger) {
   try {
     await promptSession(client, {
@@ -1249,6 +1257,614 @@ async function sendIgnoredMessage(client, sessionID, text, logger) {
     logger.error("Failed to send notification", {
       error: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+// lib/ui/utils.ts
+function formatTokenCount(tokens) {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}K tokens`;
+  }
+  return `${tokens} tokens`;
+}
+
+// lib/token-utils.ts
+import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
+import { encodingForModel } from "js-tiktoken";
+var _tiktokenEncoder = null;
+function getTiktokenEncoder() {
+  if (!_tiktokenEncoder) {
+    _tiktokenEncoder = encodingForModel("gpt-4o");
+  }
+  return _tiktokenEncoder;
+}
+function isAnthropicProvider(providerId) {
+  if (!providerId)
+    return false;
+  return providerId.toLowerCase().includes("anthropic");
+}
+function getCurrentProviderId(state, messages) {
+  return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
+}
+function countTokens(text, providerId) {
+  if (!text)
+    return 0;
+  try {
+    if (isAnthropicProvider(providerId)) {
+      return anthropicCountTokens(text);
+    }
+    return getTiktokenEncoder().encode(text).length;
+  } catch {
+    return Math.ceil(text.length / 4);
+  }
+}
+
+// lib/commands/context.ts
+function analyzeTokens(state, messages, providerId) {
+  const breakdown = {
+    system: 0,
+    user: 0,
+    assistant: 0,
+    tools: 0,
+    toolCount: 0,
+    compressedToolCount: state.compressed.toolIds.size,
+    total: 0
+  };
+  let firstAssistant;
+  for (const msg of messages) {
+    if (msg.info.role === "assistant") {
+      if ((msg.info.tokens?.input ?? 0) > 0 || (msg.info.tokens?.cache?.read ?? 0) > 0) {
+        firstAssistant = msg.info;
+        break;
+      }
+    }
+  }
+  let lastAssistant;
+  for (let i = messages.length - 1;i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.info.role === "assistant") {
+      if ((msg.info.tokens?.output ?? 0) > 0) {
+        lastAssistant = msg.info;
+        break;
+      }
+    }
+  }
+  const apiInput = lastAssistant?.tokens?.input || 0;
+  const apiOutput = lastAssistant?.tokens?.output || 0;
+  const apiReasoning = lastAssistant?.tokens?.reasoning || 0;
+  const apiCacheRead = lastAssistant?.tokens?.cache?.read || 0;
+  const apiCacheWrite = lastAssistant?.tokens?.cache?.write || 0;
+  breakdown.total = apiInput + apiOutput + apiReasoning + apiCacheRead + apiCacheWrite;
+  const userTextParts = [];
+  const toolInputParts = [];
+  const toolOutputParts = [];
+  let firstUserText = "";
+  let foundFirstUser = false;
+  const foundToolIds = new Set;
+  for (const msg of messages) {
+    const parts = Array.isArray(msg.parts) ? msg.parts : [];
+    const isCompacted = isMessageCompacted(state, msg);
+    const isIgnoredUser = msg.info.role === "user" && isIgnoredUserMessage(msg);
+    for (const part of parts) {
+      if (part.type === "tool") {
+        const toolPart = part;
+        if (toolPart.callID && !foundToolIds.has(toolPart.callID)) {
+          breakdown.toolCount++;
+          foundToolIds.add(toolPart.callID);
+        }
+        const isCompressed = toolPart.callID && state.compressed.toolIds.has(toolPart.callID);
+        if (!isCompacted && !isCompressed) {
+          if (toolPart.state?.input) {
+            const inputStr = typeof toolPart.state.input === "string" ? toolPart.state.input : JSON.stringify(toolPart.state.input);
+            toolInputParts.push(inputStr);
+          }
+          if (toolPart.state?.status === "completed" && toolPart.state?.output) {
+            const outputStr = typeof toolPart.state.output === "string" ? toolPart.state.output : JSON.stringify(toolPart.state.output);
+            toolOutputParts.push(outputStr);
+          }
+        }
+      } else if (part.type === "text" && msg.info.role === "user" && !isCompacted && !isIgnoredUser) {
+        const textPart = part;
+        const text = textPart.text || "";
+        userTextParts.push(text);
+        if (!foundFirstUser) {
+          firstUserText += text;
+        }
+      }
+    }
+    if (msg.info.role === "user" && !isIgnoredUser && !foundFirstUser) {
+      foundFirstUser = true;
+    }
+  }
+  const firstUserTokens = countTokens(firstUserText, providerId);
+  breakdown.user = countTokens(userTextParts.join(`
+`), providerId);
+  const toolInputTokens = countTokens(toolInputParts.join(`
+`), providerId);
+  const toolOutputTokens = countTokens(toolOutputParts.join(`
+`), providerId);
+  if (firstAssistant) {
+    const firstInput = (firstAssistant.tokens?.input || 0) + (firstAssistant.tokens?.cache?.read || 0);
+    breakdown.system = Math.max(0, firstInput - firstUserTokens);
+  }
+  breakdown.tools = toolInputTokens + toolOutputTokens;
+  breakdown.assistant = Math.max(0, breakdown.total - breakdown.system - breakdown.user - breakdown.tools);
+  return breakdown;
+}
+function createBar(value, maxValue, width, char = "\u2588") {
+  if (maxValue === 0)
+    return "";
+  const filled = Math.round(value / maxValue * width);
+  const bar = char.repeat(Math.max(0, filled));
+  return bar;
+}
+function formatContextMessage(breakdown) {
+  const lines = [];
+  const barWidth = 30;
+  const toolsInContext = breakdown.toolCount - breakdown.compressedToolCount;
+  const toolsLabel = `Tools (${toolsInContext})`;
+  const categories = [
+    { label: "System", value: breakdown.system, char: "\u2588" },
+    { label: "User", value: breakdown.user, char: "\u2593" },
+    { label: "Assistant", value: breakdown.assistant, char: "\u2592" },
+    { label: toolsLabel, value: breakdown.tools, char: "\u2591" }
+  ];
+  const maxLabelLen = Math.max(...categories.map((c) => c.label.length));
+  lines.push("\u256D\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256E");
+  lines.push("\u2502               Compress Context Analysis                   \u2502");
+  lines.push("\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256F");
+  lines.push("");
+  lines.push("Session Context Breakdown:");
+  lines.push("\u2500".repeat(60));
+  lines.push("");
+  for (const cat of categories) {
+    const bar = createBar(cat.value, breakdown.total, barWidth, cat.char);
+    const percentage = breakdown.total > 0 ? (cat.value / breakdown.total * 100).toFixed(1) : "0.0";
+    const labelWithPct = `${cat.label.padEnd(maxLabelLen)} ${percentage.padStart(5)}% `;
+    const valueStr = formatTokenCount(cat.value).padStart(13);
+    lines.push(`${labelWithPct}\u2502${bar.padEnd(barWidth)}\u2502${valueStr}`);
+  }
+  lines.push("");
+  lines.push("\u2500".repeat(60));
+  lines.push("");
+  lines.push("Summary:");
+  lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
+  lines.push("");
+  return lines.join(`
+`);
+}
+async function handleContextCommand(ctx) {
+  const { client, state, logger, sessionId, messages } = ctx;
+  const breakdown = analyzeTokens(state, messages, getCurrentProviderId(state, messages));
+  const message = formatContextMessage(breakdown);
+  await sendIgnoredMessage(client, sessionId, message, logger);
+}
+
+// lib/commands/help.ts
+function formatHelpMessage() {
+  const lines = [];
+  lines.push("**Compress commands**");
+  lines.push("");
+  lines.push("- `/compress context` \u2014 Show token usage breakdown for current session");
+  lines.push("- `/compress manage [instruction]` \u2014 Ask the agent to fold the context now, optionally with your guidance for the summary");
+  lines.push("- `/compress prune [status|on|off]` \u2014 Pause or resume background pruning for this session; pruned outputs stay pruned");
+  lines.push("- `/compress help` \u2014 Show this command list");
+  return lines.join(`
+`);
+}
+async function handleHelpCommand(ctx) {
+  const { client, logger, sessionId } = ctx;
+  const message = formatHelpMessage();
+  await sendIgnoredMessage(client, sessionId, message, logger);
+}
+
+// lib/prompts/_codegen/fold-request.generated.ts
+var FOLD_REQUEST = `<system-reminder>
+CONTEXT FOLD REQUESTED
+{{reason}} It is due, not urgent, and it is not a change of task.
+
+A fold replaces this whole conversation, including any earlier summary in it, with one summary that you write. Nothing else stays visible afterwards: no recent messages, tool results, or reasoning. The project's instructions (AGENTS.md, skills, tool descriptions) are loaded fresh after the fold, and files and running jobs are untouched.
+
+If a \`<user-message>\` block follows this reminder, it is the user's guidance for this fold. Follow it.
+
+Do these in order:
+
+1. Bring the work in progress to a clean stopping point. Finish and verify the current step, leave no edit or command half-done, and start no new large work. A fold in the middle of a step loses the reasoning behind it.
+
+2. Bring the project's documentation up to date. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are unavailable. Documentation is the long-lived memory: every later agent reads it exactly as written. The summary is a short-lived note about the work in progress, rewritten at every fold. Settled decisions, verified findings, and open questions that exist only in this conversation are lost or blurred by the fold unless the documentation holds them first. Skip this step when the documentation is already current or the user asked for no edits. A read-only agent puts its candidate findings in the summary for its parent instead; missing write access does not block the fold.
+
+3. Call \`compress\` once with the summary, before this turn ends. Without the call the context keeps growing: every step costs more, this request repeats, and the conversation eventually hits the model's limit.
+
+The summary lets you continue after the fold as if nothing had interrupted you. Write what a capable colleague would need to take over this exact work right now. Use short headings and omit empty ones:
+
+- Request: the user's goal and newest request, including corrections to earlier direction. Quote the user's wording where it matters.
+- Decisions and limits: what the user decided, permitted, or ruled out, kept apart from your own assumptions and proposals. A fold grants no new authority.
+- State: what is done and verified, with the evidence; what is in progress; what failed or is uncertain; and whether a final answer was already given.
+- Next step: the next concrete action, or that the work is finished or waiting for the user. Name running jobs and subagents with their IDs so they are checked, not started twice.
+- References: exact paths, commands, identifiers, and numbers needed to continue without repeating the investigation.
+
+Leave these out:
+
+- What the project's instructions or documentation already say. They are loaded fresh or one read away, and a copy in the summary goes stale while the original stays right. Name the file instead.
+- History that no longer affects the next step: superseded plans, solved problems, the order in which things happened.
+- Stale parts of an earlier summary. It is replaced too, so carry forward only what is still needed and merge it into the new one.
+
+Write the summary in English, whatever language the conversation uses, and keep it as short as the live state allows: every later step reads it again. Never invent facts, approvals, results, or completion.
+
+After a successful call the fold applies right after that step, and you continue from your summary. Continue active, authorized work without stopping to report that the fold finished; leave finished or waiting work as it is. If the call fails, nothing was folded: report the exact error and do not retry by yourself.
+</system-reminder>
+`;
+
+// lib/prompts/_codegen/compress.generated.ts
+var COMPRESS = `Replaces the whole conversation so far with the summary you pass, right after the current step. Call it only when the user asked for compression in the current turn or a fold request from the plugin is part of this turn. High context usage, tool availability, or your own judgment is not a reason: a fold discards everything that is not in the summary or in the project's documentation.
+
+Before calling, bring the work to a clean stopping point and update the project's documentation as the fold request describes; the documentation is the long-lived memory and the summary only a note about the work in progress.
+
+\`summary\`: what a capable colleague would need to take over this exact work right now, in English. Cover the user's goal and newest request; the user's decisions and limits, apart from your assumptions; what is done with its evidence, what is in progress, and what is uncertain; the next concrete action, or that the work is finished or waiting for the user; running jobs and subagents with their IDs; and the exact paths, commands, and identifiers needed to continue. Leave out what the project's instructions or documentation already say, history that no longer affects the next step, and stale parts of an earlier summary, which is replaced too. Never invent facts or completion.
+
+Call it once. After success, continue active, authorized work from the summary without reopening finished work. A failure means nothing was folded: report the exact error and do not retry by yourself.
+`;
+
+// lib/prompts/index.ts
+function renderFoldRequest(reason) {
+  return FOLD_REQUEST.trim().replace("{{reason}}", () => reason);
+}
+
+// lib/commands/manage.ts
+async function handleManageCommand(ctx) {
+  if (ctx.config.tools.compress.permission === "deny") {
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, "The fold request was not sent because compress is denied. Enable the compress tool, then run `/compress manage` again.", ctx.logger);
+    return;
+  }
+  const instruction = ctx.arguments.trim().replace(/^manage\b/i, "").trim();
+  await promptSession(ctx.client, {
+    sessionId: ctx.sessionId,
+    parts: [
+      { type: "text", text: renderFoldRequest("The user ran `/compress manage`.") },
+      ...instruction ? [{ type: "text", text: `<user-message>
+${instruction}
+</user-message>` }] : []
+    ]
+  }).then(() => ctx.logger.info("Fold request sent", { sessionId: ctx.sessionId, source: "manual" }), async (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.logger.error("Fold request failed", { sessionId: ctx.sessionId, error: message });
+    await sendIgnoredMessage(ctx.client, ctx.sessionId, `Could not send the fold request: ${message}`, ctx.logger);
+  });
+}
+
+// lib/commands/prune.ts
+var PRUNE_USAGE = "Usage: `/compress prune [status|on|off]`";
+async function handlePruneCommand(ctx) {
+  const action = ctx.arguments.length <= 1 ? ctx.arguments[0]?.toLowerCase() ?? "status" : "";
+  const response = ["status", "on", "off"].includes(action) ? await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
+    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
+    if (!ctx.state.persistenceSynchronized)
+      return "Pruning settings are unavailable because saved session state could not be loaded. Nothing was changed.";
+    const off = ctx.state.pruneOff === true;
+    if (action === "status")
+      return `Background pruning is ${off ? "off" : "on"} for this session.`;
+    if (action === "off" === off)
+      return `Background pruning is already ${action} for this session.`;
+    const candidate = {
+      ...ctx.state,
+      pruneOff: action === "off" ? true : undefined
+    };
+    if (!await saveSessionState(candidate, ctx.logger))
+      return "Pruning settings could not be saved. Nothing was changed.";
+    commitDurableSessionState(ctx.state, candidate);
+    return action === "off" ? "Background pruning is off for this session. Outputs pruned so far stay pruned." : "Background pruning is on for this session.";
+  }) : PRUNE_USAGE;
+  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
+}
+
+// lib/commands/route.ts
+async function handleCompressCommand(input, dependencies) {
+  if (!dependencies.config.commands.enabled || input.command !== "compress")
+    return false;
+  const { client, stateManager, logger, config } = dependencies;
+  const state = stateManager.get(input.sessionID);
+  const messages = await stateManager.runExclusive(input.sessionID, async () => {
+    const currentMessages = await listSessionMessages(client, input.sessionID);
+    await reconcileSessionLifecycle(state, input.sessionID, logger, currentMessages);
+    return currentMessages;
+  });
+  const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean);
+  const subcommand = args[0]?.toLowerCase() || "";
+  if (subcommand === "context") {
+    await handleContextCommand({ client, state, logger, sessionId: input.sessionID, messages });
+    return true;
+  }
+  if (subcommand === "manage") {
+    await handleManageCommand({
+      client,
+      config,
+      logger,
+      sessionId: input.sessionID,
+      arguments: input.arguments
+    });
+    return true;
+  }
+  if (subcommand === "prune") {
+    await handlePruneCommand({
+      client,
+      stateManager,
+      state,
+      logger,
+      sessionId: input.sessionID,
+      arguments: args.slice(1)
+    });
+    return true;
+  }
+  await handleHelpCommand({ client, logger, sessionId: input.sessionID });
+  return true;
+}
+
+// lib/fold-request.ts
+import { createHash as createHash2 } from "crypto";
+var REPEAT_TOKENS = 1e5;
+function createFoldRequestHandler(client, stateManager, logger, config, pending, acceptsSession) {
+  const levels = new Map;
+  return async (input) => {
+    const event = isRecord(input) ? input : {};
+    const data = isRecord(event.data) ? event.data : {};
+    const sessionID = data.sessionID;
+    if (event.type !== "session.step.ended" || typeof sessionID !== "string")
+      return;
+    if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number")
+      return;
+    if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
+      return;
+    if (pending.has(sessionID))
+      return;
+    const tokens = isRecord(data.tokens) ? data.tokens : {};
+    const cache = isRecord(tokens.cache) ? tokens.cache : {};
+    const contextTokens = [
+      tokens.input,
+      tokens.output,
+      tokens.reasoning,
+      cache.read,
+      cache.write
+    ].reduce((sum, value) => sum + (typeof value === "number" && value > 0 ? value : 0), 0);
+    const tokenThreshold = config.autoCompression.tokenThreshold;
+    const contextLimit = stateManager.get(sessionID).modelContext?.contextLimit;
+    const ratioThreshold = contextLimit ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio) : undefined;
+    const thresholdTokens = Math.min(ratioThreshold ?? tokenThreshold, tokenThreshold);
+    const level = contextTokens < thresholdTokens ? 0 : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1;
+    if (level > (levels.get(sessionID) ?? 0)) {
+      if (!await acceptsSession(sessionID, event))
+        return;
+      const number = (value) => value.toLocaleString("en-US");
+      const basis = ratioThreshold !== undefined && ratioThreshold <= tokenThreshold ? `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window` : "the system-wide absolute token limit";
+      await promptSession(client, {
+        sessionId: sessionID,
+        parts: [
+          {
+            type: "text",
+            text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`)
+          }
+        ],
+        messageId: generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created)
+      });
+      logger.info("Fold request sent", {
+        sessionId: sessionID,
+        contextTokens,
+        thresholdTokens
+      });
+    }
+    if (level === 0)
+      levels.delete(sessionID);
+    else
+      levels.set(sessionID, level);
+  };
+}
+function generateAutomaticPromptMessageId(sessionId, triggerId, time) {
+  const inverted = ~(BigInt(Math.floor(time)) * 0x1000n);
+  const prefix = Array.from({ length: 6 }, (_, index) => Number(inverted >> BigInt(40 - 8 * index) & 0xffn).toString(16).padStart(2, "0")).join("");
+  const identity = JSON.stringify(["automatic-compression", sessionId, triggerId]);
+  return `msg_${prefix}${createHash2("sha256").update(identity).digest("hex").slice(0, 14)}`;
+}
+
+// lib/logger.ts
+import { mkdir as mkdir2, readdir, rm as rm2, writeFile } from "fs/promises";
+import { join as join3 } from "path";
+import { existsSync as existsSync3 } from "fs";
+import { homedir as homedir3 } from "os";
+var DAILY_LOG_DAYS = 30;
+
+class Logger {
+  logDir;
+  cleanedDay;
+  dailyEnabled;
+  contextEnabled;
+  constructor(options) {
+    this.dailyEnabled = options.daily;
+    this.contextEnabled = options.context;
+    const configHome = process.env.XDG_CONFIG_HOME || join3(homedir3(), ".config");
+    this.logDir = join3(configHome, "opencode", "logs", "compress");
+  }
+  async ensureLogDir() {
+    if (!existsSync3(this.logDir)) {
+      await mkdir2(this.logDir, { recursive: true });
+    }
+  }
+  formatData(data) {
+    if (!data)
+      return "";
+    const parts = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (value === undefined || value === null)
+        continue;
+      if (Array.isArray(value)) {
+        if (value.length === 0)
+          continue;
+        parts.push(`${key}=[${value.slice(0, 3).join(",")}${value.length > 3 ? `...+${value.length - 3}` : ""}]`);
+      } else if (typeof value === "object") {
+        const str = JSON.stringify(value);
+        if (str.length < 50) {
+          parts.push(`${key}=${str}`);
+        }
+      } else {
+        parts.push(`${key}=${value}`);
+      }
+    }
+    return parts.join(" ");
+  }
+  getCallerFile(skipFrames = 3) {
+    const originalPrepareStackTrace = Error.prepareStackTrace;
+    try {
+      const err = new Error;
+      Error.prepareStackTrace = (_, stack) => stack;
+      const stack = err.stack;
+      Error.prepareStackTrace = originalPrepareStackTrace;
+      for (let i = skipFrames;i < stack.length; i++) {
+        const filename = stack[i]?.getFileName();
+        if (filename && !filename.includes("/logger.")) {
+          const match = filename.match(/([^/\\]+)\.[tj]s$/);
+          return match ? match[1] : filename;
+        }
+      }
+      return "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  async write(level, component, message, data) {
+    if (!this.dailyEnabled)
+      return;
+    try {
+      await this.ensureLogDir();
+      const timestamp = new Date().toISOString();
+      const dataStr = this.formatData(data);
+      const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? ` | ${dataStr}` : ""}
+`;
+      const dailyLogDir = join3(this.logDir, "daily");
+      if (!existsSync3(dailyLogDir)) {
+        await mkdir2(dailyLogDir, { recursive: true });
+      }
+      const day = timestamp.split("T")[0];
+      await writeFile(join3(dailyLogDir, `${day}.log`), logLine, { flag: "a" });
+      if (this.cleanedDay !== day) {
+        this.cleanedDay = day;
+        const cutoff = new Date(Date.now() - DAILY_LOG_DAYS * 86400000).toISOString().split("T")[0];
+        const old = (await readdir(dailyLogDir)).filter((name) => name.endsWith(".log") && name.slice(0, 10) < cutoff);
+        await Promise.all(old.map((name) => rm2(join3(dailyLogDir, name), { force: true })));
+      }
+    } catch (error) {
+      console.error("context-compress: failed to write daily log", error);
+    }
+  }
+  info(message, data) {
+    const component = this.getCallerFile(2);
+    return this.write("INFO", component, message, data);
+  }
+  debug(message, data) {
+    const component = this.getCallerFile(2);
+    return this.write("DEBUG", component, message, data);
+  }
+  warn(message, data) {
+    const component = this.getCallerFile(2);
+    return this.write("WARN", component, message, data);
+  }
+  error(message, data) {
+    const component = this.getCallerFile(2);
+    return this.write("ERROR", component, message, data);
+  }
+  minimizeForDebug(messages) {
+    return messages.map((message) => {
+      const msg = isRecord(message) ? message : {};
+      const info = isRecord(msg.info) ? msg.info : {};
+      const time = isRecord(info.time) ? info.time : {};
+      const minimized = {
+        role: info.role ?? msg.role
+      };
+      if (time.created) {
+        minimized.time = time.created;
+      }
+      if (isRecord(info.tokens)) {
+        minimized.tokens = {
+          input: info.tokens.input,
+          output: info.tokens.output,
+          reasoning: info.tokens.reasoning,
+          cache: info.tokens.cache
+        };
+      }
+      const parts = msg.parts ?? msg.content;
+      if (Array.isArray(parts)) {
+        minimized.parts = parts.map((item) => {
+          const part = isRecord(item) ? item : {};
+          if (part.type === "step-start" || part.type === "step-finish") {
+            return null;
+          }
+          if (part.type === "text") {
+            if (part.ignored)
+              return null;
+            return { type: "text", text: part.text };
+          }
+          if (part.type === "reasoning") {
+            return {
+              type: "reasoning",
+              text: part.text
+            };
+          }
+          if (part.type === "tool") {
+            const state = isRecord(part.state) ? part.state : {};
+            const toolPart = {
+              type: "tool",
+              tool: part.tool,
+              callID: part.callID
+            };
+            if (state.status) {
+              toolPart.status = state.status;
+            }
+            if (state.input) {
+              toolPart.input = state.input;
+            }
+            if (state.output) {
+              toolPart.output = state.output;
+            }
+            if (state.error) {
+              toolPart.error = state.error;
+            }
+            return toolPart;
+          }
+          if (part.type === "tool-call") {
+            return {
+              type: "tool-call",
+              tool: part.name,
+              callID: part.id,
+              input: part.input
+            };
+          }
+          if (part.type === "tool-result") {
+            return {
+              type: "tool-result",
+              tool: part.name,
+              callID: part.id,
+              output: part.result
+            };
+          }
+          return null;
+        }).filter(Boolean);
+      }
+      return minimized;
+    });
+  }
+  async saveContext(sessionId, messages) {
+    if (!this.contextEnabled)
+      return;
+    try {
+      const contextDir = join3(this.logDir, "context", sessionId);
+      if (!existsSync3(contextDir)) {
+        await mkdir2(contextDir, { recursive: true });
+      }
+      const minimized = this.minimizeForDebug(messages);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const contextFile = join3(contextDir, `${timestamp}.json`);
+      await writeFile(contextFile, JSON.stringify(minimized, null, 2));
+    } catch (error) {
+      console.error("context-compress: failed to write context snapshot", error);
+    }
   }
 }
 
@@ -1569,20 +2185,6 @@ function buildV2CleanupPlan(state, rawMessages) {
     protectedMessageIds
   };
 }
-function stripV2MachineryForCompressionSelection(messages, state) {
-  const triggers = new Map(state.managementTurns.filter((turn) => turn.cleanupVersion === 2).map((turn) => [turn.triggerMessageId, turn]));
-  const completions = new Map(state.managementTurns.filter((turn) => turn.cleanupVersion === 2 && turn.completedMessageId).map((turn) => [turn.completedMessageId, turn]));
-  return messages.flatMap((message) => {
-    const trigger = triggers.get(message.info.id);
-    if (trigger && !trigger.retainedText)
-      return [];
-    const completion = completions.get(message.info.id);
-    if (!completion)
-      return [message];
-    const parts = withoutCompletionTool(message, completion);
-    return parts.length > 0 ? [{ ...message, parts }] : [];
-  });
-}
 function createRetainedUserMessage(message, retainedText) {
   const parts = Array.isArray(message.parts) ? message.parts : [];
   const textPart = parts.find((part) => part.type === "text");
@@ -1803,1673 +2405,6 @@ function deriveProtectedTailMessageIds(messages, protectedTurns) {
     protectedStart = Math.max(0, messages.length - protectedTurns);
   }
   return messages.slice(protectedStart).map((message) => message.info.id);
-}
-function selectDeterministicCompressionSpan(rawHistory, state, protectedTurns) {
-  const search = transformMessagesForSearch(rawHistory, state);
-  const transformed = stripV2MachineryForCompressionSelection(search.transformed, state);
-  const syntheticMap = search.syntheticMap;
-  const representedBlockAnchors = new Set([...syntheticMap.values()].map((summary) => summary.anchorMessageId));
-  const missingBlock = state.compressSummaries.find((summary) => !representedBlockAnchors.has(summary.anchorMessageId));
-  if (missingBlock) {
-    throw new Error("compress could not reconcile an existing compressed block with the current transcript. Nothing was compressed.");
-  }
-  let newestBlockIndex = -1;
-  for (let index = transformed.length - 1;index >= 0; index--) {
-    if (syntheticMap.has(transformed[index].info.id)) {
-      newestBlockIndex = index;
-      break;
-    }
-  }
-  const existingBlockMessageIds = new Set;
-  for (const summary of state.compressSummaries) {
-    existingBlockMessageIds.add(summary.anchorMessageId);
-    for (const messageId of summary.messageIds)
-      existingBlockMessageIds.add(messageId);
-  }
-  const candidates = transformed.slice(newestBlockIndex + 1).filter((message) => !syntheticMap.has(message.info.id) && !existingBlockMessageIds.has(message.info.id));
-  const protectedMessageIds = deriveProtectedTailMessageIds(candidates, protectedTurns);
-  const protectedIds = new Set(protectedMessageIds);
-  const messages = candidates.filter((message) => !protectedIds.has(message.info.id));
-  return {
-    messages,
-    messageIds: messages.map((message) => message.info.id),
-    protectedMessageIds
-  };
-}
-function deriveAutomaticProtectedTail(rawMessages, state, protectedTurns) {
-  const span = selectDeterministicCompressionSpan(rawMessages, state, protectedTurns);
-  return {
-    protectedMessageIds: span.protectedMessageIds,
-    hasSelectableMessages: span.messageIds.length > 0
-  };
-}
-
-// lib/commands/manage.ts
-var COMPRESSION_ONLY_TEXT = /^(?:(?:please|pls|kindly|can you|could you|would you|now|thanks|thank you|context|conversation|history|manage|management|compress|compression|compact|cleanup|clean|up|prune|summari[sz]e|old|older|completed|past|previous|messages|turns|work|range|ranges|blocks?|cache|the|my|this|that|our|session|for|to|and|all|some|a|an|it|do|run|just)[\s,.;:!?-]*)+$/i;
-var LEADING_COMPRESSION_REQUEST = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s*(?:now|please)?\s*(?:[:;,.!-]+\s*)/i;
-var LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION = /^\s*(?:(?:please|pls|kindly)\s+)?(?:compress|manage|compact|clean\s+up|cleanup|prune|summari[sz]e)(?:\s+(?:the|this|that|our|my|old|older|past|previous|completed|conversation|context|history|messages|turns|work|session|blocks?|ranges?))*\s+(?:and|also|but)\b\s*/i;
-function trimCommandBoundary(text) {
-  return text.replace(/^[\s:;,.|-]+/, "").replace(/\s+$/, "");
-}
-function extractManageCommandResidual(args) {
-  const withoutSubcommand = (args || "").replace(/^\s*manage\b/i, "");
-  const initial = trimCommandBoundary(withoutSubcommand);
-  if (!initial) {
-    return;
-  }
-  let residual = initial;
-  const stripped = residual.replace(LEADING_COMPRESSION_REQUEST, "").replace(LEADING_COMPRESSION_REQUEST_WITH_CONJUNCTION, "");
-  if (stripped !== residual) {
-    residual = stripped.replace(/^\s*(?:and|also|but)\b[\s,]*/i, "");
-  }
-  residual = trimCommandBoundary(residual);
-  if (!residual || COMPRESSION_ONLY_TEXT.test(residual)) {
-    return;
-  }
-  return residual;
-}
-var ASCENDING_ID_RANDOM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-var lastGeneratedMessageIdTimestamp = 0;
-var lastGeneratedMessageIdCounter = 0;
-function generateLiveOrderedMessageIdSuffix(timestamp = Date.now(), identity) {
-  if (!identity) {
-    if (timestamp !== lastGeneratedMessageIdTimestamp) {
-      lastGeneratedMessageIdTimestamp = timestamp;
-      lastGeneratedMessageIdCounter = 0;
-    }
-    lastGeneratedMessageIdCounter++;
-  }
-  const current = BigInt(timestamp) * 0x1000n + BigInt(identity ? 0 : lastGeneratedMessageIdCounter);
-  const value = ~current;
-  const time = Array.from({ length: 6 }, (_, index) => Number(value >> BigInt(40 - 8 * index) & 0xffn).toString(16).padStart(2, "0")).join("");
-  const random = identity ? createHash2("sha256").update(identity).digest("hex").slice(0, 14) : Array.from({ length: 14 }, () => ASCENDING_ID_RANDOM_CHARS[Math.floor(Math.random() * ASCENDING_ID_RANDOM_CHARS.length)]).join("");
-  return time + random;
-}
-function generateManagePromptMessageId() {
-  return `msg_${generateLiveOrderedMessageIdSuffix()}`;
-}
-function generateNativeCompactionNoticeId(sessionId, event) {
-  if (typeof event.id !== "string" || typeof event.created !== "number")
-    return;
-  return `msg_${generateLiveOrderedMessageIdSuffix(Math.floor(event.created), JSON.stringify(["native-auto-compaction", sessionId, event.id]))}`;
-}
-function generateAutomaticPromptMessageId(sessionId, trigger, purpose = "automatic-compression") {
-  return `msg_${generateLiveOrderedMessageIdSuffix(trigger.time.completed ?? trigger.time.created, JSON.stringify([purpose, sessionId, trigger.id]))}`;
-}
-async function handleManageCommand(ctx) {
-  if (ctx.config.tools.compress.permission === "deny") {
-    await sendIgnoredMessage(ctx.client, ctx.sessionId, "Compression management did not start because compress is denied. Enable the compression tool, then run `/compress manage` again.", ctx.logger);
-    return;
-  }
-  await startManagementTurn({
-    client: ctx.client,
-    stateManager: ctx.stateManager,
-    state: ctx.state,
-    logger: ctx.logger,
-    sessionId: ctx.sessionId,
-    messages: ctx.messages,
-    systemPrompt: renderSystemPrompt(),
-    retainedText: extractManageCommandResidual(ctx.arguments)
-  });
-}
-async function stageManagementTurnWithinLock(ctx) {
-  const { client, stateManager, state, logger, sessionId, messages } = ctx;
-  if (!state.persistenceSynchronized) {
-    return async () => {
-      await sendIgnoredMessage(client, sessionId, "Compression management could not start because saved session state could not be loaded.", logger);
-      return false;
-    };
-  }
-  const automaticTail = ctx.source === "automatic" ? deriveAutomaticProtectedTail(messages, state, ctx.protectedTurns ?? 0) : undefined;
-  if (ctx.source === "automatic" && !automaticTail?.hasSelectableMessages) {
-    logger.warn("Automatic compression skipped because the protected tail covers all selectable messages", {
-      sessionId,
-      protectedTurns: ctx.protectedTurns ?? 0
-    });
-    return;
-  }
-  const messageParts = [];
-  if (ctx.systemPrompt) {
-    messageParts.push({ type: "text", text: ctx.systemPrompt });
-  }
-  if (ctx.retainedText) {
-    messageParts.push({
-      type: "text",
-      text: ["<user-message>", ctx.retainedText, "</user-message>"].join(`
-`)
-    });
-  }
-  const trigger = ctx.triggeredByMessageId ? messages.find((message) => message.info.id === ctx.triggeredByMessageId) : undefined;
-  if (ctx.triggeredByMessageId && !trigger) {
-    throw new Error("Automatic compression trigger is missing from projected history");
-  }
-  const triggerMessageId = trigger ? generateAutomaticPromptMessageId(sessionId, trigger.info, ctx.source === "squash" ? "automatic-squash" : "automatic-compression") : generateManagePromptMessageId();
-  const managementTurn = {
-    triggerMessageId,
-    cleanupVersion: 2,
-    ...ctx.retainedText ? { retainedText: ctx.retainedText } : {},
-    ...ctx.source ? { source: ctx.source } : {},
-    ...ctx.triggeredByMessageId ? { triggeredByMessageId: ctx.triggeredByMessageId } : {},
-    ...typeof ctx.contextTokens === "number" ? { contextTokens: ctx.contextTokens } : {},
-    ...typeof ctx.thresholdTokens === "number" ? { thresholdTokens: ctx.thresholdTokens } : {}
-  };
-  const candidateState = {
-    ...state,
-    managementTurns: [...state.managementTurns, managementTurn]
-  };
-  const statePersisted = await saveSessionState(candidateState, logger);
-  if (!statePersisted) {
-    logger.error("Manage command aborted because cleanup state could not be persisted", {
-      sessionId,
-      triggerMessageId
-    });
-    return async () => {
-      await sendIgnoredMessage(client, sessionId, "Compression management could not start: cleanup state could not be saved.", logger);
-      return false;
-    };
-  }
-  commitDurableSessionState(state, candidateState);
-  return async () => {
-    try {
-      await promptSession(client, {
-        sessionId,
-        parts: messageParts,
-        messageId: triggerMessageId,
-        metadata: { "opencode.context-compress.management": true }
-      });
-    } catch (err) {
-      const errorMessage = isRecord(err) && typeof err.message === "string" ? err.message : undefined;
-      const rollbackResult = await stateManager.runExclusive(sessionId, async () => {
-        const currentTurn = state.managementTurns.find((turn) => turn.triggerMessageId === triggerMessageId);
-        if (!currentTurn)
-          return "removed";
-        if (currentTurn.completedAt)
-          return "completed";
-        const rollbackState = {
-          ...state,
-          managementTurns: state.managementTurns.filter((turn) => turn.triggerMessageId !== triggerMessageId)
-        };
-        const persisted = await saveSessionState(rollbackState, logger);
-        if (!persisted)
-          return "failed";
-        commitDurableSessionState(state, rollbackState);
-        return "removed";
-      });
-      logger.error("Manage command failed", { error: errorMessage });
-      if (rollbackResult === "completed") {
-        logger.warn("Manage prompt failed after compression completed; preserving the completed turn marker", {
-          sessionId,
-          triggerMessageId
-        });
-      } else if (rollbackResult === "failed") {
-        logger.error("Manage prompt failure marker could not be rolled back", {
-          sessionId,
-          triggerMessageId
-        });
-      }
-      await sendIgnoredMessage(client, sessionId, rollbackResult === "completed" ? `The compression management prompt reported an error after compression completed: ${errorMessage || "the prompt failed."} The completed state was preserved.` : rollbackResult === "removed" ? `Compression management could not start: ${errorMessage || "the prompt failed."}` : `Compression management could not start: ${errorMessage || "the prompt failed."} Its saved cleanup marker could not be removed.`, logger);
-      return false;
-    }
-    logger.info("Sent compression context to agent", {
-      sessionId,
-      triggerMessageId,
-      source: ctx.source ?? "manual"
-    });
-    return true;
-  };
-}
-async function startManagementTurn(ctx) {
-  const staged = await ctx.stateManager.runExclusive(ctx.sessionId, () => stageManagementTurnWithinLock(ctx));
-  return staged ? staged() : false;
-}
-// lib/auto-policy.ts
-var POST_COMPRESSION_COOLDOWN_RESPONSES = 3;
-function resolveEffectiveAutoCompressionPolicy(config, state) {
-  const enabledOverride = state.autoCompressionEnabledOverride;
-  const tokenThresholdOverride = state.autoCompressionTokenThresholdOverride;
-  const contextWindowRatioOverride = state.autoCompressionContextWindowRatioOverride;
-  return {
-    globallyEnabled: config.enabled,
-    enabled: config.enabled && (enabledOverride ?? config.enabled),
-    enabledSource: config.enabled && enabledOverride !== undefined ? "session override" : "config",
-    tokenThreshold: tokenThresholdOverride ?? config.tokenThreshold,
-    tokenThresholdSource: tokenThresholdOverride !== undefined ? "session override" : "config",
-    contextWindowRatio: contextWindowRatioOverride ?? config.contextWindowRatio,
-    contextWindowRatioSource: contextWindowRatioOverride !== undefined ? "session override" : "config"
-  };
-}
-function messageContainsCompressCall(message) {
-  return !!message?.parts?.some((part) => part.type === "tool" && part.tool === "compress");
-}
-function isVisibleUserMessage2(message) {
-  return message.info.role === "user" && message.info.sourceType !== "synthetic" && !isIgnoredUserMessage(message);
-}
-function collectManagementTurnMessageIds(state, messages) {
-  const managementMessageIds = new Set;
-  const indexByMessageId = new Map(messages.map((message, index) => [message.info.id, index]));
-  for (const turn of state.managementTurns) {
-    const triggerIndex = indexByMessageId.get(turn.triggerMessageId);
-    if (triggerIndex === undefined)
-      continue;
-    const completedIndex = turn.completedAt && turn.completedMessageId ? indexByMessageId.get(turn.completedMessageId) : undefined;
-    let endExclusive;
-    if (completedIndex !== undefined && completedIndex > triggerIndex) {
-      endExclusive = completedIndex + 1;
-    } else {
-      endExclusive = messages.length;
-      for (let i = triggerIndex + 1;i < messages.length; i++) {
-        if (isVisibleUserMessage2(messages[i])) {
-          endExclusive = i;
-          break;
-        }
-      }
-    }
-    for (let i = triggerIndex;i < endExclusive; i++) {
-      managementMessageIds.add(messages[i].info.id);
-    }
-  }
-  return managementMessageIds;
-}
-function getPostCompressionCooldownRemaining(state, messages) {
-  const anchorMessageId = state.compressionCooldownAfterMessageId;
-  if (!anchorMessageId)
-    return 0;
-  const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId);
-  if (anchorIndex === -1)
-    return 0;
-  const eligibleMessageIds = collectEligibleCooldownMessageIds(state, messages, anchorIndex);
-  return Math.max(0, POST_COMPRESSION_COOLDOWN_RESPONSES - eligibleMessageIds.length);
-}
-function collectEligibleCooldownMessageIds(state, messages, anchorIndex) {
-  const managementMessageIds = collectManagementTurnMessageIds(state, messages);
-  const seen = new Set;
-  const eligibleMessageIds = [];
-  for (let i = anchorIndex + 1;i < messages.length; i++) {
-    const message = messages[i];
-    const info = message.info;
-    if (info.role !== "assistant" || info.summary === true || info.error || !info.time?.completed || managementMessageIds.has(info.id)) {
-      continue;
-    }
-    if (!seen.has(info.id)) {
-      seen.add(info.id);
-      eligibleMessageIds.push(info.id);
-    }
-  }
-  return eligibleMessageIds;
-}
-function isMessageWithinPostCompressionCooldown(state, messages, messageId) {
-  const anchorMessageId = state.compressionCooldownAfterMessageId;
-  if (!anchorMessageId)
-    return false;
-  const anchorIndex = messages.findIndex((message) => message.info.id === anchorMessageId);
-  if (anchorIndex === -1)
-    return false;
-  const eligibleMessageIds = collectEligibleCooldownMessageIds(state, messages, anchorIndex);
-  const messagePosition = eligibleMessageIds.indexOf(messageId);
-  if (messagePosition !== -1) {
-    return messagePosition < POST_COMPRESSION_COOLDOWN_RESPONSES;
-  }
-  return eligibleMessageIds.length < POST_COMPRESSION_COOLDOWN_RESPONSES;
-}
-
-// lib/auto-compression.ts
-function positiveFinite(value) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-function getAssistantContextTokens(tokens) {
-  if (!tokens)
-    return 0;
-  return positiveFinite(tokens.input) + positiveFinite(tokens.output) + positiveFinite(tokens.reasoning) + positiveFinite(tokens.cache?.read) + positiveFinite(tokens.cache?.write);
-}
-function resolveAutomaticCompressionThreshold(contextTokens, config, contextLimit) {
-  const normalizedContextLimit = positiveFinite(contextLimit) || undefined;
-  const relativeThresholdTokens = normalizedContextLimit ? Math.floor(normalizedContextLimit * config.contextWindowRatio) : undefined;
-  const thresholdTokens = relativeThresholdTokens ? Math.min(relativeThresholdTokens, config.tokenThreshold) : config.tokenThreshold;
-  return {
-    contextTokens,
-    thresholdTokens,
-    relativeThresholdTokens,
-    contextLimit: normalizedContextLimit,
-    reason: relativeThresholdTokens !== undefined && relativeThresholdTokens <= config.tokenThreshold ? "context-window-ratio" : "absolute-token-threshold"
-  };
-}
-function findContextLimit(stateManager, info) {
-  const cached = stateManager.get(info.sessionID).modelContext;
-  if (!cached)
-    return;
-  if (info.providerID && cached.providerId !== info.providerID)
-    return;
-  if (info.modelID && cached.modelId !== info.modelID)
-    return;
-  return cached.contextLimit;
-}
-function formatThresholdReason(result, ratio) {
-  return result.reason === "context-window-ratio" ? `${Math.round(ratio * 100)}% of the model-reported context window` : "the system-wide absolute token limit";
-}
-function createAutomaticCompressionEventHandler(client, stateManager, logger, config, acceptsSession = async () => true) {
-  const started = new Map;
-  return async (input) => {
-    const event = isRecord(input) ? input : {};
-    const data = isRecord(event.data) ? event.data : {};
-    if (event.type === "session.step.started") {
-      const model = isRecord(data.model) ? data.model : {};
-      if (typeof data.assistantMessageID === "string" && typeof data.sessionID === "string") {
-        started.set(data.assistantMessageID, {
-          sessionID: data.sessionID,
-          providerID: typeof model.providerID === "string" ? model.providerID : undefined,
-          modelID: typeof model.id === "string" ? model.id : undefined
-        });
-      }
-      return;
-    }
-    if (event.type === "session.step.failed") {
-      if (typeof data.assistantMessageID === "string")
-        started.delete(data.assistantMessageID);
-      return;
-    }
-    if (event.type !== "session.step.ended" || typeof data.assistantMessageID !== "string")
-      return;
-    const projected = started.get(data.assistantMessageID);
-    started.delete(data.assistantMessageID);
-    const sessionID = projected?.sessionID ?? (typeof data.sessionID === "string" ? data.sessionID : undefined);
-    if (!sessionID)
-      return;
-    if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
-      return;
-    const info = {
-      id: data.assistantMessageID,
-      sessionID,
-      providerID: projected?.providerID,
-      modelID: projected?.modelID,
-      tokens: isRecord(data.tokens) ? data.tokens : undefined
-    };
-    if (!await acceptsSession(info.sessionID, event))
-      return;
-    const state = stateManager.get(info.sessionID);
-    if (state.compressionCooldownAfterMessageId === info.id) {
-      await startAutomaticSquash(client, stateManager, logger, config, info.sessionID, info.id);
-      return;
-    }
-    if (state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId && !turn.completedAt)) {
-      await closeUnansweredAutomaticSquash(client, stateManager, logger, info.sessionID, info.id);
-    }
-    const contextTokens = getAssistantContextTokens(info.tokens);
-    if (state.initialized && state.persistenceSynchronized) {
-      const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
-      const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
-      if (!policy.enabled || contextTokens < threshold.thresholdTokens || state.autoCompressionStarting || state.lastAutoTriggeredMessageId === info.id) {
-        return;
-      }
-    }
-    let attemptedStart = false;
-    let reserved;
-    try {
-      reserved = await stateManager.runExclusive(info.sessionID, async () => {
-        const messages = await listSessionMessages(client, info.sessionID);
-        if (messages.length === 0) {
-          logger.warn("Automatic compression skipped because session messages were unavailable", {
-            sessionId: info.sessionID,
-            messageId: info.id
-          });
-          return;
-        }
-        await reconcileSessionLifecycle(state, info.sessionID, logger, messages);
-        if (!state.persistenceSynchronized) {
-          logger.warn("Automatic compression skipped because session policy could not be loaded", {
-            sessionId: info.sessionID
-          });
-          return;
-        }
-        const cooldownApplies = isMessageWithinPostCompressionCooldown(state, messages, info.id);
-        const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
-        if (!policy.enabled || config.tools.compress.permission === "deny" || cooldownApplies) {
-          return;
-        }
-        const threshold = resolveAutomaticCompressionThreshold(contextTokens, policy, findContextLimit(stateManager, info));
-        if (contextTokens < threshold.thresholdTokens)
-          return;
-        if (state.autoCompressionStarting || state.lastAutoTriggeredMessageId === info.id || state.managementTurns.some((turn) => turn.source === "automatic" && turn.triggeredByMessageId === info.id) || findActiveManagementTurn(state, messages) || messageContainsCompressCall(messages.find((message) => message.info.id === info.id))) {
-          return;
-        }
-        state.autoCompressionStarting = true;
-        state.lastAutoTriggeredMessageId = info.id;
-        attemptedStart = true;
-        const staged = await stageManagementTurnWithinLock({
-          client,
-          stateManager,
-          state,
-          logger,
-          sessionId: info.sessionID,
-          messages,
-          systemPrompt: renderAutomaticSystemPrompt({
-            context_tokens: contextTokens.toLocaleString("en-US"),
-            threshold_tokens: threshold.thresholdTokens.toLocaleString("en-US"),
-            threshold_reason: formatThresholdReason(threshold, policy.contextWindowRatio)
-          }),
-          source: "automatic",
-          triggeredByMessageId: info.id,
-          contextTokens,
-          thresholdTokens: threshold.thresholdTokens,
-          protectedTurns: config.protectedTurns,
-          asyncPrompt: true
-        });
-        return staged ? { staged, threshold, contextTokens } : undefined;
-      });
-      if (!reserved)
-        return;
-      const started = await reserved.staged();
-      if (started) {
-        logger.info("Automatic compression initiated", {
-          sessionId: info.sessionID,
-          messageId: info.id,
-          contextTokens: reserved.contextTokens,
-          thresholdTokens: reserved.threshold.thresholdTokens,
-          reason: reserved.threshold.reason
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("Automatic compression failed to start", {
-        sessionId: info.sessionID,
-        messageId: info.id,
-        error: message
-      });
-      await sendIgnoredMessage(client, info.sessionID, `Could not start automatic compression: ${message}`, logger);
-    } finally {
-      if (attemptedStart) {
-        state.autoCompressionStarting = false;
-      }
-    }
-  };
-}
-var AUTO_SQUASH_MAX_BLOCKS = 7;
-var AUTO_SQUASH_MAX_CHARS = 1e5;
-async function startAutomaticSquash(client, stateManager, logger, config, sessionId, messageId) {
-  const state = stateManager.get(sessionId);
-  try {
-    const staged = await stateManager.runExclusive(sessionId, async () => {
-      const messages = await listSessionMessages(client, sessionId);
-      if (messages.length === 0)
-        return;
-      await reconcileSessionLifecycle(state, sessionId, logger, messages);
-      if (!state.persistenceSynchronized || !resolveEffectiveAutoCompressionPolicy(config.autoCompression, state).enabled || findActiveManagementTurn(state, messages) || state.managementTurns.some((turn) => turn.source === "squash" && turn.triggeredByMessageId === messageId)) {
-        return;
-      }
-      const blocks = orderCompressBlocks(messages, state.compressSummaries);
-      const chars = blocks.reduce((total, block) => total + block.summary.summary.length, 0);
-      if (blocks.length < 2 || blocks.length <= AUTO_SQUASH_MAX_BLOCKS && chars <= AUTO_SQUASH_MAX_CHARS) {
-        return;
-      }
-      logger.info("Automatic squash due", { sessionId, blocks: blocks.length, chars });
-      const number = (value) => value.toLocaleString("en-US");
-      const reason = [
-        `Automatic squash was invoked for this turn: the ${blocks.length} compressed blocks hold ${number(chars)} summary characters, over the limit of ${AUTO_SQUASH_MAX_BLOCKS} blocks or ${number(AUTO_SQUASH_MAX_CHARS)} characters.`,
-        `Choose the range yourself. Where one range allows it, leave at most 5 blocks and about ${number(AUTO_SQUASH_MAX_CHARS * 0.8)} summary characters.`,
-        `Current blocks: ${blocks.map((block) => `[${block.label}] "${block.summary.topic ?? "untitled"}" ${number(block.summary.summary.length)} chars`).join("; ")}.`
-      ].join(" ");
-      return stageManagementTurnWithinLock({
-        client,
-        stateManager,
-        state,
-        logger,
-        sessionId,
-        messages,
-        systemPrompt: renderSquashSystemPrompt(reason),
-        source: "squash",
-        triggeredByMessageId: messageId
-      });
-    });
-    if (staged)
-      await staged();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("Automatic squash failed to start", { sessionId, messageId, error: message });
-    await sendIgnoredMessage(client, sessionId, `Could not start automatic squash: ${message}`, logger);
-  }
-}
-async function closeUnansweredAutomaticSquash(client, stateManager, logger, sessionId, messageId) {
-  const state = stateManager.get(sessionId);
-  await stateManager.runExclusive(sessionId, async () => {
-    const messages = await listSessionMessages(client, sessionId);
-    const active = findActiveManagementTurn(state, messages);
-    if (active?.turn.source !== "squash" || !active.turn.triggeredByMessageId)
-      return;
-    const index = messages.findIndex((message) => message.info.id === messageId);
-    if (index <= active.triggerIndex || messages[index].parts.some((part) => part.type === "tool" && part.tool === "squash"))
-      return;
-    const candidateState = {
-      ...state,
-      managementTurns: state.managementTurns.map((turn) => turn === active.turn ? {
-        ...turn,
-        completedAt: new Date().toISOString(),
-        completedMessageId: messageId
-      } : turn)
-    };
-    if (!await saveSessionState(candidateState, logger))
-      return;
-    commitDurableSessionState(state, candidateState);
-    logger.warn("Automatic squash closed without a successful squash call", {
-      sessionId,
-      messageId
-    });
-  });
-}
-
-// lib/config.ts
-import { readFileSync, writeFileSync, existsSync as existsSync2, mkdirSync, statSync } from "fs";
-import { join as join2, dirname } from "path";
-import { homedir as homedir2 } from "os";
-import { parse } from "jsonc-parser";
-var DEFAULT_AUTO_COMPRESSION = {
-  enabled: true,
-  contextWindowRatio: 0.9,
-  tokenThreshold: 432000
-};
-function isProtectedTurns(value) {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
-}
-function isContextWindowRatio(value) {
-  return typeof value === "number" && value > 0 && value <= 1;
-}
-function isTokenThreshold(value) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-function resolveProtectedTurnsSetting(layer, fallback = 3, hasExplicitTopLevel = false) {
-  if (isProtectedTurns(layer.protectedTurns))
-    return layer.protectedTurns;
-  if (hasExplicitTopLevel)
-    return fallback;
-  const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {};
-  return isProtectedTurns(autoCompression.protectedTurns) ? autoCompression.protectedTurns : fallback;
-}
-var NOTIFICATIONS = ["off", "minimal", "detailed"];
-var PERMISSIONS = ["ask", "allow", "deny"];
-function isOneOf(values, value) {
-  return values.some((candidate) => candidate === value);
-}
-var VALID_CONFIG_KEYS = new Set([
-  "$schema",
-  "enabled",
-  "debug",
-  "dailyLog",
-  "notification",
-  "notificationType",
-  "protectedTurns",
-  "autoCompression",
-  "autoCompression.enabled",
-  "autoCompression.contextWindowRatio",
-  "autoCompression.tokenThreshold",
-  "autoCompression.protectedTurns",
-  "commands",
-  "commands.enabled",
-  "tools",
-  "tools.compress",
-  "tools.compress.permission",
-  "tools.compress.showCompression"
-]);
-function getConfigKeyPaths(obj, prefix = "") {
-  const keys = [];
-  for (const [key, value] of Object.entries(obj)) {
-    const fullKey = prefix ? `${prefix}.${key}` : key;
-    keys.push(fullKey);
-    if (isRecord(value)) {
-      keys.push(...getConfigKeyPaths(value, fullKey));
-    }
-  }
-  return keys;
-}
-function getInvalidConfigKeys(userConfig) {
-  const userKeys = getConfigKeyPaths(userConfig);
-  return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
-}
-function typeName(value) {
-  if (value === null)
-    return "null";
-  return Array.isArray(value) ? "array" : typeof value;
-}
-function validateConfigTypes(config) {
-  const errors = [];
-  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
-    errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) });
-  }
-  if (config.debug !== undefined && typeof config.debug !== "boolean") {
-    errors.push({ key: "debug", expected: "boolean", actual: typeName(config.debug) });
-  }
-  if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
-    errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) });
-  }
-  if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
-    errors.push({
-      key: "protectedTurns",
-      expected: "non-negative integer",
-      actual: JSON.stringify(config.protectedTurns)
-    });
-  }
-  if (config.notification !== undefined) {
-    if (!isOneOf(NOTIFICATIONS, config.notification)) {
-      errors.push({
-        key: "notification",
-        expected: '"off" | "minimal" | "detailed"',
-        actual: JSON.stringify(config.notification)
-      });
-    }
-  }
-  const autoCompression = config.autoCompression;
-  if (autoCompression !== undefined) {
-    if (!isRecord(autoCompression)) {
-      errors.push({
-        key: "autoCompression",
-        expected: "object",
-        actual: typeName(autoCompression)
-      });
-    } else {
-      if (autoCompression.enabled !== undefined && typeof autoCompression.enabled !== "boolean") {
-        errors.push({
-          key: "autoCompression.enabled",
-          expected: "boolean",
-          actual: typeName(autoCompression.enabled)
-        });
-      }
-      if (autoCompression.contextWindowRatio !== undefined && !isContextWindowRatio(autoCompression.contextWindowRatio)) {
-        errors.push({
-          key: "autoCompression.contextWindowRatio",
-          expected: "number greater than 0 and at most 1",
-          actual: JSON.stringify(autoCompression.contextWindowRatio)
-        });
-      }
-      if (autoCompression.tokenThreshold !== undefined && !isTokenThreshold(autoCompression.tokenThreshold)) {
-        errors.push({
-          key: "autoCompression.tokenThreshold",
-          expected: "positive finite number",
-          actual: JSON.stringify(autoCompression.tokenThreshold)
-        });
-      }
-      if (autoCompression.protectedTurns !== undefined && !isProtectedTurns(autoCompression.protectedTurns)) {
-        errors.push({
-          key: "autoCompression.protectedTurns",
-          expected: "non-negative integer",
-          actual: JSON.stringify(autoCompression.protectedTurns)
-        });
-      }
-    }
-  }
-  const commands = config.commands;
-  if (commands !== undefined) {
-    if (isRecord(commands)) {
-      if (commands.enabled !== undefined && typeof commands.enabled !== "boolean") {
-        errors.push({
-          key: "commands.enabled",
-          expected: "boolean",
-          actual: typeName(commands.enabled)
-        });
-      }
-    } else {
-      errors.push({
-        key: "commands",
-        expected: "{ enabled: boolean }",
-        actual: typeName(commands)
-      });
-    }
-  }
-  const tools = config.tools;
-  if (isRecord(tools) && isRecord(tools.compress)) {
-    const compress = tools.compress;
-    if (compress.permission !== undefined) {
-      if (!isOneOf(PERMISSIONS, compress.permission)) {
-        errors.push({
-          key: "tools.compress.permission",
-          expected: '"ask" | "allow" | "deny"',
-          actual: JSON.stringify(compress.permission)
-        });
-      }
-    }
-    if (compress.showCompression !== undefined && typeof compress.showCompression !== "boolean") {
-      errors.push({
-        key: "tools.compress.showCompression",
-        expected: "boolean",
-        actual: typeName(compress.showCompression)
-      });
-    }
-  }
-  return errors;
-}
-function showConfigValidationWarnings(configPath, configData, isProject) {
-  const invalidKeys = getInvalidConfigKeys(configData);
-  const typeErrors = validateConfigTypes(configData);
-  if (invalidKeys.length === 0 && typeErrors.length === 0) {
-    return;
-  }
-  const configType = isProject ? "project config" : "config";
-  const messages = [];
-  if (invalidKeys.length > 0) {
-    const keyList = invalidKeys.slice(0, 3).join(", ");
-    const suffix = invalidKeys.length > 3 ? ` (+${invalidKeys.length - 3} more)` : "";
-    messages.push(`Unknown keys: ${keyList}${suffix}`);
-  }
-  if (typeErrors.length > 0) {
-    for (const err of typeErrors.slice(0, 2)) {
-      messages.push(`${err.key}: expected ${err.expected}, got ${err.actual}`);
-    }
-    if (typeErrors.length > 2) {
-      messages.push(`(+${typeErrors.length - 2} more type errors)`);
-    }
-  }
-  console.warn(`Context Compress: Invalid ${configType}
-${configPath}
-${messages.join(`
-`)}`);
-}
-var defaultConfig = {
-  enabled: true,
-  debug: false,
-  notification: "detailed",
-  protectedTurns: 3,
-  commands: {
-    enabled: true
-  },
-  autoCompression: { ...DEFAULT_AUTO_COMPRESSION },
-  tools: {
-    compress: {
-      permission: "allow",
-      showCompression: false
-    }
-  }
-};
-var GLOBAL_CONFIG_DIR = process.env.XDG_CONFIG_HOME ? join2(process.env.XDG_CONFIG_HOME, "opencode") : join2(homedir2(), ".config", "opencode");
-var GLOBAL_CONFIG_PATH_JSONC = join2(GLOBAL_CONFIG_DIR, "compress.jsonc");
-var GLOBAL_CONFIG_PATH_JSON = join2(GLOBAL_CONFIG_DIR, "compress.json");
-function findOpencodeDir(startDir) {
-  let current = startDir;
-  while (current !== "/") {
-    const candidate = join2(current, ".opencode");
-    if (existsSync2(candidate) && statSync(candidate).isDirectory()) {
-      return candidate;
-    }
-    const parent = dirname(current);
-    if (parent === current)
-      break;
-    current = parent;
-  }
-  return null;
-}
-function getConfigPaths(ctx) {
-  let globalPath = null;
-  if (existsSync2(GLOBAL_CONFIG_PATH_JSONC)) {
-    globalPath = GLOBAL_CONFIG_PATH_JSONC;
-  } else if (existsSync2(GLOBAL_CONFIG_PATH_JSON)) {
-    globalPath = GLOBAL_CONFIG_PATH_JSON;
-  }
-  let configDirPath = null;
-  const opencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
-  if (opencodeConfigDir) {
-    const configJsonc = join2(opencodeConfigDir, "compress.jsonc");
-    const configJson = join2(opencodeConfigDir, "compress.json");
-    if (existsSync2(configJsonc)) {
-      configDirPath = configJsonc;
-    } else if (existsSync2(configJson)) {
-      configDirPath = configJson;
-    }
-  }
-  let projectPath = null;
-  if (ctx?.directory) {
-    const opencodeDir = findOpencodeDir(ctx.directory);
-    if (opencodeDir) {
-      const projectJsonc = join2(opencodeDir, "compress.jsonc");
-      const projectJson = join2(opencodeDir, "compress.json");
-      if (existsSync2(projectJsonc)) {
-        projectPath = projectJsonc;
-      } else if (existsSync2(projectJson)) {
-        projectPath = projectJson;
-      }
-    }
-  }
-  return { global: globalPath, configDir: configDirPath, project: projectPath };
-}
-function createDefaultConfig() {
-  if (!existsSync2(GLOBAL_CONFIG_DIR)) {
-    mkdirSync(GLOBAL_CONFIG_DIR, { recursive: true });
-  }
-  const configContent = `{
-  "$schema": "https://unpkg.com/@skybluejacket/opencode-context-compress@1/compress.schema.json"
-}
-`;
-  writeFileSync(GLOBAL_CONFIG_PATH_JSONC, configContent, "utf-8");
-}
-function loadConfigFile(configPath) {
-  let fileContent;
-  try {
-    fileContent = readFileSync(configPath, "utf-8");
-  } catch {
-    return { data: null };
-  }
-  try {
-    const parsed = parse(fileContent);
-    if (!isRecord(parsed)) {
-      return { data: null, parseError: "Config file is empty or invalid" };
-    }
-    return { data: parsed };
-  } catch (error) {
-    return {
-      data: null,
-      parseError: error instanceof Error && error.message ? error.message : "Failed to parse config"
-    };
-  }
-}
-function mergeTools(base, override) {
-  if (!isRecord(override))
-    return base;
-  const compress = isRecord(override.compress) ? override.compress : {};
-  return {
-    compress: {
-      permission: isOneOf(PERMISSIONS, compress.permission) ? compress.permission : base.compress.permission,
-      showCompression: typeof compress.showCompression === "boolean" ? compress.showCompression : base.compress.showCompression
-    }
-  };
-}
-function mergeCommands(base, override) {
-  if (!isRecord(override))
-    return base;
-  return {
-    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled
-  };
-}
-function mergeAutoCompression(base, override) {
-  if (!isRecord(override))
-    return base;
-  return {
-    enabled: typeof override.enabled === "boolean" ? override.enabled : base.enabled,
-    contextWindowRatio: isContextWindowRatio(override.contextWindowRatio) ? override.contextWindowRatio : base.contextWindowRatio,
-    tokenThreshold: isTokenThreshold(override.tokenThreshold) ? override.tokenThreshold : base.tokenThreshold
-  };
-}
-function mergeConfigLayer(config, data, hasExplicitProtectedTurns) {
-  return {
-    enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
-    debug: typeof data.debug === "boolean" ? data.debug : config.debug,
-    dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
-    notification: isOneOf(NOTIFICATIONS, data.notification) ? data.notification : config.notification,
-    protectedTurns: resolveProtectedTurnsSetting(data, config.protectedTurns, hasExplicitProtectedTurns),
-    commands: mergeCommands(config.commands, data.commands),
-    autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
-    tools: mergeTools(config.tools, data.tools)
-  };
-}
-function deepCloneConfig(config) {
-  return {
-    ...config,
-    commands: { ...config.commands },
-    autoCompression: { ...config.autoCompression },
-    tools: {
-      compress: { ...config.tools.compress }
-    }
-  };
-}
-var signatures = new WeakMap;
-function configSignature(paths) {
-  return [paths.global, paths.configDir, paths.project].map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "").join("|");
-}
-function refreshConfig(config, ctx) {
-  if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
-    return;
-  const fresh = getConfig(ctx);
-  Object.assign(config, fresh);
-  signatures.set(config, signatures.get(fresh) ?? "");
-}
-function getConfig(ctx) {
-  let config = deepCloneConfig(defaultConfig);
-  let hasExplicitProtectedTurns = false;
-  const configPaths = getConfigPaths(ctx);
-  const signature = configSignature(configPaths);
-  if (configPaths.global) {
-    const result = loadConfigFile(configPaths.global);
-    if (result.parseError) {
-      console.warn(`Context Compress: Invalid config
-${configPaths.global}
-${result.parseError}
-Using default values`);
-    } else if (result.data) {
-      showConfigValidationWarnings(configPaths.global, result.data, false);
-      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns);
-    }
-  } else {
-    createDefaultConfig();
-  }
-  if (configPaths.configDir) {
-    const result = loadConfigFile(configPaths.configDir);
-    if (result.parseError) {
-      console.warn(`Context Compress: Invalid configDir config
-${configPaths.configDir}
-${result.parseError}
-Using global/default values`);
-    } else if (result.data) {
-      showConfigValidationWarnings(configPaths.configDir, result.data, true);
-      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
-    }
-  }
-  if (configPaths.project) {
-    const result = loadConfigFile(configPaths.project);
-    if (result.parseError) {
-      console.warn(`Context Compress: Invalid project config
-${configPaths.project}
-${result.parseError}
-Using global/default values`);
-    } else if (result.data) {
-      showConfigValidationWarnings(configPaths.project, result.data, true);
-      config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns);
-      hasExplicitProtectedTurns = hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns);
-    }
-  }
-  signatures.set(config, signature);
-  return config;
-}
-
-// lib/commands/auto.ts
-var AUTO_USAGE = [
-  "Usage: `/compress auto [status|on|off|threshold N|ratio N|reset]`",
-  "`threshold N` requires a positive whole-token count; `ratio N` requires 1-99."
-].join(`
-`);
-function formatRatioPercent(ratio) {
-  return Number((ratio * 100).toFixed(6)).toString();
-}
-function parseAutoAction(args) {
-  const action = args[0]?.toLowerCase() ?? "status";
-  if (action === "status" && args.length <= 1)
-    return { kind: "status" };
-  if (action === "on" && args.length === 1)
-    return { kind: "on" };
-  if (action === "off" && args.length === 1)
-    return { kind: "off" };
-  if (action === "reset" && args.length === 1)
-    return { kind: "reset" };
-  if (action === "threshold" && args.length === 2 && /^[0-9]+$/.test(args[1])) {
-    const value = Number(args[1]);
-    if (Number.isSafeInteger(value) && value > 0) {
-      return { kind: "threshold", value };
-    }
-  }
-  if (action === "ratio" && args.length === 2 && /^[0-9]+$/.test(args[1])) {
-    const value = Number(args[1]);
-    if (Number.isInteger(value) && value >= 1 && value <= 99) {
-      return { kind: "ratio", value };
-    }
-  }
-  return { kind: "invalid" };
-}
-function formatStatus(config, state, messages) {
-  const policy = resolveEffectiveAutoCompressionPolicy(config.autoCompression, state);
-  const remaining = getPostCompressionCooldownRemaining(state, messages);
-  const globalAvailability = policy.globallyEnabled ? "enabled" : "disabled by config; session commands cannot enable it";
-  return [
-    "**Automatic compression (this session)**",
-    `- Global availability: ${globalAvailability}`,
-    `- Effective state: ${policy.enabled ? "on" : "off"} (${policy.enabledSource})`,
-    `- Token threshold: ${policy.tokenThreshold.toLocaleString("en-US")} tokens (${policy.tokenThresholdSource})`,
-    `- Context ratio: ${formatRatioPercent(policy.contextWindowRatio)}% (${policy.contextWindowRatioSource})`,
-    `- Cooldown: ${remaining} assistant ${remaining === 1 ? "response" : "responses"} remaining`
-  ].join(`
-`);
-}
-async function handleAutoCommand(ctx) {
-  const action = parseAutoAction(ctx.arguments);
-  let response;
-  if (action.kind === "invalid") {
-    response = AUTO_USAGE;
-  } else {
-    response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-      const messages = await listSessionMessages(ctx.client, ctx.sessionId);
-      await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
-      if (!ctx.state.persistenceSynchronized) {
-        return "Automatic compression settings are unavailable because saved session state could not be loaded. No session setting was changed.";
-      }
-      if (action.kind === "status") {
-        return formatStatus(ctx.config, ctx.state, messages);
-      }
-      const effectivePolicy = resolveEffectiveAutoCompressionPolicy(ctx.config.autoCompression, ctx.state);
-      if (action.kind === "on" && effectivePolicy.enabled) {
-        return `Automatic compression is already on (${effectivePolicy.enabledSource}). No session setting was changed.`;
-      }
-      if (action.kind === "off" && !effectivePolicy.enabled) {
-        const source = effectivePolicy.globallyEnabled ? effectivePolicy.enabledSource : "global config";
-        return `Automatic compression is already off (${source}). No session setting was changed.`;
-      }
-      if (!ctx.config.autoCompression.enabled) {
-        return "Automatic compression is disabled globally. Session overrides cannot turn it on.";
-      }
-      const candidate = { ...ctx.state };
-      let successMessage;
-      switch (action.kind) {
-        case "on":
-          candidate.autoCompressionEnabledOverride = true;
-          successMessage = "Automatic compression is on for this session.";
-          break;
-        case "off":
-          candidate.autoCompressionEnabledOverride = false;
-          successMessage = "Automatic compression is off for this session. Both absolute and ratio triggers are disabled.";
-          break;
-        case "threshold":
-          candidate.autoCompressionTokenThresholdOverride = action.value;
-          successMessage = `Automatic compression threshold set to ${action.value.toLocaleString("en-US")} tokens for this session.`;
-          break;
-        case "ratio":
-          candidate.autoCompressionContextWindowRatioOverride = action.value / 100;
-          successMessage = `Automatic compression ratio set to ${action.value}% for this session.`;
-          break;
-        case "reset":
-          candidate.autoCompressionTokenThresholdOverride = undefined;
-          candidate.autoCompressionContextWindowRatioOverride = undefined;
-          successMessage = `Defaults reset to ${ctx.config.autoCompression.tokenThreshold.toLocaleString("en-US")} tokens and ${formatRatioPercent(ctx.config.autoCompression.contextWindowRatio)}% threshold.`;
-          break;
-      }
-      const persisted = await saveSessionState(candidate, ctx.logger);
-      if (!persisted) {
-        return "Automatic compression settings could not be saved. No session setting was changed.";
-      }
-      commitDurableSessionState(ctx.state, candidate);
-      return successMessage;
-    });
-  }
-  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
-}
-
-// lib/token-utils.ts
-import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
-import { encodingForModel } from "js-tiktoken";
-var _tiktokenEncoder = null;
-function getTiktokenEncoder() {
-  if (!_tiktokenEncoder) {
-    _tiktokenEncoder = encodingForModel("gpt-4o");
-  }
-  return _tiktokenEncoder;
-}
-function isAnthropicProvider(providerId) {
-  if (!providerId)
-    return false;
-  return providerId.toLowerCase().includes("anthropic");
-}
-function getCurrentProviderId(state, messages) {
-  return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
-}
-function countTokens(text, providerId) {
-  if (!text)
-    return 0;
-  try {
-    if (isAnthropicProvider(providerId)) {
-      return anthropicCountTokens(text);
-    }
-    return getTiktokenEncoder().encode(text).length;
-  } catch {
-    return Math.ceil(text.length / 4);
-  }
-}
-function estimateTokensBatch(texts, providerId) {
-  if (texts.length === 0)
-    return 0;
-  return countTokens(texts.join(" "), providerId);
-}
-
-// lib/commands/context.ts
-function analyzeTokens(state, messages, providerId) {
-  const breakdown = {
-    system: 0,
-    user: 0,
-    assistant: 0,
-    tools: 0,
-    toolCount: 0,
-    compressedTokens: state.stats.totalCompressTokens,
-    compressedToolCount: state.compressed.toolIds.size,
-    compressedMessageCount: state.compressed.messageIds.size,
-    total: 0
-  };
-  let firstAssistant;
-  for (const msg of messages) {
-    if (msg.info.role === "assistant") {
-      if ((msg.info.tokens?.input ?? 0) > 0 || (msg.info.tokens?.cache?.read ?? 0) > 0) {
-        firstAssistant = msg.info;
-        break;
-      }
-    }
-  }
-  let lastAssistant;
-  for (let i = messages.length - 1;i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.info.role === "assistant") {
-      if ((msg.info.tokens?.output ?? 0) > 0) {
-        lastAssistant = msg.info;
-        break;
-      }
-    }
-  }
-  const apiInput = lastAssistant?.tokens?.input || 0;
-  const apiOutput = lastAssistant?.tokens?.output || 0;
-  const apiReasoning = lastAssistant?.tokens?.reasoning || 0;
-  const apiCacheRead = lastAssistant?.tokens?.cache?.read || 0;
-  const apiCacheWrite = lastAssistant?.tokens?.cache?.write || 0;
-  breakdown.total = apiInput + apiOutput + apiReasoning + apiCacheRead + apiCacheWrite;
-  const userTextParts = [];
-  const toolInputParts = [];
-  const toolOutputParts = [];
-  let firstUserText = "";
-  let foundFirstUser = false;
-  const foundToolIds = new Set;
-  for (const msg of messages) {
-    const parts = Array.isArray(msg.parts) ? msg.parts : [];
-    const isCompacted = isMessageCompacted(state, msg);
-    const isIgnoredUser = msg.info.role === "user" && isIgnoredUserMessage(msg);
-    for (const part of parts) {
-      if (part.type === "tool") {
-        const toolPart = part;
-        if (toolPart.callID && !foundToolIds.has(toolPart.callID)) {
-          breakdown.toolCount++;
-          foundToolIds.add(toolPart.callID);
-        }
-        const isCompressed = toolPart.callID && state.compressed.toolIds.has(toolPart.callID);
-        if (!isCompacted && !isCompressed) {
-          if (toolPart.state?.input) {
-            const inputStr = typeof toolPart.state.input === "string" ? toolPart.state.input : JSON.stringify(toolPart.state.input);
-            toolInputParts.push(inputStr);
-          }
-          if (toolPart.state?.status === "completed" && toolPart.state?.output) {
-            const outputStr = typeof toolPart.state.output === "string" ? toolPart.state.output : JSON.stringify(toolPart.state.output);
-            toolOutputParts.push(outputStr);
-          }
-        }
-      } else if (part.type === "text" && msg.info.role === "user" && !isCompacted && !isIgnoredUser) {
-        const textPart = part;
-        const text = textPart.text || "";
-        userTextParts.push(text);
-        if (!foundFirstUser) {
-          firstUserText += text;
-        }
-      }
-    }
-    if (msg.info.role === "user" && !isIgnoredUser && !foundFirstUser) {
-      foundFirstUser = true;
-    }
-  }
-  const firstUserTokens = countTokens(firstUserText, providerId);
-  breakdown.user = countTokens(userTextParts.join(`
-`), providerId);
-  const toolInputTokens = countTokens(toolInputParts.join(`
-`), providerId);
-  const toolOutputTokens = countTokens(toolOutputParts.join(`
-`), providerId);
-  if (firstAssistant) {
-    const firstInput = (firstAssistant.tokens?.input || 0) + (firstAssistant.tokens?.cache?.read || 0);
-    breakdown.system = Math.max(0, firstInput - firstUserTokens);
-  }
-  breakdown.tools = toolInputTokens + toolOutputTokens;
-  breakdown.assistant = Math.max(0, breakdown.total - breakdown.system - breakdown.user - breakdown.tools);
-  return breakdown;
-}
-function createBar(value, maxValue, width, char = "\u2588") {
-  if (maxValue === 0)
-    return "";
-  const filled = Math.round(value / maxValue * width);
-  const bar = char.repeat(Math.max(0, filled));
-  return bar;
-}
-function formatContextMessage(breakdown) {
-  const lines = [];
-  const barWidth = 30;
-  const toolsInContext = breakdown.toolCount - breakdown.compressedToolCount;
-  const toolsLabel = `Tools (${toolsInContext})`;
-  const categories = [
-    { label: "System", value: breakdown.system, char: "\u2588" },
-    { label: "User", value: breakdown.user, char: "\u2593" },
-    { label: "Assistant", value: breakdown.assistant, char: "\u2592" },
-    { label: toolsLabel, value: breakdown.tools, char: "\u2591" }
-  ];
-  const maxLabelLen = Math.max(...categories.map((c) => c.label.length));
-  lines.push("\u256D\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256E");
-  lines.push("\u2502               Compress Context Analysis                   \u2502");
-  lines.push("\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256F");
-  lines.push("");
-  lines.push("Session Context Breakdown:");
-  lines.push("\u2500".repeat(60));
-  lines.push("");
-  for (const cat of categories) {
-    const bar = createBar(cat.value, breakdown.total, barWidth, cat.char);
-    const percentage = breakdown.total > 0 ? (cat.value / breakdown.total * 100).toFixed(1) : "0.0";
-    const labelWithPct = `${cat.label.padEnd(maxLabelLen)} ${percentage.padStart(5)}% `;
-    const valueStr = formatTokenCount(cat.value).padStart(13);
-    lines.push(`${labelWithPct}\u2502${bar.padEnd(barWidth)}\u2502${valueStr}`);
-  }
-  lines.push("");
-  lines.push("\u2500".repeat(60));
-  lines.push("");
-  lines.push("Summary:");
-  if (breakdown.compressedTokens > 0) {
-    const withoutCompression = breakdown.total + breakdown.compressedTokens;
-    const compressed = [];
-    if (breakdown.compressedToolCount > 0) {
-      compressed.push(`${breakdown.compressedToolCount} tools`);
-    }
-    if (breakdown.compressedMessageCount > 0) {
-      compressed.push(`${breakdown.compressedMessageCount} messages`);
-    }
-    lines.push(`  Compressed:      ${compressed.join(", ")} (~${formatTokenCount(breakdown.compressedTokens)})`);
-    lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
-    lines.push(`  Without plugin:  ~${formatTokenCount(withoutCompression)}`);
-  } else {
-    lines.push(`  Current context: ~${formatTokenCount(breakdown.total)}`);
-  }
-  lines.push("");
-  return lines.join(`
-`);
-}
-async function handleContextCommand(ctx) {
-  const { client, state, logger, sessionId, messages } = ctx;
-  const breakdown = analyzeTokens(state, messages, getCurrentProviderId(state, messages));
-  const message = formatContextMessage(breakdown);
-  await sendIgnoredMessage(client, sessionId, message, logger);
-}
-
-// lib/commands/help.ts
-function formatHelpMessage() {
-  const lines = [];
-  lines.push("**Compress commands**");
-  lines.push("");
-  lines.push("- `/compress context` \u2014 Show token usage breakdown for current session");
-  lines.push("- `/compress stats` \u2014 Show context compression statistics");
-  lines.push("- `/compress manage [instruction]` \u2014 Manage context now, optionally with specific compression guidance");
-  lines.push("- `/compress squash [instruction]` \u2014 Replace one agent-selected range of existing compressed blocks");
-  lines.push("- `/compress auto [status|on|off|threshold N|ratio N|reset]` \u2014 Control automatic compression for this session");
-  lines.push("- `/compress prune [status|on|off]` \u2014 Pause or resume background pruning for this session; pruned outputs stay pruned");
-  lines.push("- `/compress help` \u2014 Show this command list");
-  lines.push("");
-  lines.push("Session `auto off` disables all automatic compression, including both absolute and ratio triggers, until you turn it back on.");
-  return lines.join(`
-`);
-}
-async function handleHelpCommand(ctx) {
-  const { client, logger, sessionId } = ctx;
-  const message = formatHelpMessage();
-  await sendIgnoredMessage(client, sessionId, message, logger);
-}
-
-// lib/commands/prune.ts
-var PRUNE_USAGE = "Usage: `/compress prune [status|on|off]`";
-async function handlePruneCommand(ctx) {
-  const action = ctx.arguments.length <= 1 ? ctx.arguments[0]?.toLowerCase() ?? "status" : "";
-  const response = ["status", "on", "off"].includes(action) ? await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
-    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
-    if (!ctx.state.persistenceSynchronized)
-      return "Pruning settings are unavailable because saved session state could not be loaded. Nothing was changed.";
-    const off = ctx.state.pruneOff === true;
-    if (action === "status")
-      return `Background pruning is ${off ? "off" : "on"} for this session.`;
-    if (action === "off" === off)
-      return `Background pruning is already ${action} for this session.`;
-    const candidate = {
-      ...ctx.state,
-      pruneOff: action === "off" ? true : undefined
-    };
-    if (!await saveSessionState(candidate, ctx.logger))
-      return "Pruning settings could not be saved. Nothing was changed.";
-    commitDurableSessionState(ctx.state, candidate);
-    return action === "off" ? "Background pruning is off for this session. Outputs pruned so far stay pruned." : "Background pruning is on for this session.";
-  }) : PRUNE_USAGE;
-  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
-}
-
-// lib/commands/squash.ts
-function extractSquashCommandResidual(args) {
-  const residual = (args || "").replace(/^\s*squash\b/i, "").replace(/^[\s:;,.|-]+/, "").trim();
-  return residual || undefined;
-}
-async function handleSquashCommand(ctx) {
-  if (ctx.config.tools.compress.permission === "deny") {
-    await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash did not start because squash follows the denied compress permission. Enable the compression tool, then run `/compress squash` again.", ctx.logger);
-    return;
-  }
-  const staged = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-    if (!ctx.state.persistenceSynchronized) {
-      return async () => {
-        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash could not start because saved session state could not be loaded.", ctx.logger);
-        return false;
-      };
-    }
-    const active = findActiveManagementTurn(ctx.state, ctx.messages);
-    if (active && active.turn.source !== "squash") {
-      return async () => {
-        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash could not start because a compression management turn is still active.", ctx.logger);
-        return false;
-      };
-    }
-    let blockCount;
-    try {
-      blockCount = orderCompressBlocks(ctx.messages, ctx.state.compressSummaries).length;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return async () => {
-        await sendIgnoredMessage(ctx.client, ctx.sessionId, `Block squash could not start: ${message}`, ctx.logger);
-        return false;
-      };
-    }
-    if (blockCount < 2) {
-      return async () => {
-        await sendIgnoredMessage(ctx.client, ctx.sessionId, "Block squash requires at least two existing compressed blocks.", ctx.logger);
-        return false;
-      };
-    }
-    return stageManagementTurnWithinLock({
-      ...ctx,
-      systemPrompt: renderSquashSystemPrompt(),
-      retainedText: extractSquashCommandResidual(ctx.arguments),
-      source: "squash"
-    });
-  });
-  if (staged)
-    await staged();
-}
-
-// lib/commands/stats.ts
-function formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime) {
-  const lines = [];
-  lines.push("**Compress statistics**");
-  lines.push("");
-  lines.push("**Session**");
-  lines.push(`- Tokens saved: ~${formatTokenCount(sessionTokens)}`);
-  lines.push(`- Tools compressed: ${sessionTools}`);
-  lines.push(`- Messages compressed: ${sessionMessages}`);
-  lines.push("");
-  lines.push("**All-time**");
-  lines.push(`- Tokens saved: ~${formatTokenCount(allTime.totalTokens)}`);
-  lines.push(`- Tools compressed: ${allTime.totalTools}`);
-  lines.push(`- Messages compressed: ${allTime.totalMessages}`);
-  lines.push(`- Sessions: ${allTime.sessionCount}`);
-  return lines.join(`
-`);
-}
-async function handleStatsCommand(ctx) {
-  const { client, state, logger, sessionId } = ctx;
-  const sessionTokens = state.stats.totalCompressTokens;
-  const sessionTools = state.compressed.toolIds.size;
-  const sessionMessages = state.compressed.messageIds.size;
-  const allTime = await loadAllSessionStats(logger);
-  const message = formatStatsMessage(sessionTokens, sessionTools, sessionMessages, allTime);
-  await sendIgnoredMessage(client, sessionId, message, logger);
-}
-
-// lib/commands/route.ts
-async function handleCompressCommand(input, dependencies) {
-  if (!dependencies.config.commands.enabled || input.command !== "compress")
-    return false;
-  const { client, stateManager, logger, config } = dependencies;
-  const state = stateManager.get(input.sessionID);
-  const messages = await stateManager.runExclusive(input.sessionID, async () => {
-    const currentMessages = await listSessionMessages(client, input.sessionID);
-    await reconcileSessionLifecycle(state, input.sessionID, logger, currentMessages);
-    return currentMessages;
-  });
-  const args = (input.arguments || "").trim().split(/\s+/).filter(Boolean);
-  const subcommand = args[0]?.toLowerCase() || "";
-  if (subcommand === "context") {
-    await handleContextCommand({ client, state, logger, sessionId: input.sessionID, messages });
-    return true;
-  }
-  if (subcommand === "stats") {
-    await handleStatsCommand({ client, state, logger, sessionId: input.sessionID });
-    return true;
-  }
-  if (subcommand === "manage") {
-    await handleManageCommand({
-      client,
-      stateManager,
-      state,
-      config,
-      logger,
-      sessionId: input.sessionID,
-      messages,
-      arguments: input.arguments
-    });
-    return true;
-  }
-  if (subcommand === "squash") {
-    await handleSquashCommand({
-      client,
-      stateManager,
-      state,
-      config,
-      logger,
-      sessionId: input.sessionID,
-      messages,
-      arguments: input.arguments
-    });
-    return true;
-  }
-  if (subcommand === "auto") {
-    await handleAutoCommand({
-      client,
-      stateManager,
-      state,
-      config,
-      logger,
-      sessionId: input.sessionID,
-      arguments: args.slice(1)
-    });
-    return true;
-  }
-  if (subcommand === "prune") {
-    await handlePruneCommand({
-      client,
-      stateManager,
-      state,
-      logger,
-      sessionId: input.sessionID,
-      arguments: args.slice(1)
-    });
-    return true;
-  }
-  await handleHelpCommand({ client, logger, sessionId: input.sessionID });
-  return true;
-}
-
-// lib/logger.ts
-import { mkdir as mkdir2, readdir as readdir2, rm as rm2, writeFile } from "fs/promises";
-import { join as join3 } from "path";
-import { existsSync as existsSync3 } from "fs";
-import { homedir as homedir3 } from "os";
-var DAILY_LOG_DAYS = 30;
-
-class Logger {
-  logDir;
-  cleanedDay;
-  dailyEnabled;
-  contextEnabled;
-  constructor(options) {
-    this.dailyEnabled = options.daily;
-    this.contextEnabled = options.context;
-    const configHome = process.env.XDG_CONFIG_HOME || join3(homedir3(), ".config");
-    this.logDir = join3(configHome, "opencode", "logs", "compress");
-  }
-  async ensureLogDir() {
-    if (!existsSync3(this.logDir)) {
-      await mkdir2(this.logDir, { recursive: true });
-    }
-  }
-  formatData(data) {
-    if (!data)
-      return "";
-    const parts = [];
-    for (const [key, value] of Object.entries(data)) {
-      if (value === undefined || value === null)
-        continue;
-      if (Array.isArray(value)) {
-        if (value.length === 0)
-          continue;
-        parts.push(`${key}=[${value.slice(0, 3).join(",")}${value.length > 3 ? `...+${value.length - 3}` : ""}]`);
-      } else if (typeof value === "object") {
-        const str = JSON.stringify(value);
-        if (str.length < 50) {
-          parts.push(`${key}=${str}`);
-        }
-      } else {
-        parts.push(`${key}=${value}`);
-      }
-    }
-    return parts.join(" ");
-  }
-  getCallerFile(skipFrames = 3) {
-    const originalPrepareStackTrace = Error.prepareStackTrace;
-    try {
-      const err = new Error;
-      Error.prepareStackTrace = (_, stack) => stack;
-      const stack = err.stack;
-      Error.prepareStackTrace = originalPrepareStackTrace;
-      for (let i = skipFrames;i < stack.length; i++) {
-        const filename = stack[i]?.getFileName();
-        if (filename && !filename.includes("/logger.")) {
-          const match = filename.match(/([^/\\]+)\.[tj]s$/);
-          return match ? match[1] : filename;
-        }
-      }
-      return "unknown";
-    } catch {
-      return "unknown";
-    }
-  }
-  async write(level, component, message, data) {
-    if (!this.dailyEnabled)
-      return;
-    try {
-      await this.ensureLogDir();
-      const timestamp = new Date().toISOString();
-      const dataStr = this.formatData(data);
-      const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? ` | ${dataStr}` : ""}
-`;
-      const dailyLogDir = join3(this.logDir, "daily");
-      if (!existsSync3(dailyLogDir)) {
-        await mkdir2(dailyLogDir, { recursive: true });
-      }
-      const day = timestamp.split("T")[0];
-      await writeFile(join3(dailyLogDir, `${day}.log`), logLine, { flag: "a" });
-      if (this.cleanedDay !== day) {
-        this.cleanedDay = day;
-        const cutoff = new Date(Date.now() - DAILY_LOG_DAYS * 86400000).toISOString().split("T")[0];
-        const old = (await readdir2(dailyLogDir)).filter((name) => name.endsWith(".log") && name.slice(0, 10) < cutoff);
-        await Promise.all(old.map((name) => rm2(join3(dailyLogDir, name), { force: true })));
-      }
-    } catch (error) {
-      console.error("context-compress: failed to write daily log", error);
-    }
-  }
-  info(message, data) {
-    const component = this.getCallerFile(2);
-    return this.write("INFO", component, message, data);
-  }
-  debug(message, data) {
-    const component = this.getCallerFile(2);
-    return this.write("DEBUG", component, message, data);
-  }
-  warn(message, data) {
-    const component = this.getCallerFile(2);
-    return this.write("WARN", component, message, data);
-  }
-  error(message, data) {
-    const component = this.getCallerFile(2);
-    return this.write("ERROR", component, message, data);
-  }
-  minimizeForDebug(messages) {
-    return messages.map((message) => {
-      const msg = isRecord(message) ? message : {};
-      const info = isRecord(msg.info) ? msg.info : {};
-      const time = isRecord(info.time) ? info.time : {};
-      const minimized = {
-        role: info.role ?? msg.role
-      };
-      if (time.created) {
-        minimized.time = time.created;
-      }
-      if (isRecord(info.tokens)) {
-        minimized.tokens = {
-          input: info.tokens.input,
-          output: info.tokens.output,
-          reasoning: info.tokens.reasoning,
-          cache: info.tokens.cache
-        };
-      }
-      const parts = msg.parts ?? msg.content;
-      if (Array.isArray(parts)) {
-        minimized.parts = parts.map((item) => {
-          const part = isRecord(item) ? item : {};
-          if (part.type === "step-start" || part.type === "step-finish") {
-            return null;
-          }
-          if (part.type === "text") {
-            if (part.ignored)
-              return null;
-            return { type: "text", text: part.text };
-          }
-          if (part.type === "reasoning") {
-            return {
-              type: "reasoning",
-              text: part.text
-            };
-          }
-          if (part.type === "tool") {
-            const state = isRecord(part.state) ? part.state : {};
-            const toolPart = {
-              type: "tool",
-              tool: part.tool,
-              callID: part.callID
-            };
-            if (state.status) {
-              toolPart.status = state.status;
-            }
-            if (state.input) {
-              toolPart.input = state.input;
-            }
-            if (state.output) {
-              toolPart.output = state.output;
-            }
-            if (state.error) {
-              toolPart.error = state.error;
-            }
-            return toolPart;
-          }
-          if (part.type === "tool-call") {
-            return {
-              type: "tool-call",
-              tool: part.name,
-              callID: part.id,
-              input: part.input
-            };
-          }
-          if (part.type === "tool-result") {
-            return {
-              type: "tool-result",
-              tool: part.name,
-              callID: part.id,
-              output: part.result
-            };
-          }
-          return null;
-        }).filter(Boolean);
-      }
-      return minimized;
-    });
-  }
-  async saveContext(sessionId, messages) {
-    if (!this.contextEnabled)
-      return;
-    try {
-      const contextDir = join3(this.logDir, "context", sessionId);
-      if (!existsSync3(contextDir)) {
-        await mkdir2(contextDir, { recursive: true });
-      }
-      const minimized = this.minimizeForDebug(messages);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const contextFile = join3(contextDir, `${timestamp}.json`);
-      await writeFile(contextFile, JSON.stringify(minimized, null, 2));
-    } catch (error) {
-      console.error("context-compress: failed to write context snapshot", error);
-    }
-  }
 }
 
 // lib/messages/prune.ts
@@ -3783,12 +2718,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
       ...turn.completedMessageId ? { completedMessageId: messageID(turn.completedMessageId) } : {},
       ...turn.protectedMessageIds ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) } : {}
     })),
-    stats: { ...parentState.state.stats },
     pruneOff: parentState.state.pruneOff,
-    autoCompressionEnabledOverride: parentState.state.autoCompressionEnabledOverride,
-    autoCompressionTokenThresholdOverride: parentState.state.autoCompressionTokenThresholdOverride,
-    autoCompressionContextWindowRatioOverride: parentState.state.autoCompressionContextWindowRatioOverride,
-    compressionCooldownAfterMessageId: parentState.state.compressionCooldownAfterMessageId && mapped.has(parentState.state.compressionCooldownAfterMessageId) ? messageID(parentState.state.compressionCooldownAfterMessageId) : undefined,
     lastCompaction: parentState.state.lastCompaction ?? 0
   };
   if (!await saveSessionState(candidate, logger))
@@ -3809,386 +2739,23 @@ async function resolveForkBoundary(client, fork, parentMessages) {
   };
 }
 
-// lib/tools/utils.ts
-function getCompletedToolOutputText(part, output, options) {
-  if (part.tool === "image_generation") {
-    const callId = typeof part.callID === "string" && part.callID.length > 0 ? part.callID.length > 56 ? `${part.callID.slice(0, 53)}...` : part.callID : undefined;
-    return typeof part.callID === "string" && part.callID.length > 0 ? `[generated image: ${callId}]` : "[generated image]";
-  }
-  if (options?.requireTruthy ? !output : output === undefined || output === null) {
-    return;
-  }
-  if (typeof output === "string") {
-    return output;
-  }
-  if (options?.stringifyNonString) {
-    return JSON.stringify(output);
-  }
-  return;
-}
-function collectToolIdsInRange(messages, startIndex, endIndex) {
-  const toolIds = [];
-  for (let i = startIndex;i <= endIndex; i++) {
-    const msg = messages[i];
-    const parts = Array.isArray(msg.parts) ? msg.parts : [];
-    for (const part of parts) {
-      if (part.type === "tool" && part.callID) {
-        if (!toolIds.includes(part.callID)) {
-          toolIds.push(part.callID);
-        }
-      }
-    }
-  }
-  return toolIds;
-}
-function collectContentInRange(messages, startIndex, endIndex) {
-  const contents = [];
-  for (let i = startIndex;i <= endIndex; i++) {
-    const msg = messages[i];
-    const parts = Array.isArray(msg.parts) ? msg.parts : [];
-    for (const part of parts) {
-      if (part.type === "text") {
-        contents.push(part.text);
-      } else if (part.type === "tool") {
-        const toolState = part.state;
-        if (toolState?.input) {
-          contents.push(typeof toolState.input === "string" ? toolState.input : JSON.stringify(toolState.input));
-        }
-        if (toolState?.status === "completed") {
-          const output = getCompletedToolOutputText(part, toolState.output, {
-            requireTruthy: true,
-            stringifyNonString: true
-          });
-          if (typeof output === "string") {
-            contents.push(output);
-          }
-        } else if (toolState?.status === "error" && toolState?.error) {
-          contents.push(typeof toolState.error === "string" ? toolState.error : JSON.stringify(toolState.error));
-        }
-      }
-    }
-  }
-  return contents;
-}
-
 // lib/tools/compress.ts
-var COMPRESS_TOOL_DESCRIPTION = loadPrompt("compress-tool-spec");
-function isVisibleUserMessage3(message) {
-  return message.info.role === "user" && message.info.sourceType !== "synthetic" && !isIgnoredUserMessage(message);
+async function compress(client, logger, pending, sessionID, input) {
+  const summary = input.trim();
+  if (!summary)
+    throw new Error("compress requires a non-empty summary. Nothing was folded.");
+  const admitted = await client.session.compact({ sessionID }).catch((error) => {
+    const cause = error instanceof Error ? error.message : String(error);
+    logger.error("Fold could not start", { sessionId: sessionID, error: cause });
+    throw new Error(`Nothing was folded: the compaction could not start. ${cause}`);
+  });
+  pending.set(sessionID, { summary, inboxID: admitted.id });
+  logger.info("Fold summary saved", { sessionId: sessionID, chars: summary.length });
+  return "Summary saved. The fold applies right after this step.";
 }
-function findExecutingToolMessage(rawMessages, messageId, callId) {
-  const matches = rawMessages.map((message, index) => ({ message, index })).filter(({ message }) => message.info.id === messageId);
-  if (matches.length !== 1 || matches[0].message.info.role !== "assistant")
-    return;
-  const hasExecutingCall = matches[0].message.parts.some((part) => part.type === "tool" && part.tool === "compress" && (!callId || part.callID === callId));
-  return hasExecutingCall ? matches[0] : undefined;
-}
-function resolveCompressionBoundary(rawMessages, state, toolMessageId, callId) {
-  const activeTurn = findActiveManagementTurn(state, rawMessages);
-  if (activeTurn) {
-    if (activeTurn.turn.source === "squash") {
-      throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.");
-    }
-    return {
-      history: rawMessages.slice(0, activeTurn.triggerIndex),
-      managementTurn: activeTurn.turn
-    };
-  }
-  const executing = findExecutingToolMessage(rawMessages, toolMessageId, callId);
-  if (!executing) {
-    throw new Error("compress could not identify the executing tool call in the current session. Nothing was compressed.");
-  }
-  const parentId = executing.message.info.parentID;
-  if (typeof parentId !== "string" || parentId.length === 0) {
-    throw new Error("compress could not identify the visible user turn that owns this call. Nothing was compressed.");
-  }
-  const parentMatches = rawMessages.map((message, index) => ({ message, index })).filter(({ message }) => message.info.id === parentId && isVisibleUserMessage3(message));
-  if (parentMatches.length !== 1 || parentMatches[0].index >= executing.index) {
-    throw new Error("compress could not unambiguously resolve this call's visible user boundary. Nothing was compressed.");
-  }
-  const owner = parentMatches[0];
-  const matchingManagementTurn = [...state.managementTurns].reverse().find((turn) => !turn.completedAt && turn.triggerMessageId === parentId);
-  if (matchingManagementTurn) {
-    if (matchingManagementTurn.source === "squash") {
-      throw new Error("compress cannot complete an active `/compress squash` turn. Call squash with one block range instead. Nothing was compressed.");
-    }
-    return {
-      history: rawMessages.slice(0, owner.index),
-      managementTurn: matchingManagementTurn
-    };
-  }
-  const interveningVisibleUser = rawMessages.slice(owner.index + 1, executing.index).some(isVisibleUserMessage3);
-  if (interveningVisibleUser) {
-    throw new Error("compress found another visible user turn between this call and its owner. Nothing was compressed.");
-  }
-  return { history: rawMessages.slice(0, owner.index) };
-}
-function buildCompressReceipt(topic, blockId, requestedBy) {
-  const opening = requestedBy === "automatic" ? "Automatic context compression finished. The plugin started it because the conversation passed its automatic compression threshold." : requestedBy === "user" ? "Context compression finished, as the user requested with /compress manage." : "Context compression finished.";
-  return `${opening} Earlier messages are now summarized in block [${blockId}] "${topic}", which appears earlier in this conversation; the newest steps remain verbatim.
 
-${renderPostCompressionNotice()}`;
-}
-function createCompressTool(ctx) {
-  return {
-    description: COMPRESS_TOOL_DESCRIPTION,
-    args: {
-      summary: {
-        type: "string",
-        description: "Compact structured continuation handoff described by this tool's instructions"
-      },
-      topic: { type: "string", description: "Short block title, usually 3-5 words" }
-    },
-    async execute(args, toolCtx) {
-      const { client, stateManager, logger } = ctx;
-      const sessionId = toolCtx.sessionID;
-      const state = stateManager.get(sessionId);
-      const input = args;
-      const summary = typeof input.summary === "string" ? input.summary.trim() : "";
-      const topic = typeof input.topic === "string" ? input.topic.trim() : "";
-      if (!summary)
-        throw new Error("compress requires a non-empty summary");
-      if (!topic)
-        throw new Error("compress requires a non-empty topic");
-      const outcome = await stateManager.runExclusive(sessionId, async () => {
-        let rawMessages;
-        try {
-          rawMessages = await listSessionMessages(client, sessionId);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`compress could not fetch session messages: ${message}. Nothing was compressed.`);
-        }
-        if (rawMessages.length === 0) {
-          throw new Error("compress could not fetch any session messages. Nothing was compressed.");
-        }
-        await reconcileSessionLifecycle(state, sessionId, logger, rawMessages);
-        if (!state.persistenceSynchronized) {
-          throw new Error("compress could not synchronize saved session state. Nothing was compressed.");
-        }
-        const callId = toolCtx.id ?? toolCtx.callID;
-        const boundary = resolveCompressionBoundary(rawMessages, state, toolCtx.messageID, callId);
-        if (!boundary.managementTurn && getPostCompressionCooldownRemaining(state, rawMessages) > 0) {
-          const remaining = getPostCompressionCooldownRemaining(state, rawMessages);
-          throw new Error(`Compression succeeded recently. Nothing was compressed. Wait ${remaining} more assistant ${remaining === 1 ? "response" : "responses"}. Only the user may override this cooldown by explicitly running \`/compress manage\`.`);
-        }
-        const span = selectDeterministicCompressionSpan(boundary.history, state, ctx.config.protectedTurns);
-        if (span.messages.length === 0) {
-          return { kind: "empty" };
-        }
-        const containedToolIds = collectToolIdsInRange(span.messages, 0, span.messages.length - 1);
-        const estimatedCompressedTokens = estimateTokensBatch(collectContentInRange(span.messages, 0, span.messages.length - 1), state.modelContext?.providerId);
-        const candidateCompressed = {
-          toolIds: new Set(state.compressed.toolIds),
-          messageIds: new Set(state.compressed.messageIds)
-        };
-        for (const id of containedToolIds)
-          candidateCompressed.toolIds.add(id);
-        for (const id of span.messageIds)
-          candidateCompressed.messageIds.add(id);
-        const anchorMessageId = span.messageIds[0];
-        const candidateSummaries = [
-          ...state.compressSummaries,
-          {
-            anchorMessageId,
-            messageIds: span.messageIds,
-            summary,
-            topic
-          }
-        ];
-        const storedBlock = orderCompressBlocks(boundary.history, candidateSummaries).find((block) => block.summary === candidateSummaries[candidateSummaries.length - 1]);
-        if (!storedBlock) {
-          throw new Error("compress could not reconcile the new compressed block with the current transcript. Nothing was compressed.");
-        }
-        const completedAt = new Date().toISOString();
-        const candidateManagementTurns = boundary.managementTurn ? state.managementTurns.map((turn) => turn === boundary.managementTurn ? {
-          ...turn,
-          completedAt,
-          completedMessageId: toolCtx.messageID
-        } : turn) : [...state.managementTurns];
-        const candidateState = {
-          ...state,
-          compressed: candidateCompressed,
-          compressSummaries: candidateSummaries,
-          managementTurns: candidateManagementTurns,
-          stats: {
-            compressTokenCounter: 0,
-            totalCompressTokens: state.stats.totalCompressTokens + estimatedCompressedTokens
-          },
-          compressionCooldownAfterMessageId: toolCtx.messageID
-        };
-        const persisted = await saveSessionState(candidateState, logger);
-        if (!persisted) {
-          throw new Error("compress could not persist compression state. Nothing was compressed.");
-        }
-        commitDurableSessionState(state, candidateState);
-        return {
-          kind: "compressed",
-          containedToolIds,
-          selectedMessageCount: span.messageIds.length,
-          visibleHistoryCount: span.messageIds.length + span.protectedMessageIds.length,
-          topic,
-          summary,
-          estimatedCompressedTokens,
-          storedBlockId: storedBlock.label,
-          requestedBy: boundary.managementTurn ? boundary.managementTurn.source === "automatic" ? "automatic" : "user" : undefined
-        };
-      });
-      if (outcome.kind === "empty") {
-        return "Nothing eligible to compress. The newest configured execution steps and existing blocks remain unchanged.";
-      }
-      await sendCompressNotification(client, logger, ctx.config, state, sessionId, outcome.containedToolIds, outcome.selectedMessageCount, outcome.topic, outcome.summary, { messageIndex: 0 }, { messageIndex: outcome.selectedMessageCount - 1 }, outcome.visibleHistoryCount, outcome.estimatedCompressedTokens);
-      const receipt = buildCompressReceipt(outcome.topic, outcome.storedBlockId, outcome.requestedBy);
-      return receipt;
-    }
-  };
-}
-// lib/tools/squash.ts
-var SQUASH_TOOL_DESCRIPTION = loadPrompt("squash-tool-spec");
-var BLOCK_LABEL = /^b(?:0|[1-9]\d*)$/;
-function parseBlockLabel(value, field) {
-  if (typeof value !== "string" || !BLOCK_LABEL.test(value)) {
-    throw new Error(`squash requires ${field} to be a current block label such as b1`);
-  }
-  const index = Number(value.slice(1));
-  if (!Number.isSafeInteger(index)) {
-    throw new Error(`squash requires ${field} to be a current block label such as b1`);
-  }
-  return index;
-}
-function buildReplacement(selected, summary, topic) {
-  const messageIds = [];
-  const seen = new Set;
-  for (const block of selected) {
-    for (const messageId of block.summary.messageIds) {
-      if (!seen.has(messageId)) {
-        seen.add(messageId);
-        messageIds.push(messageId);
-      }
-    }
-  }
-  return {
-    anchorMessageId: selected[0].summary.anchorMessageId,
-    messageIds,
-    summary,
-    topic
-  };
-}
-function createSquashTool(ctx) {
-  return {
-    description: SQUASH_TOOL_DESCRIPTION,
-    args: {
-      from: { type: "string", description: "Inclusive current block label, for example b1" },
-      to: { type: "string", description: "Inclusive current block label, for example b12" },
-      summary: {
-        type: "string",
-        description: "Truthful replacement for only the selected blocks"
-      },
-      topic: { type: "string", description: "Short replacement block title" }
-    },
-    async execute(args, toolCtx) {
-      const input = args;
-      const fromIndex = parseBlockLabel(input.from, "from");
-      const toIndex = parseBlockLabel(input.to, "to");
-      const summary = typeof input.summary === "string" ? input.summary.trim() : "";
-      const topic = typeof input.topic === "string" ? input.topic.trim() : "";
-      if (!summary)
-        throw new Error("squash requires a non-empty summary");
-      if (!topic)
-        throw new Error("squash requires a non-empty topic");
-      const { client, stateManager, logger } = ctx;
-      const sessionId = toolCtx.sessionID;
-      const state = stateManager.get(sessionId);
-      const outcome = await stateManager.runExclusive(sessionId, async () => {
-        let rawMessages;
-        try {
-          rawMessages = await listSessionMessages(client, sessionId);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`squash could not fetch session messages: ${message}. Nothing changed.`);
-        }
-        if (rawMessages.length === 0) {
-          throw new Error("squash could not fetch any session messages. Nothing changed.");
-        }
-        await reconcileSessionLifecycle(state, sessionId, logger, rawMessages);
-        if (!state.persistenceSynchronized) {
-          throw new Error("squash could not synchronize saved session state. Nothing changed.");
-        }
-        const orderedBlocks = orderCompressBlocks(rawMessages, state.compressSummaries);
-        const active = findActiveManagementTurn(state, rawMessages);
-        const managementTurn = active?.turn.source === "squash" ? active.turn : undefined;
-        if (fromIndex > toIndex) {
-          throw new Error("squash requires from to precede or equal to to. Nothing changed.");
-        }
-        if (fromIndex >= orderedBlocks.length || toIndex >= orderedBlocks.length) {
-          throw new Error("squash block range does not exist in the current block ordering. Nothing changed.");
-        }
-        if (toIndex - fromIndex + 1 < 2) {
-          throw new Error("squash requires a range containing at least two blocks. Nothing changed.");
-        }
-        const selected = orderedBlocks.slice(fromIndex, toIndex + 1);
-        const replacement = buildReplacement(selected, summary, topic);
-        const replacementLabel = selected[0].label;
-        const oldVisibleTokens = estimateTokensBatch(selected.map(formatCompressBlockContent), state.modelContext?.providerId);
-        const newVisibleTokens = estimateTokensBatch([formatCompressBlockContent({ label: replacementLabel, summary: replacement })], state.modelContext?.providerId);
-        const estimatedSavedTokens = Math.max(0, oldVisibleTokens - newVisibleTokens);
-        const orderedSummaries = orderedBlocks.map((block) => block.summary);
-        const candidateSummaries = [
-          ...orderedSummaries.slice(0, fromIndex),
-          replacement,
-          ...orderedSummaries.slice(toIndex + 1)
-        ];
-        const completedAt = new Date().toISOString();
-        const candidateManagementTurns = managementTurn ? state.managementTurns.map((turn) => turn === managementTurn ? {
-          ...turn,
-          completedAt,
-          completedMessageId: toolCtx.messageID
-        } : turn) : [...state.managementTurns];
-        const candidateState = {
-          ...state,
-          compressSummaries: candidateSummaries,
-          managementTurns: candidateManagementTurns,
-          stats: {
-            compressTokenCounter: 0,
-            totalCompressTokens: state.stats.totalCompressTokens + estimatedSavedTokens
-          }
-        };
-        const persisted = await saveSessionState(candidateState, logger);
-        if (!persisted) {
-          throw new Error("squash could not persist compression state. Nothing changed.");
-        }
-        commitDurableSessionState(state, candidateState);
-        return {
-          requestedBy: managementTurn ? managementTurn.triggeredByMessageId ? "automatic" : "user" : undefined,
-          oldFrom: selected[0].label,
-          oldTo: selected[selected.length - 1].label,
-          newLabel: replacementLabel,
-          topic,
-          selectedBlocks: selected.length,
-          blocksBefore: orderedBlocks.length,
-          blocksAfter: candidateSummaries.length,
-          moved: orderedBlocks.slice(toIndex + 1).map((block, index) => ({
-            from: block.label,
-            to: `b${fromIndex + 1 + index}`,
-            topic: block.summary.topic
-          })),
-          oldVisibleTokens,
-          newVisibleTokens
-        };
-      });
-      await sendSquashNotification(client, logger, ctx.config, sessionId, outcome);
-      const opening = outcome.requestedBy === "automatic" ? "Automatic squash finished. The plugin started it because the compressed blocks passed their automatic squash threshold." : outcome.requestedBy === "user" ? "Squash finished, as the user requested with /compress squash." : "Squash finished.";
-      const moved = outcome.moved.length ? ` Later blocks moved up, so only their labels changed:
-${outcome.moved.map((block) => `- [${block.from}] is now [${block.to}]${block.topic ? ` "${block.topic}"` : ""}`).join(`
-`)}
-Labels in earlier messages, including this call's from and to, use the old numbering.` : "";
-      return `${opening} Blocks [${outcome.oldFrom}]-[${outcome.oldTo}] are now one block, [${outcome.newLabel}] "${outcome.topic}". No other block changed; each is still in context word for word, and the recent conversation is untouched.${moved}
-
-${renderPostCompressionNotice()}`;
-    }
-  };
-}
 // lib/plugin.ts
-var NATIVE_AUTO_COMPACTION_NOTICE = "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " + 'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' + "in your OpenCode config.";
+var FOLD_NOTE = "This summary was written at a context fold by the agent doing the work. The fold changed only the " + "conversation, not files or running jobs, and the user's instructions still apply. If work was in " + "progress, continue it from the next step above; if it was finished or waiting for the user, leave it " + "that way.";
 var CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors";
 var TOOL_CLEARING_HEADER = "x-opencode-tool-clearing";
 var isAnthropic = (providerID) => providerID === "anthropic" || providerID.startsWith("anthropic-");
@@ -4219,34 +2786,18 @@ async function setup(context) {
       });
     }));
   }
+  const pending = new Map;
   if (config.tools.compress.permission !== "deny") {
-    const compress = createCompressTool({ client, stateManager, logger, config });
-    const squash = createSquashTool({ client, stateManager, logger, config });
     registrations.push(await context.tool.transform((draft) => {
       draft.add({
         name: "compress",
-        description: compress.description,
+        description: COMPRESS,
         input: z.object({
-          summary: z.string().describe(compress.args.summary.description),
-          topic: z.string().describe(compress.args.topic.description)
+          summary: z.string().describe("The summary described by this tool's instructions")
         }),
         options: { codemode: false, permission: "compress" },
         execute: async (input, toolContext) => ({
-          content: await compress.execute(input, toolContext)
-        })
-      });
-      draft.add({
-        name: "squash",
-        description: squash.description,
-        input: z.object({
-          from: z.string().describe(squash.args.from.description),
-          to: z.string().describe(squash.args.to.description),
-          summary: z.string().describe(squash.args.summary.description),
-          topic: z.string().describe(squash.args.topic.description)
-        }),
-        options: { codemode: false, permission: "compress" },
-        execute: async (input, toolContext) => ({
-          content: await squash.execute(input, toolContext)
+          content: await compress(client, logger, pending, toolContext.sessionID, input.summary)
         })
       });
     }));
@@ -4257,8 +2808,8 @@ async function setup(context) {
   const clearings = new Map;
   const applyCompression = async (event, kind) => {
     const anthropic = isAnthropic(event.model.providerID);
-    const anchored = kind === "context" && anthropic;
-    if (kind === "context") {
+    const anchored = kind !== "generate" && anthropic;
+    if (kind !== "generate") {
       refreshConfig(config, configContext);
       anchors.delete(event.sessionID);
     }
@@ -4316,8 +2867,21 @@ async function setup(context) {
     if (kind === "context" && transformed)
       await logger.saveContext(event.sessionID, transformed);
   };
-  registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("model.request", (event) => {
-    if (event.kind !== "primary" || !isAnthropic(event.model.providerID))
+  registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("compaction", (event) => {
+    const summary = pending.get(event.sessionID)?.summary;
+    if (summary === undefined)
+      return applyCompression(event, "compaction");
+    event.result = {
+      summary: `${summary}
+
+${FOLD_NOTE}`,
+      metadata: { keepID: undefined }
+    };
+    logger.info("Fold applied", { sessionId: event.sessionID });
+  }), await context.session.hook("model.request", (event) => {
+    if (event.kind !== "primary" && event.kind !== "compaction")
+      return;
+    if (!isAnthropic(event.model.providerID))
       return;
     const ids = anchors.get(event.sessionID);
     anchors.delete(event.sessionID);
@@ -4327,9 +2891,9 @@ async function setup(context) {
     if (clearing)
       event.headers[TOOL_CLEARING_HEADER] = clearing;
   }));
-  const automatic = createAutomaticCompressionEventHandler(client, stateManager, logger, config, (sessionID, event) => ownsSession(context, sessionID, event));
+  const foldRequest = createFoldRequestHandler(client, stateManager, logger, config, pending, (sessionID, event) => ownsSession(context, sessionID, event));
   const events = context.event.subscribe()[Symbol.asyncIterator]();
-  const eventLoop = runEvents(events, automatic, client, stateManager, logger, context);
+  const eventLoop = runEvents(events, foldRequest, pending, client, stateManager, logger, context);
   return async () => {
     await events.return?.();
     await Promise.all(registrations.map((registration) => registration.dispose()));
@@ -4349,7 +2913,7 @@ async function resolveModelContext(context, model) {
     cacheReadRatio: price && price.input > 0 ? price.cache.read / price.input : undefined
   };
 }
-async function runEvents(events, automatic, client, stateManager, logger, context) {
+async function runEvents(events, foldRequest, pending, client, stateManager, logger, context) {
   for (;; ) {
     const item = await events.next().catch((error) => {
       logger.error("Context Compress event stream failed", {
@@ -4359,7 +2923,7 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
     if (!item || item.done)
       return;
     try {
-      await automatic(item.value);
+      await foldRequest(item.value);
       const event = isRecord(item.value) ? item.value : {};
       const data = isRecord(event.data) ? event.data : {};
       const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined;
@@ -4378,19 +2942,11 @@ async function runEvents(events, automatic, client, stateManager, logger, contex
         });
         continue;
       }
-      if (event.type === "session.compaction.started" && data.reason === "auto") {
-        if (!await ownsSession(context, sessionID, event))
-          continue;
-        await promptSession(client, {
-          sessionId: sessionID,
-          parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
-          noReply: true,
-          messageId: generateNativeCompactionNoticeId(sessionID, event)
-        });
-        continue;
-      }
+      if (event.type === "session.compaction.failed" || event.type === "session.inbox.cancelled" && data.inboxID === pending.get(sessionID)?.inboxID)
+        pending.delete(sessionID);
       if (event.type !== "session.compaction.ended")
         continue;
+      pending.delete(sessionID);
       if (!await ownsSession(context, sessionID, event))
         continue;
       const messages = await listSessionMessages(client, sessionID);
@@ -4420,5 +2976,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=3CC50253C2A46E2664756E2164756E21
+//# debugId=364B8CE0FAF78AAB64756E2164756E21
 //# sourceMappingURL=index.js.map

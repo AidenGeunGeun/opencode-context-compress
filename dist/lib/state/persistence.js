@@ -61,11 +61,7 @@ function getSessionFilePath(sessionId) {
 function getLegacySessionFilePath(sessionId) {
     return join(LEGACY_STORAGE_DIR, `${sessionId}.json`);
 }
-/**
- * Remap legacy persisted state to the current (compress) format.
- * Transforms: prune → compressed, pruneTokenCounter → compressTokenCounter,
- * totalPruneTokens → totalCompressTokens.
- */
+/** Remap legacy persisted state to the current (compress) format: prune → compressed. */
 function remapLegacyState(legacy) {
     return {
         sessionName: legacy.sessionName,
@@ -75,10 +71,6 @@ function remapLegacyState(legacy) {
         },
         compressSummaries: legacy.compressSummaries ?? [],
         managementTurns: [],
-        stats: {
-            compressTokenCounter: legacy.stats?.pruneTokenCounter ?? 0,
-            totalCompressTokens: legacy.stats?.totalPruneTokens ?? 0,
-        },
         lastUpdated: legacy.lastUpdated,
     };
 }
@@ -186,33 +178,16 @@ export async function saveSessionState(sessionState, logger, sessionName) {
                 : {}),
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
-            stats: sessionState.stats,
             ...(sessionState.pruneOff ? { pruneOff: true } : {}),
-            ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
-                ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
-                : {}),
-            ...(sessionState.autoCompressionTokenThresholdOverride !== undefined
-                ? {
-                    autoCompressionTokenThresholdOverride: sessionState.autoCompressionTokenThresholdOverride,
-                }
-                : {}),
-            ...(sessionState.autoCompressionContextWindowRatioOverride !== undefined
-                ? {
-                    autoCompressionContextWindowRatioOverride: sessionState.autoCompressionContextWindowRatioOverride,
-                }
-                : {}),
-            ...(sessionState.compressionCooldownAfterMessageId
-                ? {
-                    compressionCooldownAfterMessageId: sessionState.compressionCooldownAfterMessageId,
-                }
-                : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
                 : {}),
             lastUpdated,
         };
         const filePath = getSessionFilePath(sessionState.sessionId);
-        const content = JSON.stringify(state, null, 2);
+        // The previous release rejects a state file without `stats`, so writing it keeps a rollback safe.
+        // Remove it together with the legacy block rendering.
+        const content = JSON.stringify({ ...state, stats: {} }, null, 2);
         await writeFileAtomic(filePath, content);
         sessionState.hasPersistedState = true;
         sessionState.persistedLastUpdated = lastUpdated;
@@ -260,7 +235,7 @@ export async function loadSessionState(sessionId, logger, messages) {
         state = remapLegacyState(legacyResult.data);
         migrated = true;
     }
-    if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+    if (!state?.compressed || !Array.isArray(state.compressed.toolIds)) {
         logger.warn("Invalid session state file, preserving in-memory state", {
             sessionId,
             path: migrated ? getLegacySessionFilePath(sessionId) : filePath,
@@ -311,32 +286,7 @@ export async function loadSessionState(sessionId, logger, messages) {
             : {}),
         compressSummaries,
         managementTurns,
-        stats: state.stats,
         ...(state.pruneOff === true ? { pruneOff: true } : {}),
-        ...(typeof state.autoCompressionEnabledOverride === "boolean"
-            ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }
-            : {}),
-        ...(typeof state.autoCompressionTokenThresholdOverride === "number" &&
-            Number.isSafeInteger(state.autoCompressionTokenThresholdOverride) &&
-            state.autoCompressionTokenThresholdOverride > 0
-            ? {
-                autoCompressionTokenThresholdOverride: state.autoCompressionTokenThresholdOverride,
-            }
-            : {}),
-        ...(typeof state.autoCompressionContextWindowRatioOverride === "number" &&
-            Number.isFinite(state.autoCompressionContextWindowRatioOverride) &&
-            state.autoCompressionContextWindowRatioOverride > 0 &&
-            state.autoCompressionContextWindowRatioOverride < 1
-            ? {
-                autoCompressionContextWindowRatioOverride: state.autoCompressionContextWindowRatioOverride,
-            }
-            : {}),
-        ...(typeof state.compressionCooldownAfterMessageId === "string" &&
-            state.compressionCooldownAfterMessageId.length > 0
-            ? {
-                compressionCooldownAfterMessageId: state.compressionCooldownAfterMessageId,
-            }
-            : {}),
         ...(typeof state.lastCompaction === "number" &&
             Number.isFinite(state.lastCompaction) &&
             state.lastCompaction > 0
@@ -362,42 +312,5 @@ export async function loadSessionState(sessionId, logger, messages) {
         status: "loaded",
         state: result,
     };
-}
-export async function loadAllSessionStats(logger) {
-    const result = {
-        totalTokens: 0,
-        totalTools: 0,
-        totalMessages: 0,
-        sessionCount: 0,
-    };
-    try {
-        if (!existsSync(STORAGE_DIR)) {
-            return result;
-        }
-        const files = await fs.readdir(STORAGE_DIR);
-        const jsonFiles = files.filter((f) => f.endsWith(".json"));
-        for (const file of jsonFiles) {
-            try {
-                const filePath = join(STORAGE_DIR, file);
-                const content = await fs.readFile(filePath, "utf-8");
-                const state = JSON.parse(content);
-                if (state?.stats?.totalCompressTokens && state?.compressed?.toolIds) {
-                    result.totalTokens += state.stats.totalCompressTokens;
-                    result.totalTools += state.compressed.toolIds.length;
-                    result.totalMessages += state.compressed.messageIds?.length || 0;
-                    result.sessionCount++;
-                }
-            }
-            catch {
-                // Skip invalid files
-            }
-        }
-    }
-    catch (error) {
-        logger.warn("Failed to load all-time stats", {
-            error: error instanceof Error ? error.message : String(error),
-        });
-    }
-    return result;
 }
 //# sourceMappingURL=persistence.js.map

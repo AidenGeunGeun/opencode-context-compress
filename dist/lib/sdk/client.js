@@ -34,7 +34,6 @@ export async function promptSession(client, input) {
         sessionID: input.sessionId,
         text,
         id: input.messageId,
-        ...(input.metadata ? { metadata: input.metadata } : {}),
         delivery: "steer",
         resume: true,
     });

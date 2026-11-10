@@ -17,8 +17,7 @@
  *   SYSTEM = firstAssistant.input + cache.read - tokenizer(firstUserMessage)
  *            The first response's input contains system + first user message.
  *
- *   TOOLS  = tokenizer(toolInputs + toolOutputs) - compressedTokens
- *            We must tokenize tools anyway for compression decisions.
+ *   TOOLS  = tokenizer(toolInputs + toolOutputs), skipping pruned outputs
  *
  *   USER   = tokenizer(all user messages)
  *            User messages are typically small, so estimation is acceptable.
