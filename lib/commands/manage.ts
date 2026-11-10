@@ -25,10 +25,17 @@ export async function handleManageCommand(ctx: {
         .trim()
         .replace(/^manage\b/i, "")
         .trim()
+    const session = await ctx.client.session.get({ sessionID: ctx.sessionId })
     await promptSession(ctx.client, {
         sessionId: ctx.sessionId,
         parts: [
-            { type: "text", text: renderFoldRequest("The user ran `/compress manage`.") },
+            {
+                type: "text",
+                text: renderFoldRequest(
+                    "The user ran `/compress manage`.",
+                    session.parentID !== undefined,
+                ),
+            },
             ...(instruction
                 ? [{ type: "text", text: `<user-message>\n${instruction}\n</user-message>` }]
                 : []),

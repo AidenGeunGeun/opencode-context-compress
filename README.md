@@ -28,7 +28,8 @@ agent's proposals, the work state with its evidence, the next step, and the refe
 continue. It leaves out what the project's instructions and documentation already say. Nothing else
 survives a fold, so the documentation is the long-lived memory and the summary only a note about the
 work in progress. After a fold, active work continues; finished work or work waiting on the user
-stays that way.
+stays that way. A subagent skips the documentation pass, which belongs to the session that briefed
+it, and puts its findings in the summary for that parent.
 
 **Keep native auto-compaction off.** Set `compaction.auto` to `false`: it would replace the
 conversation with OpenCode's own summary at a token count, without the documentation pass. A fold

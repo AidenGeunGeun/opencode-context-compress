@@ -43,7 +43,9 @@ primary request so it reads the prompt cache.
 
 The fold request (`lib/fold-request.ts`) is sent when a step ends at the threshold and again at each
 further 100,000 tokens. Its level lives in memory only, so a reload sends one extra request to a
-session still above the threshold.
+session still above the threshold. A session with a parent gets `fold-documentation-subagent.md` as
+its documentation step: the parent owns the documentation, so a subagent carries its findings in the
+summary instead of editing files.
 
 Sessions folded by releases before 2026-11-10 hold compressed blocks and management turns in their
 state. `lib/messages/compress-transform.ts`, `blocks.ts`, and `legacy-residue.ts` keep rendering

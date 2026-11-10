@@ -10,7 +10,7 @@ Do these in order:
 
 1. Bring the work in progress to a clean stopping point. Finish and verify the current step, leave no edit or command half-done, and start no new large work. A fold in the middle of a step loses the reasoning behind it.
 
-2. Bring the project's documentation up to date. Load the `librarian` and `librarian-audit` skills and follow them; skip them only if they are unavailable. Documentation is the long-lived memory: every later agent reads it exactly as written. The summary is a short-lived note about the work in progress, rewritten at every fold. Settled decisions, verified findings, and open questions that exist only in this conversation are lost or blurred by the fold unless the documentation holds them first. Skip this step when the documentation is already current or the user asked for no edits. A read-only agent puts its candidate findings in the summary for its parent instead; missing write access does not block the fold.
+{{documentation}}
 
 3. Call `compress` once with the summary, before this turn ends. Without the call the context keeps growing: every step costs more, this request repeats, and the conversation eventually hits the model's limit.
 

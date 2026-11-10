@@ -51,6 +51,7 @@ export function fakeSession(fake: SessionFake = {}): Session {
             }
         },
         context: async (input) => asContextMessages((await fake.context?.(input)) ?? []),
+        get: async () => sessionInfo(),
         prompt: async (input) => {
             await fake.prompt?.(input)
             return {

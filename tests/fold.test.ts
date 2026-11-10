@@ -58,7 +58,11 @@ async function start() {
                     prompt: (input) => prompts.push(input),
                     compact: (input) => compactions.push(input),
                 }),
-                get: async () => sessionInfo({ location: { directory: root } }),
+                get: async (input) =>
+                    sessionInfo({
+                        location: { directory: root },
+                        ...(input.sessionID.startsWith("child") ? { parentID: "parent" } : {}),
+                    }),
                 hook: async (name, callback) => {
                     if (name === "compaction") compactionHook = callback
                     return registration
@@ -184,5 +188,25 @@ describe("fold request", () => {
         await plugin.send({ type: "session.compaction.ended", data: { sessionID: "s4" } })
         await stepEnded("later-step")
         assert.equal(plugin.prompts.length, 1)
+    })
+
+    it("asks a subagent to hand its findings to the parent instead of editing documentation", async () => {
+        const plugin = await start()
+        const requestFor = async (sessionID: string) => {
+            await plugin.send({
+                type: "session.step.ended",
+                data: {
+                    sessionID,
+                    assistantMessageID: "step",
+                    tokens: { input: 5_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                },
+            })
+            return plugin.prompts.at(-1)?.text ?? ""
+        }
+
+        assert.match(await requestFor("s5"), /Load the `librarian`/)
+        const subagent = await requestFor("child-s5")
+        assert.doesNotMatch(subagent, /librarian/)
+        assert.match(subagent, /For the parent/)
     })
 })

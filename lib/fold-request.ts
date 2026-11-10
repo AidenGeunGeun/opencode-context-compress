@@ -58,6 +58,7 @@ export function createFoldRequestHandler(
 
         if (level > (levels.get(sessionID) ?? 0)) {
             if (!(await acceptsSession(sessionID, event))) return
+            const session = await client.session.get({ sessionID })
             const number = (value: number) => value.toLocaleString("en-US")
             const basis =
                 ratioThreshold !== undefined && ratioThreshold <= tokenThreshold
@@ -70,6 +71,7 @@ export function createFoldRequestHandler(
                         type: "text",
                         text: renderFoldRequest(
                             `Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`,
+                            session.parentID !== undefined,
                         ),
                     },
                 ],

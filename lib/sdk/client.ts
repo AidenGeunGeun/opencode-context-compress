@@ -14,7 +14,7 @@ export interface PluginClient {
     readonly selections: Map<string, V2SessionSelection>
     readonly session: Pick<
         Plugin.Context["session"],
-        "compact" | "context" | "prompt" | "synthetic"
+        "compact" | "context" | "get" | "prompt" | "synthetic"
     >
 }
 
