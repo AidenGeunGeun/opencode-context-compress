@@ -10,7 +10,7 @@ export interface SessionPromptInput {
 export interface PluginClient {
     readonly kind: "promise-plugin";
     readonly selections: Map<string, V2SessionSelection>;
-    readonly session: Pick<Plugin.Context["session"], "compact" | "context" | "prompt" | "synthetic">;
+    readonly session: Pick<Plugin.Context["session"], "compact" | "context" | "get" | "prompt" | "synthetic">;
 }
 export declare function pluginClient(session: PluginClient["session"]): PluginClient;
 export declare function setSessionSelection(client: PluginClient, sessionID: string, selection: V2SessionSelection): void;

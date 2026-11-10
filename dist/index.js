@@ -1458,6 +1458,14 @@ async function handleHelpCommand(ctx) {
   await sendIgnoredMessage(client, sessionId, message, logger);
 }
 
+// lib/prompts/_codegen/fold-documentation.generated.ts
+var FOLD_DOCUMENTATION = `2. Bring the project's documentation up to date. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are unavailable. Documentation is the long-lived memory: every later agent reads it exactly as written. The summary is a short-lived note about the work in progress, rewritten at every fold. Settled decisions, verified findings, and open questions that exist only in this conversation are lost or blurred by the fold unless the documentation holds them first. Skip this step when the documentation is already current or the user asked for no edits. An agent without write access puts its candidate findings in the summary instead; missing write access does not block the fold.
+`;
+
+// lib/prompts/_codegen/fold-documentation-subagent.generated.ts
+var FOLD_DOCUMENTATION_SUBAGENT = `2. Leave the project's documentation as it is. You are a subagent, and the session that briefed you owns the documentation: it checks findings before recording them, and an edit made here would skip that check. The one exception is documentation that your brief assigned to you as the task itself. Put what the fold would otherwise lose in the summary instead, under a \`For the parent\` heading: settled decisions, verified findings with their evidence, and open questions, so your final report carries them. Your brief disappears with the fold too, so the summary's Request and Decisions sections must keep its task, its boundaries, and what completion looks like.
+`;
+
 // lib/prompts/_codegen/fold-request.generated.ts
 var FOLD_REQUEST = `<system-reminder>
 CONTEXT FOLD REQUESTED
@@ -1471,7 +1479,7 @@ Do these in order:
 
 1. Bring the work in progress to a clean stopping point. Finish and verify the current step, leave no edit or command half-done, and start no new large work. A fold in the middle of a step loses the reasoning behind it.
 
-2. Bring the project's documentation up to date. Load the \`librarian\` and \`librarian-audit\` skills and follow them; skip them only if they are unavailable. Documentation is the long-lived memory: every later agent reads it exactly as written. The summary is a short-lived note about the work in progress, rewritten at every fold. Settled decisions, verified findings, and open questions that exist only in this conversation are lost or blurred by the fold unless the documentation holds them first. Skip this step when the documentation is already current or the user asked for no edits. A read-only agent puts its candidate findings in the summary for its parent instead; missing write access does not block the fold.
+{{documentation}}
 
 3. Call \`compress\` once with the summary, before this turn ends. Without the call the context keeps growing: every step costs more, this request repeats, and the conversation eventually hits the model's limit.
 
@@ -1506,8 +1514,9 @@ Call it once. After success, continue active, authorized work from the summary w
 `;
 
 // lib/prompts/index.ts
-function renderFoldRequest(reason) {
-  return FOLD_REQUEST.trim().replace("{{reason}}", () => reason);
+function renderFoldRequest(reason, subagent) {
+  const documentation = subagent ? FOLD_DOCUMENTATION_SUBAGENT : FOLD_DOCUMENTATION;
+  return FOLD_REQUEST.trim().replace("{{reason}}", () => reason).replace("{{documentation}}", () => documentation.trim());
 }
 
 // lib/commands/manage.ts
@@ -1517,10 +1526,14 @@ async function handleManageCommand(ctx) {
     return;
   }
   const instruction = ctx.arguments.trim().replace(/^manage\b/i, "").trim();
+  const session = await ctx.client.session.get({ sessionID: ctx.sessionId });
   await promptSession(ctx.client, {
     sessionId: ctx.sessionId,
     parts: [
-      { type: "text", text: renderFoldRequest("The user ran `/compress manage`.") },
+      {
+        type: "text",
+        text: renderFoldRequest("The user ran `/compress manage`.", session.parentID !== undefined)
+      },
       ...instruction ? [{ type: "text", text: `<user-message>
 ${instruction}
 </user-message>` }] : []
@@ -1634,6 +1647,7 @@ function createFoldRequestHandler(client, stateManager, logger, config, pending,
     if (level > (levels.get(sessionID) ?? 0)) {
       if (!await acceptsSession(sessionID, event))
         return;
+      const session = await client.session.get({ sessionID });
       const number = (value) => value.toLocaleString("en-US");
       const basis = ratioThreshold !== undefined && ratioThreshold <= tokenThreshold ? `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window` : "the system-wide absolute token limit";
       await promptSession(client, {
@@ -1641,7 +1655,7 @@ function createFoldRequestHandler(client, stateManager, logger, config, pending,
         parts: [
           {
             type: "text",
-            text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`)
+            text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`, session.parentID !== undefined)
           }
         ],
         messageId: generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created)
@@ -2976,5 +2990,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=364B8CE0FAF78AAB64756E2164756E21
+//# debugId=9A11E0BADC14B66364756E2164756E21
 //# sourceMappingURL=index.js.map
