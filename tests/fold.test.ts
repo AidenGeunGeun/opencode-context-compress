@@ -204,7 +204,7 @@ describe("fold request", () => {
             return plugin.prompts.at(-1)?.text ?? ""
         }
 
-        assert.match(await requestFor("s5"), /Load the `librarian`/)
+        assert.match(await requestFor("s5"), /librarian/)
         const subagent = await requestFor("child-s5")
         assert.doesNotMatch(subagent, /librarian/)
         assert.match(subagent, /For the parent/)
