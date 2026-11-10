@@ -135,18 +135,7 @@ export async function inheritForkCompression(
                 ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) }
                 : {}),
         })),
-        stats: { ...parentState.state.stats },
         pruneOff: parentState.state.pruneOff,
-        autoCompressionEnabledOverride: parentState.state.autoCompressionEnabledOverride,
-        autoCompressionTokenThresholdOverride:
-            parentState.state.autoCompressionTokenThresholdOverride,
-        autoCompressionContextWindowRatioOverride:
-            parentState.state.autoCompressionContextWindowRatioOverride,
-        compressionCooldownAfterMessageId:
-            parentState.state.compressionCooldownAfterMessageId &&
-            mapped.has(parentState.state.compressionCooldownAfterMessageId)
-                ? messageID(parentState.state.compressionCooldownAfterMessageId)
-                : undefined,
         lastCompaction: parentState.state.lastCompaction ?? 0,
     }
     if (!(await saveSessionState(candidate, logger)))

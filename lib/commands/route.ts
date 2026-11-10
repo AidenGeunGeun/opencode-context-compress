@@ -2,13 +2,10 @@ import type { PluginConfig } from "../config.js"
 import type { Logger } from "../logger.js"
 import { listSessionMessages, type PluginClient } from "../sdk/client.js"
 import { reconcileSessionLifecycle, type SessionStateManager } from "../state/index.js"
-import { handleAutoCommand } from "./auto.js"
 import { handleContextCommand } from "./context.js"
 import { handleHelpCommand } from "./help.js"
 import { handleManageCommand } from "./manage.js"
 import { handlePruneCommand } from "./prune.js"
-import { handleSquashCommand } from "./squash.js"
-import { handleStatsCommand } from "./stats.js"
 
 export async function handleCompressCommand(
     input: { command: string; sessionID: string; arguments: string },
@@ -35,45 +32,13 @@ export async function handleCompressCommand(
         await handleContextCommand({ client, state, logger, sessionId: input.sessionID, messages })
         return true
     }
-    if (subcommand === "stats") {
-        await handleStatsCommand({ client, state, logger, sessionId: input.sessionID })
-        return true
-    }
     if (subcommand === "manage") {
         await handleManageCommand({
             client,
-            stateManager,
-            state,
             config,
             logger,
             sessionId: input.sessionID,
-            messages,
             arguments: input.arguments,
-        })
-        return true
-    }
-    if (subcommand === "squash") {
-        await handleSquashCommand({
-            client,
-            stateManager,
-            state,
-            config,
-            logger,
-            sessionId: input.sessionID,
-            messages,
-            arguments: input.arguments,
-        })
-        return true
-    }
-    if (subcommand === "auto") {
-        await handleAutoCommand({
-            client,
-            stateManager,
-            state,
-            config,
-            logger,
-            sessionId: input.sessionID,
-            arguments: args.slice(1),
         })
         return true
     }

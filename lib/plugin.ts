@@ -1,33 +1,28 @@
 import type { Plugin } from "@opencode/plugin"
 import type { SessionContext } from "@opencode/plugin/promise/session"
 import { z } from "zod"
-import { createAutomaticCompressionEventHandler } from "./auto-compression.js"
 import { getConfig, refreshConfig } from "./config.js"
-import { generateNativeCompactionNoticeId } from "./commands/manage.js"
 import { handleCompressCommand } from "./commands/route.js"
+import { createFoldRequestHandler } from "./fold-request.js"
 import { Logger } from "./logger.js"
 import { PROTECTED_TOOLS, pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js"
 import type { ModelMessage } from "./messages/v2-transform.js"
 import { transformV2Messages } from "./messages/v2-transform.js"
 import { isRecord } from "./shared-utils.js"
-import {
-    listSessionMessages,
-    pluginClient,
-    promptSession,
-    setSessionSelection,
-} from "./sdk/client.js"
+import { listSessionMessages, pluginClient, setSessionSelection } from "./sdk/client.js"
 import { checkSession, reconcileSessionLifecycle, SessionStateManager } from "./state/index.js"
 import { inheritForkCompression } from "./state/fork.js"
-import { createCompressTool, createSquashTool } from "./tools/index.js"
+import { compress, type PendingFold } from "./tools/compress.js"
+import { COMPRESS } from "./prompts/index.js"
 
 type Registration = Awaited<ReturnType<Plugin.Context["session"]["hook"]>>
 
-// The plugin API cannot veto native auto-compaction, so flag the misconfiguration when it runs.
-// Manual /compact is a deliberate reset and gets no notice.
-const NATIVE_AUTO_COMPACTION_NOTICE =
-    "OpenCode native auto-compaction started in this session. Context Compress replaces it, and " +
-    'this compaction will clear every compression block. Set `"compaction": { "auto": false }` ' +
-    "in your OpenCode config."
+// After a fold the summary is the only message left, so it has to say how to resume.
+const FOLD_NOTE =
+    "This summary was written at a context fold by the agent doing the work. The fold changed only the " +
+    "conversation, not files or running jobs, and the user's instructions still apply. If work was in " +
+    "progress, continue it from the next step above; if it was finished or waiting for the user, leave it " +
+    "that way."
 
 // Tool call IDs a request should place a cache marker before; the anthropic-auth plugin applies them
 // to the wire body before it signs the request, because hook order between plugins is not fixed.
@@ -35,7 +30,8 @@ const CACHE_ANCHORS_HEADER = "x-opencode-cache-anchors"
 const TOOL_CLEARING_HEADER = "x-opencode-tool-clearing"
 // Claude accounts served by the anthropic-auth plugin, which reads the two headers above: `anthropic` and any extra
 // account it adds as `anthropic-<n>`.
-const isAnthropic = (providerID: string) => providerID === "anthropic" || providerID.startsWith("anthropic-")
+const isAnthropic = (providerID: string) =>
+    providerID === "anthropic" || providerID.startsWith("anthropic-")
 
 export async function setup(context: Plugin.Context): Promise<() => Promise<void> | void> {
     const client = pluginClient(context.session)
@@ -69,42 +65,36 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
         )
     }
 
+    // Summaries saved by `compress`, each kept until its compaction ends, fails, or is cancelled. The event
+    // stream is ordered, so the entry also marks the step that called `compress` for the fold request to skip.
+    const pending = new Map<string, PendingFold>()
     if (config.tools.compress.permission !== "deny") {
-        const compress = createCompressTool({ client, stateManager, logger, config })
-        const squash = createSquashTool({ client, stateManager, logger, config })
         registrations.push(
             await context.tool.transform((draft) => {
                 draft.add({
                     name: "compress",
-                    description: compress.description,
+                    description: COMPRESS,
                     input: z.object({
-                        summary: z.string().describe(compress.args.summary.description),
-                        topic: z.string().describe(compress.args.topic.description),
+                        summary: z
+                            .string()
+                            .describe("The summary described by this tool's instructions"),
                     }),
                     options: { codemode: false, permission: "compress" },
                     execute: async (input, toolContext) => ({
-                        content: await compress.execute(input, toolContext),
-                    }),
-                })
-                draft.add({
-                    name: "squash",
-                    description: squash.description,
-                    input: z.object({
-                        from: z.string().describe(squash.args.from.description),
-                        to: z.string().describe(squash.args.to.description),
-                        summary: z.string().describe(squash.args.summary.description),
-                        topic: z.string().describe(squash.args.topic.description),
-                    }),
-                    options: { codemode: false, permission: "compress" },
-                    execute: async (input, toolContext) => ({
-                        content: await squash.execute(input, toolContext),
+                        content: await compress(
+                            client,
+                            logger,
+                            pending,
+                            toolContext.sessionID,
+                            input.summary,
+                        ),
                     }),
                 })
             }),
         )
     }
 
-    // Cache anchors computed by a session's latest context hook, read by its next primary model request.
+    // Cache anchors computed by a session's latest context or compaction hook, read by its next model request.
     const anchors = new Map<string, string[]>()
     // The frontier before each session's latest prune. It stays anchored until the next prune, so a retry of
     // a prune request that never reached the provider still resumes the cache there.
@@ -115,12 +105,17 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
     // Server-side clearing for each session's Anthropic requests: the calls before `from` are cleared. It
     // stays set until the next context hook, so a retried request clears the same calls.
     const clearings = new Map<string, string>()
-    const applyCompression = async (event: SessionContext, kind: "context" | "generate") => {
+    // A compaction request summarizes the same conversation, so it gets the same message list to hit the
+    // cache, but no prune: the conversation is about to be replaced.
+    const applyCompression = async (
+        event: SessionContext,
+        kind: "context" | "compaction" | "generate",
+    ) => {
         // Only Anthropic requests carry the anchor. Other providers have no markers; measured OpenAI reads
         // after an edit fall back to an earlier point, often the end of the system prompt.
         const anthropic = isAnthropic(event.model.providerID)
-        const anchored = kind === "context" && anthropic
-        if (kind === "context") {
+        const anchored = kind !== "generate" && anthropic
+        if (kind !== "generate") {
             // Settings apply without a restart: every request re-reads a changed config file first.
             refreshConfig(config, configContext)
             anchors.delete(event.sessionID)
@@ -197,8 +192,21 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
     registrations.push(
         await context.session.hook("context", (event) => applyCompression(event, "context")),
         await context.session.hook("generate", (event) => applyCompression(event, "generate")),
+        // A pending summary from `compress` replaces core's own summary request. Without one (a manual
+        // `/compact`), core summarizes the conversation itself.
+        await context.session.hook("compaction", (event) => {
+            const summary = pending.get(event.sessionID)?.summary
+            if (summary === undefined) return applyCompression(event, "compaction")
+            // Without `keepID`, core also keeps the newest messages verbatim, which repeat the summary.
+            event.result = {
+                summary: `${summary}\n\n${FOLD_NOTE}`,
+                metadata: { keepID: undefined },
+            }
+            logger.info("Fold applied", { sessionId: event.sessionID })
+        }),
         await context.session.hook("model.request", (event) => {
-            if (event.kind !== "primary" || !isAnthropic(event.model.providerID)) return
+            if (event.kind !== "primary" && event.kind !== "compaction") return
+            if (!isAnthropic(event.model.providerID)) return
             const ids = anchors.get(event.sessionID)
             anchors.delete(event.sessionID)
             if (ids) event.headers[CACHE_ANCHORS_HEADER] = ids.join(",")
@@ -207,15 +215,16 @@ export async function setup(context: Plugin.Context): Promise<() => Promise<void
         }),
     )
 
-    const automatic = createAutomaticCompressionEventHandler(
+    const foldRequest = createFoldRequestHandler(
         client,
         stateManager,
         logger,
         config,
+        pending,
         (sessionID, event) => ownsSession(context, sessionID, event),
     )
     const events = context.event.subscribe()[Symbol.asyncIterator]()
-    const eventLoop = runEvents(events, automatic, client, stateManager, logger, context)
+    const eventLoop = runEvents(events, foldRequest, pending, client, stateManager, logger, context)
 
     return async () => {
         await events.return?.()
@@ -247,7 +256,8 @@ async function resolveModelContext(
 
 async function runEvents(
     events: AsyncIterator<unknown>,
-    automatic: (event: unknown) => Promise<void>,
+    foldRequest: (event: unknown) => Promise<void>,
+    pending: Map<string, PendingFold>,
     client: ReturnType<typeof pluginClient>,
     stateManager: SessionStateManager,
     logger: Logger,
@@ -261,7 +271,7 @@ async function runEvents(
         })
         if (!item || item.done) return
         try {
-            await automatic(item.value)
+            await foldRequest(item.value)
             const event = isRecord(item.value) ? item.value : {}
             const data = isRecord(event.data) ? event.data : {}
             const sessionID = typeof data.sessionID === "string" ? data.sessionID : undefined
@@ -277,17 +287,15 @@ async function runEvents(
                 })
                 continue
             }
-            if (event.type === "session.compaction.started" && data.reason === "auto") {
-                if (!(await ownsSession(context, sessionID, event))) continue
-                await promptSession(client, {
-                    sessionId: sessionID,
-                    parts: [{ type: "text", text: NATIVE_AUTO_COMPACTION_NOTICE }],
-                    noReply: true,
-                    messageId: generateNativeCompactionNoticeId(sessionID, event),
-                })
-                continue
-            }
+            // A summary must never outlive the compaction it was saved for.
+            if (
+                event.type === "session.compaction.failed" ||
+                (event.type === "session.inbox.cancelled" &&
+                    data.inboxID === pending.get(sessionID)?.inboxID)
+            )
+                pending.delete(sessionID)
             if (event.type !== "session.compaction.ended") continue
+            pending.delete(sessionID)
             if (!(await ownsSession(context, sessionID, event))) continue
             const messages = await listSessionMessages(client, sessionID)
             await stateManager.runExclusive(sessionID, () =>

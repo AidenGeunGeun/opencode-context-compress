@@ -76,7 +76,6 @@ const startSession = async (sessionID: string, managementTurns: ManagementTurn[]
             },
         ],
         managementTurns,
-        compressionCooldownAfterMessageId: "compress-step",
     }
     await saveSessionState({ ...createSessionState(), sessionId: sessionID, ...durable }, logger)
     let transcript: WithParts[] = []

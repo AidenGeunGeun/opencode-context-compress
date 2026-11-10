@@ -10,7 +10,6 @@ export interface ConfigContext {
 
 export interface CompressTool {
     permission: "ask" | "allow" | "deny"
-    showCompression: boolean
 }
 
 export interface Tools {
@@ -34,10 +33,6 @@ export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
 }
 
 // One rule per numeric field, shared by validation warnings and layer merging.
-function isProtectedTurns(value: unknown): value is number {
-    return typeof value === "number" && Number.isInteger(value) && value >= 0
-}
-
 function isContextWindowRatio(value: unknown): value is number {
     return typeof value === "number" && value > 0 && value <= 1
 }
@@ -46,20 +41,6 @@ function isTokenThreshold(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && value > 0
 }
 
-export function resolveProtectedTurnsSetting(
-    layer: Record<string, unknown>,
-    fallback = 3,
-    hasExplicitTopLevel = false,
-): number {
-    if (isProtectedTurns(layer.protectedTurns)) return layer.protectedTurns
-    if (hasExplicitTopLevel) return fallback
-    const autoCompression = isRecord(layer.autoCompression) ? layer.autoCompression : {}
-    return isProtectedTurns(autoCompression.protectedTurns)
-        ? autoCompression.protectedTurns
-        : fallback
-}
-
-const NOTIFICATIONS = ["off", "minimal", "detailed"] as const
 const PERMISSIONS = ["ask", "allow", "deny"] as const
 
 function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {
@@ -71,8 +52,6 @@ export interface PluginConfig {
     debug: boolean
     /** Daily activity log, kept for 30 days. Follows `debug` when left unset. */
     dailyLog?: boolean
-    notification: "off" | "minimal" | "detailed"
-    protectedTurns: number
     commands: Commands
     autoCompression: AutoCompression
     tools: Tools
@@ -85,21 +64,15 @@ export const VALID_CONFIG_KEYS = new Set([
     "enabled",
     "debug",
     "dailyLog",
-    "notification",
-    // Retired with toasts; still accepted so older configs load without warnings.
-    "notificationType",
-    "protectedTurns",
     "autoCompression",
     "autoCompression.enabled",
     "autoCompression.contextWindowRatio",
     "autoCompression.tokenThreshold",
-    "autoCompression.protectedTurns",
     "commands",
     "commands.enabled",
     "tools",
     "tools.compress",
     "tools.compress.permission",
-    "tools.compress.showCompression",
 ])
 
 // Extract all key paths from a config object for validation
@@ -146,22 +119,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
     if (config.dailyLog !== undefined && typeof config.dailyLog !== "boolean") {
         errors.push({ key: "dailyLog", expected: "boolean", actual: typeName(config.dailyLog) })
     }
-    if (config.protectedTurns !== undefined && !isProtectedTurns(config.protectedTurns)) {
-        errors.push({
-            key: "protectedTurns",
-            expected: "non-negative integer",
-            actual: JSON.stringify(config.protectedTurns),
-        })
-    }
-    if (config.notification !== undefined) {
-        if (!isOneOf(NOTIFICATIONS, config.notification)) {
-            errors.push({
-                key: "notification",
-                expected: '"off" | "minimal" | "detailed"',
-                actual: JSON.stringify(config.notification),
-            })
-        }
-    }
 
     const autoCompression = config.autoCompression
     if (autoCompression !== undefined) {
@@ -202,16 +159,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
                     actual: JSON.stringify(autoCompression.tokenThreshold),
                 })
             }
-            if (
-                autoCompression.protectedTurns !== undefined &&
-                !isProtectedTurns(autoCompression.protectedTurns)
-            ) {
-                errors.push({
-                    key: "autoCompression.protectedTurns",
-                    expected: "non-negative integer",
-                    actual: JSON.stringify(autoCompression.protectedTurns),
-                })
-            }
         }
     }
 
@@ -247,16 +194,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
                     actual: JSON.stringify(compress.permission),
                 })
             }
-        }
-        if (
-            compress.showCompression !== undefined &&
-            typeof compress.showCompression !== "boolean"
-        ) {
-            errors.push({
-                key: "tools.compress.showCompression",
-                expected: "boolean",
-                actual: typeName(compress.showCompression),
-            })
         }
     }
 
@@ -300,8 +237,6 @@ function showConfigValidationWarnings(
 const defaultConfig: PluginConfig = {
     enabled: true,
     debug: false,
-    notification: "detailed",
-    protectedTurns: 3,
     commands: {
         enabled: true,
     },
@@ -309,7 +244,6 @@ const defaultConfig: PluginConfig = {
     tools: {
         compress: {
             permission: "allow",
-            showCompression: false,
         },
     },
 }
@@ -428,10 +362,6 @@ function mergeTools(base: PluginConfig["tools"], override: unknown): PluginConfi
             permission: isOneOf(PERMISSIONS, compress.permission)
                 ? compress.permission
                 : base.compress.permission,
-            showCompression:
-                typeof compress.showCompression === "boolean"
-                    ? compress.showCompression
-                    : base.compress.showCompression,
         },
     }
 }
@@ -464,23 +394,11 @@ function mergeAutoCompression(
     }
 }
 
-function mergeConfigLayer(
-    config: PluginConfig,
-    data: Record<string, unknown>,
-    hasExplicitProtectedTurns: boolean,
-): PluginConfig {
+function mergeConfigLayer(config: PluginConfig, data: Record<string, unknown>): PluginConfig {
     return {
         enabled: typeof data.enabled === "boolean" ? data.enabled : config.enabled,
         debug: typeof data.debug === "boolean" ? data.debug : config.debug,
         dailyLog: typeof data.dailyLog === "boolean" ? data.dailyLog : config.dailyLog,
-        notification: isOneOf(NOTIFICATIONS, data.notification)
-            ? data.notification
-            : config.notification,
-        protectedTurns: resolveProtectedTurnsSetting(
-            data,
-            config.protectedTurns,
-            hasExplicitProtectedTurns,
-        ),
         commands: mergeCommands(config.commands, data.commands),
         autoCompression: mergeAutoCompression(config.autoCompression, data.autoCompression),
         tools: mergeTools(config.tools, data.tools),
@@ -520,7 +438,6 @@ export function refreshConfig(config: PluginConfig, ctx: ConfigContext): void {
 
 export function getConfig(ctx: ConfigContext): PluginConfig {
     let config = deepCloneConfig(defaultConfig)
-    let hasExplicitProtectedTurns = false
     const configPaths = getConfigPaths(ctx)
     const signature = configSignature(configPaths)
 
@@ -534,8 +451,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false)
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
-            hasExplicitProtectedTurns = isProtectedTurns(result.data.protectedTurns)
+            config = mergeConfigLayer(config, result.data)
         }
     } else {
         // No config exists, create default
@@ -552,9 +468,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true)
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
-            hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns)
+            config = mergeConfigLayer(config, result.data)
         }
     }
 
@@ -568,9 +482,7 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
         } else if (result.data) {
             // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true)
-            config = mergeConfigLayer(config, result.data, hasExplicitProtectedTurns)
-            hasExplicitProtectedTurns =
-                hasExplicitProtectedTurns || isProtectedTurns(result.data.protectedTurns)
+            config = mergeConfigLayer(config, result.data)
         }
     }
 

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { countTokens, estimateTokensBatch, isAnthropicProvider } from "../lib/token-utils.ts"
+import { countTokens, isAnthropicProvider } from "../lib/token-utils.ts"
 
 describe("isAnthropicProvider", () => {
     it("returns true for anthropic provider ID", () => {
@@ -55,25 +55,5 @@ describe("countTokens", () => {
         const defaultCount = countTokens(text)
         // Without providerId, tiktoken is the default — should match
         assert.equal(openaiCount, defaultCount)
-    })
-})
-
-describe("estimateTokensBatch", () => {
-    it("returns 0 for empty array", () => {
-        assert.equal(estimateTokensBatch([]), 0)
-    })
-
-    it("returns a positive value for non-empty batch", () => {
-        assert.ok(estimateTokensBatch(["hello", "world"]) > 0)
-    })
-
-    it("passes provider through to countTokens", () => {
-        const texts = ["function foo() { return 42; }", "const bar = 'baz';"]
-        const anthropicCount = estimateTokensBatch(texts, "anthropic")
-        const defaultCount = estimateTokensBatch(texts)
-        assert.ok(anthropicCount > 0)
-        assert.ok(defaultCount > 0)
-        // Anthropic and tiktoken should produce different counts for code
-        assert.notEqual(anthropicCount, defaultCount)
     })
 })

@@ -3,7 +3,6 @@ import assert from "node:assert/strict"
 
 import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
 import type { Part, WithParts } from "../lib/state/types.ts"
-import { getCompletedToolOutputText } from "../lib/tools/utils.ts"
 
 const userMessage = (id: string, parts: Part[]): WithParts => ({
     info: { id, sessionID: "session", role: "user", time: { created: 0 } },
@@ -35,62 +34,5 @@ describe("isIgnoredUserMessage", () => {
         ])
 
         assert.equal(isIgnoredUserMessage(msg), false)
-    })
-})
-
-describe("getCompletedToolOutputText", () => {
-    it("returns a completed string output unchanged", () => {
-        const part = { tool: "read" }
-
-        assert.equal(getCompletedToolOutputText(part, "file contents"), "file contents")
-    })
-
-    it("drops falsy non-image output when requireTruthy is set", () => {
-        const part = { tool: "read" }
-
-        assert.equal(getCompletedToolOutputText(part, 0, { requireTruthy: true }), undefined)
-    })
-
-    it("serializes non-string output only when stringifyNonString is set", () => {
-        const part = { tool: "read" }
-
-        assert.equal(getCompletedToolOutputText(part, { a: 1 }), undefined)
-        assert.equal(
-            getCompletedToolOutputText(part, { a: 1 }, { stringifyNonString: true }),
-            JSON.stringify({ a: 1 }),
-        )
-    })
-
-    it("replaces generated-image output with a placeholder that includes the callID", () => {
-        const part = { tool: "image_generation", callID: "call-image" }
-
-        assert.equal(
-            getCompletedToolOutputText(part, JSON.stringify({ result: "A".repeat(4096) })),
-            "[generated image: call-image]",
-        )
-    })
-
-    it("still emits a generated-image placeholder when the completed output is falsy", () => {
-        const part = { tool: "image_generation", callID: "call-image" }
-
-        assert.equal(
-            getCompletedToolOutputText(part, "", { requireTruthy: true }),
-            "[generated image: call-image]",
-        )
-    })
-
-    it("keeps generated-image placeholders short when callIDs are very long", () => {
-        const part = { tool: "image_generation", callID: `call-${"x".repeat(200)}` }
-
-        const placeholder = getCompletedToolOutputText(part, "") ?? ""
-        assert.ok(placeholder.startsWith("[generated image: call-"))
-        assert.ok(placeholder.endsWith("...]"))
-        assert.ok(placeholder.length <= 80)
-    })
-
-    it("falls back to a generic generated-image placeholder without a callID", () => {
-        const part = { tool: "image_generation" }
-
-        assert.equal(getCompletedToolOutputText(part, "payload"), "[generated image]")
     })
 })

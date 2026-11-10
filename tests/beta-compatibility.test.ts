@@ -1,34 +1,14 @@
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { join } from "node:path"
 import { after, describe, it } from "node:test"
 
-import type { PluginConfig } from "../lib/config.ts"
-import { type ContextMessage, fakeClient, isolateHostDirs } from "./helpers.ts"
+import { type ContextMessage, isolateHostDirs } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { createAutomaticCompressionEventHandler } = await import("../lib/auto-compression.ts")
-const { Logger } = await import("../lib/logger.ts")
 const { adaptProjectedMessages } = await import("../lib/messages/v2-adapter.ts")
 const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
-const { selectDeterministicCompressionSpan } = await import("../lib/messages/context-map.ts")
 const { SessionStateManager } = await import("../lib/state/state.ts")
-const { createCompressTool } = await import("../lib/tools/compress.ts")
-const { createSquashTool } = await import("../lib/tools/squash.ts")
 after(() => rm(root, { recursive: true, force: true }))
-
-const logger = new Logger({ daily: false, context: false })
-
-const config: PluginConfig = {
-    enabled: true,
-    debug: false,
-    notification: "off",
-    protectedTurns: 0,
-    commands: { enabled: true },
-    autoCompression: { enabled: true, contextWindowRatio: 0.9, tokenThreshold: 1 },
-    tools: { compress: { permission: "allow", showCompression: false } },
-}
 
 function projected(): ContextMessage[] {
     return [
@@ -143,7 +123,7 @@ describe("beta projected message compatibility", () => {
         )
     })
 
-    it("restores non-user block anchors and allows subsequent compression", () => {
+    it("restores non-user block anchors", () => {
         const anchors = [
             { id: "model-change", type: "model-switched", time: { created: 0 } },
             {
@@ -186,10 +166,6 @@ describe("beta projected message compatibility", () => {
             )
             assert.deepEqual(transformed[1], modelMessages[1])
             assert.deepEqual(transformV2Messages(raw, state, modelMessages), transformed)
-            assert.deepEqual(selectDeterministicCompressionSpan(raw, state, 0).messageIds, [
-                "later-model-change",
-                "owner",
-            ])
             assert.equal(state.compressSummaries[0].anchorMessageId, anchor.id)
         }
     })
@@ -318,219 +294,3 @@ describe("beta projected message compatibility", () => {
         ])
     })
 })
-
-describe("beta tool and automatic lifecycle compatibility", () => {
-    it("executes compress against projected history and persists the same state shape", async () => {
-        const sessionID = `v2-compress-${Date.now()}-${Math.random()}`
-        const values = projected()
-        const client = fakeClient({ context: async () => values })
-        const manager = new SessionStateManager()
-        const tool = createCompressTool({ client, stateManager: manager, logger, config })
-
-        try {
-            const receipt = await tool.execute(
-                { summary: "Earlier work", topic: "Earlier" },
-                {
-                    sessionID,
-                    agent: "orchestrator",
-                    messageID: "tool-message",
-                    id: "call-compress",
-                },
-            )
-
-            assert.match(receipt, /Context compression finished/)
-            assert.deepEqual(manager.get(sessionID).compressSummaries[0].messageIds, [
-                "old-user",
-                "old-assistant",
-            ])
-            assert.equal(existsSync(sessionFile(sessionID)), true)
-        } finally {
-            await cleanup(sessionID)
-        }
-    })
-
-    it("executes squash against projected block history without an authorization marker", async () => {
-        const sessionID = `v2-squash-${Date.now()}-${Math.random()}`
-        const values: ContextMessage[] = [
-            { id: "block-a", type: "user", text: "a", files: [], time: { created: 1 } },
-            { id: "block-b", type: "user", text: "b", files: [], time: { created: 2 } },
-            { id: "squash-trigger", type: "user", text: "squash", files: [], time: { created: 3 } },
-            {
-                id: "squash-message",
-                type: "assistant",
-                agent: "orchestrator",
-                model: { providerID: "anthropic", id: "claude" },
-                content: [
-                    {
-                        type: "tool",
-                        id: "call-squash",
-                        name: "squash",
-                        state: { status: "running", input: {}, metadata: {} },
-                        time: { created: 4 },
-                    },
-                ],
-                tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
-                time: { created: 4 },
-            },
-        ]
-        const client = fakeClient({ context: async () => values })
-        const manager = new SessionStateManager()
-        const state = manager.get(sessionID)
-        state.initialized = true
-        state.persistenceSynchronized = true
-        state.compressed.messageIds = new Set(["block-a", "block-b"])
-        state.compressSummaries = [
-            { anchorMessageId: "block-a", messageIds: ["block-a"], summary: "A", topic: "A" },
-            { anchorMessageId: "block-b", messageIds: ["block-b"], summary: "B", topic: "B" },
-        ]
-        const tool = createSquashTool({ client, stateManager: manager, logger, config })
-
-        try {
-            const receipt = await tool.execute(
-                { from: "b0", to: "b1", summary: "Combined", topic: "Combined" },
-                {
-                    sessionID,
-                    agent: "orchestrator",
-                    messageID: "squash-message",
-                    id: "call-squash",
-                },
-            )
-
-            assert.match(receipt, /^Squash finished\. Blocks/)
-            assert.equal(state.compressSummaries.length, 1)
-            assert.deepEqual(state.compressSummaries[0].messageIds, ["block-a", "block-b"])
-        } finally {
-            await cleanup(sessionID)
-        }
-    })
-
-    it("starts automatic compression when a hot reload observed only the V2 step end", async () => {
-        const sessionID = `v2-auto-${Date.now()}-${Math.random()}`
-        const values = projected().slice(0, 2)
-        const prompts: unknown[] = []
-        const client = fakeClient({
-            context: async () => values,
-            prompt: (input) => prompts.push(input),
-        })
-        const manager = new SessionStateManager()
-        manager.get(sessionID).modelContext = {
-            providerId: "anthropic",
-            modelId: "claude",
-            contextLimit: 1_000,
-        }
-        const handler = createAutomaticCompressionEventHandler(client, manager, logger, config)
-
-        try {
-            await handler({
-                type: "session.step.ended",
-                data: {
-                    sessionID,
-                    assistantMessageID: "old-assistant",
-                    tokens: { input: 20, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
-                },
-            })
-
-            assert.equal(prompts.length, 1)
-            assert.equal(manager.get(sessionID).managementTurns[0]?.source, "automatic")
-        } finally {
-            await cleanup(sessionID)
-        }
-    })
-
-    it("admits automatic compression only from the matching V2 workspace", async () => {
-        const sessionID = `v2-location-${Date.now()}-${Math.random()}`
-        const values = projected().slice(0, 2)
-        const prompts: unknown[] = []
-        const client = fakeClient({
-            context: async () => values,
-            prompt: (input) => prompts.push(input),
-        })
-        const matching = new SessionStateManager()
-        const other = new SessionStateManager()
-        matching.get(sessionID).modelContext = {
-            providerId: "anthropic",
-            modelId: "claude",
-            contextLimit: 1_000,
-        }
-        other.get(sessionID).modelContext = {
-            providerId: "anthropic",
-            modelId: "claude",
-            contextLimit: 1_000,
-        }
-        const handlers = [
-            createAutomaticCompressionEventHandler(
-                client,
-                matching,
-                logger,
-                config,
-                async (_sessionID, event) => {
-                    const location = (
-                        event as { location?: { directory: string; workspaceID?: string } }
-                    ).location
-                    return (
-                        location?.directory === "/matching" &&
-                        location.workspaceID === "workspace-a"
-                    )
-                },
-            ),
-            createAutomaticCompressionEventHandler(
-                client,
-                other,
-                logger,
-                config,
-                async (_sessionID, event) => {
-                    const location = (
-                        event as { location?: { directory: string; workspaceID?: string } }
-                    ).location
-                    return (
-                        location?.directory === "/matching" &&
-                        location.workspaceID === "workspace-b"
-                    )
-                },
-            ),
-        ]
-
-        try {
-            for (const handler of handlers) {
-                await handler({
-                    type: "session.step.started",
-                    data: {
-                        sessionID,
-                        assistantMessageID: "old-assistant",
-                        agent: "orchestrator",
-                        model: { providerID: "anthropic", id: "claude" },
-                    },
-                })
-                await handler({
-                    type: "session.step.ended",
-                    location: { directory: "/matching", workspaceID: "workspace-a" },
-                    data: {
-                        sessionID,
-                        assistantMessageID: "old-assistant",
-                        tokens: {
-                            input: 20,
-                            output: 5,
-                            reasoning: 0,
-                            cache: { read: 0, write: 0 },
-                        },
-                    },
-                })
-            }
-
-            assert.equal(prompts.length, 1)
-            assert.equal(matching.get(sessionID).managementTurns.length, 1)
-            assert.equal(other.get(sessionID).managementTurns.length, 0)
-        } finally {
-            await cleanup(sessionID)
-        }
-    })
-})
-
-function sessionFile(sessionID: string) {
-    return join(root, "data", "opencode", "storage", "plugin", "compress", `${sessionID}.json`)
-}
-
-async function cleanup(sessionID: string) {
-    const path = sessionFile(sessionID)
-    if (existsSync(path)) await rm(path)
-}

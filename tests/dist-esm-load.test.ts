@@ -18,7 +18,7 @@ import {
 } from "./helpers.ts"
 
 describe("built OpenCode 2.2.5 Promise plugin", () => {
-    it("loads and executes command, context, generate, and tool paths", async () => {
+    it("loads and executes the command and context paths", async () => {
         const root = await mkdtemp(join(tmpdir(), "context-compress-2013-"))
         const previousConfig = process.env.XDG_CONFIG_HOME
         const previousData = process.env.XDG_DATA_HOME
@@ -27,11 +27,7 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
         await mkdir(join(root, "config", "opencode"), { recursive: true })
         await writeFile(
             join(root, "config", "opencode", "compress.json"),
-            JSON.stringify({
-                protectedTurns: 0,
-                notification: "off",
-                autoCompression: { enabled: false },
-            }),
+            JSON.stringify({ autoCompression: { enabled: false } }),
         )
 
         try {
@@ -134,9 +130,12 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
             )
             assert.deepEqual(
                 tools.map((tool) => tool.name),
-                ["compress", "squash"],
+                ["compress"],
             )
-            assert.deepEqual([...hooks.keys()], ["context", "generate", "model.request"])
+            assert.deepEqual(
+                [...hooks.keys()],
+                ["context", "generate", "compaction", "model.request"],
+            )
 
             await commands[0].execute({
                 sessionID,
@@ -173,42 +172,6 @@ describe("built OpenCode 2.2.5 Promise plugin", () => {
             })
             assert.equal(modelMessages.length, 4)
 
-            const result = await tools[0].execute(
-                { summary: "Earlier work completed", topic: "Earlier" },
-                {
-                    sessionID,
-                    agent: "build",
-                    messageID: "tool-message",
-                    id: "call-compress",
-                    progress: async () => undefined,
-                },
-            )
-            assert.match(result.content, /compression finished/i)
-
-            const sideMessages = [
-                ...modelMessages.map((message) => structuredClone(message)),
-                { role: "user", content: [{ type: "text", text: "What happened earlier?" }] },
-            ]
-            await hooks.get("generate")?.({
-                sessionID,
-                agent: "build",
-                model: { providerID: "openai", id: "gpt-test" },
-                system: [],
-                messages: sideMessages,
-                tools: {},
-                options: {},
-            })
-            assert.equal(
-                sideMessages.some(
-                    (message) => message.id === "old-user" || message.id === "old-assistant",
-                ),
-                false,
-            )
-            assert.match(JSON.stringify(sideMessages), /Earlier work completed/)
-            assert.deepEqual(sideMessages.at(-1), {
-                role: "user",
-                content: [{ type: "text", text: "What happened earlier?" }],
-            })
             assert.equal(projected.length, 4)
             await cleanup?.()
         } finally {

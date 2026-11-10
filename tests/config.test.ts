@@ -6,13 +6,9 @@ import { join } from "node:path"
 import { isolateHostDirs } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const {
-    DEFAULT_AUTO_COMPRESSION,
-    getConfig,
-    getInvalidConfigKeys,
-    refreshConfig,
-    resolveProtectedTurnsSetting,
-} = await import("../lib/config.ts")
+const { DEFAULT_AUTO_COMPRESSION, getConfig, getInvalidConfigKeys, refreshConfig } = await import(
+    "../lib/config.ts"
+)
 after(() => rm(root, { recursive: true, force: true }))
 
 const layerDirs = {
@@ -41,33 +37,6 @@ describe("automatic compression defaults", () => {
                 periodicNudge: { enabled: true },
             }),
             ["periodicNudge", "periodicNudge.enabled"],
-        )
-    })
-})
-
-describe("protectedTurns configuration", () => {
-    it("defaults to three", () => {
-        assert.equal(resolveProtectedTurnsSetting({}), 3)
-    })
-
-    it("accepts the legacy nested key as a fallback", () => {
-        assert.equal(resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 7 } }), 7)
-    })
-
-    it("prefers the new top-level key when both are present", () => {
-        assert.equal(
-            resolveProtectedTurnsSetting({
-                protectedTurns: 2,
-                autoCompression: { protectedTurns: 7 },
-            }),
-            2,
-        )
-    })
-
-    it("does not let a lower-priority legacy alias replace an explicit top-level value", () => {
-        assert.equal(
-            resolveProtectedTurnsSetting({ autoCompression: { protectedTurns: 9 } }, 2, true),
-            2,
         )
     })
 })
@@ -103,15 +72,18 @@ describe("getConfig layering", () => {
     it("lets the config dir override global and the project override both", async () => {
         const config = await loadLayers({
             global: {
-                notification: "off",
-                protectedTurns: 1,
+                debug: true,
+                tools: { compress: { permission: "deny" } },
                 autoCompression: { tokenThreshold: 100 },
             },
-            configDir: { notification: "minimal", autoCompression: { tokenThreshold: 200 } },
+            configDir: {
+                tools: { compress: { permission: "ask" } },
+                autoCompression: { tokenThreshold: 200 },
+            },
             project: { autoCompression: { tokenThreshold: 300 } },
         })
-        assert.equal(config.notification, "minimal")
-        assert.equal(config.protectedTurns, 1)
+        assert.equal(config.debug, true)
+        assert.equal(config.tools.compress.permission, "ask")
         assert.deepEqual(config.autoCompression, {
             ...DEFAULT_AUTO_COMPRESSION,
             tokenThreshold: 300,
@@ -136,17 +108,14 @@ describe("getConfig layering", () => {
         const warn = t.mock.method(console, "warn", () => undefined)
         const config = await loadLayers({
             global: {
-                protectedTurns: 2,
                 autoCompression: { contextWindowRatio: 0.5, tokenThreshold: 1000 },
             },
             project: {
                 debug: "yes",
-                protectedTurns: -1,
                 autoCompression: { enabled: "no", contextWindowRatio: 1.5, tokenThreshold: 0 },
             },
         })
         assert.equal(config.debug, false)
-        assert.equal(config.protectedTurns, 2)
         assert.deepEqual(config.autoCompression, {
             enabled: true,
             contextWindowRatio: 0.5,

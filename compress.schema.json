@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "compress.schema.json",
     "title": "Context Compress Configuration",
-    "description": "Configuration for Context Compress: background pruning, agent-written folds, and squash for OpenCode sessions",
+    "description": "Configuration for Context Compress: background pruning and agent-written folds for OpenCode sessions",
     "type": "object",
     "additionalProperties": false,
     "properties": {
@@ -24,50 +24,28 @@
             "type": "boolean",
             "description": "Write one-line activity entries to ~/.config/opencode/logs/compress/daily/<YYYY-MM-DD>.log (or $XDG_CONFIG_HOME/...). When unset, follows debug so existing debug:true configs keep the activity log; set true with debug:false for activity only. Files older than 30 days are deleted"
         },
-        "notification": {
-            "type": "string",
-            "enum": ["off", "minimal", "detailed"],
-            "default": "detailed",
-            "description": "Level of notification shown when compression occurs"
-        },
-        "notificationType": {
-            "type": "string",
-            "enum": ["chat", "toast"],
-            "description": "Deprecated and ignored; toast notifications were removed"
-        },
-        "protectedTurns": {
-            "type": "integer",
-            "minimum": 0,
-            "default": 3,
-            "description": "Newest OpenCode execution steps kept verbatim outside every compression"
-        },
         "autoCompression": {
             "type": "object",
-            "description": "Automatic folds and squashes before the context window fills. Background pruning does not depend on this",
+            "description": "Automatic fold requests before the context window fills. Background pruning does not depend on this",
             "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable automatic folds and squashes"
+                    "description": "Enable automatic fold requests"
                 },
                 "contextWindowRatio": {
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "maximum": 1,
                     "default": 0.9,
-                    "description": "Initiate compression at this fraction of the model-reported context window"
+                    "description": "Send the first fold request at this fraction of the model-reported context window"
                 },
                 "tokenThreshold": {
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "default": 432000,
-                    "description": "System-wide absolute initiation threshold; the earlier of this and contextWindowRatio wins"
-                },
-                "protectedTurns": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Deprecated alias for top-level protectedTurns"
+                    "description": "Absolute token threshold for the first fold request; the earlier of this and contextWindowRatio wins. An ignored request repeats every further 100,000 tokens"
                 }
             },
             "default": {
@@ -106,11 +84,6 @@
                             "enum": ["ask", "allow", "deny"],
                             "default": "allow",
                             "description": "Permission mode (deny disables the tool)"
-                        },
-                        "showCompression": {
-                            "type": "boolean",
-                            "default": false,
-                            "description": "Show summary output in the UI"
                         }
                     }
                 }

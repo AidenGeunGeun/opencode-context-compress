@@ -7,13 +7,15 @@ export interface SessionPromptInput {
     parts: Array<Record<string, unknown>>
     noReply?: boolean
     messageId?: string
-    metadata?: { "opencode.context-compress.management": true }
 }
 
 export interface PluginClient {
     readonly kind: "promise-plugin"
     readonly selections: Map<string, V2SessionSelection>
-    readonly session: Pick<Plugin.Context["session"], "context" | "prompt" | "synthetic">
+    readonly session: Pick<
+        Plugin.Context["session"],
+        "compact" | "context" | "prompt" | "synthetic"
+    >
 }
 
 export function pluginClient(session: PluginClient["session"]): PluginClient {
@@ -70,7 +72,6 @@ export async function promptSession(
         sessionID: input.sessionId,
         text,
         id: input.messageId,
-        ...(input.metadata ? { metadata: input.metadata } : {}),
         delivery: "steer",
         resume: true,
     })

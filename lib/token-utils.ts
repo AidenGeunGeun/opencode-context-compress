@@ -36,8 +36,3 @@ export function countTokens(text: string, providerId?: string): number {
         return Math.ceil(text.length / 4)
     }
 }
-
-export function estimateTokensBatch(texts: string[], providerId?: string): number {
-    if (texts.length === 0) return 0
-    return countTokens(texts.join(" "), providerId)
-}

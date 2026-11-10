@@ -16,7 +16,6 @@ const {
     reconcileSessionLifecycle,
 } = await import("../lib/state/state.ts")
 const { loadSessionState, saveSessionState } = await import("../lib/state/persistence.ts")
-const { resetOnCompaction } = await import("../lib/state/utils.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
@@ -133,8 +132,6 @@ describe("SessionStateManager", () => {
                     summary: "Parent-only summary",
                 },
             ]
-            parent.autoCompressionEnabledOverride = false
-            parent.compressionCooldownAfterMessageId = "parent-cooldown"
 
             const child = initial.get(childId)
             child.compressed.messageIds.add("child-anchor")
@@ -145,9 +142,6 @@ describe("SessionStateManager", () => {
                     summary: "Child-only summary",
                 },
             ]
-            child.autoCompressionEnabledOverride = true
-            child.autoCompressionTokenThresholdOverride = 123_456
-            child.compressionCooldownAfterMessageId = "child-cooldown"
 
             await Promise.all([saveSessionState(parent, logger), saveSessionState(child, logger)])
 
@@ -173,34 +167,9 @@ describe("SessionStateManager", () => {
                 reloadedChild.compressSummaries.map((item) => item.summary),
                 ["Child-only summary"],
             )
-            assert.equal(reloadedParent.autoCompressionEnabledOverride, false)
-            assert.equal(reloadedParent.autoCompressionTokenThresholdOverride, undefined)
-            assert.equal(reloadedParent.compressionCooldownAfterMessageId, "parent-cooldown")
-            assert.equal(reloadedChild.autoCompressionEnabledOverride, true)
-            assert.equal(reloadedChild.autoCompressionTokenThresholdOverride, 123_456)
-            assert.equal(reloadedChild.compressionCooldownAfterMessageId, "child-cooldown")
         } finally {
             await Promise.all([cleanupSessionFiles(parentId), cleanupSessionFiles(childId)])
         }
-    })
-})
-
-describe("native compaction reset", () => {
-    it("preserves session automatic-compression preferences", () => {
-        const state = createSessionState()
-        state.autoCompressionEnabledOverride = false
-        state.autoCompressionTokenThresholdOverride = 450_000
-        state.autoCompressionContextWindowRatioOverride = 0.8
-        state.compressionCooldownAfterMessageId = "compress-anchor"
-        state.compressed.messageIds.add("old-message")
-
-        resetOnCompaction(state)
-
-        assert.equal(state.autoCompressionEnabledOverride, false)
-        assert.equal(state.autoCompressionTokenThresholdOverride, 450_000)
-        assert.equal(state.autoCompressionContextWindowRatioOverride, 0.8)
-        assert.equal(state.compressionCooldownAfterMessageId, "compress-anchor")
-        assert.equal(state.compressed.messageIds.size, 0)
     })
 })
 
@@ -270,10 +239,6 @@ describe("ensureSessionInitialized", () => {
                     summary: "kept until file is truly absent",
                 },
             ]
-            state.stats = {
-                compressTokenCounter: 5,
-                totalCompressTokens: 9,
-            }
 
             const messages = [createMessage("m1", sessionId, "user")]
 
@@ -284,10 +249,6 @@ describe("ensureSessionInitialized", () => {
             assert.equal(state.persistedLastUpdated, null)
             assert.equal(state.compressed.messageIds.size, 0)
             assert.deepEqual(state.compressSummaries, [])
-            assert.deepEqual(state.stats, {
-                compressTokenCounter: 0,
-                totalCompressTokens: 0,
-            })
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -310,10 +271,6 @@ describe("ensureSessionInitialized", () => {
                     summary: "existing overlay summary",
                 },
             ]
-            state.stats = {
-                compressTokenCounter: 13,
-                totalCompressTokens: 21,
-            }
 
             await mkdir(storageDir, { recursive: true })
             await writeFile(getSessionFilePath(sessionId), "{ not-valid-json", "utf-8")
@@ -340,10 +297,6 @@ describe("ensureSessionInitialized", () => {
                     summary: "existing overlay summary",
                 },
             ])
-            assert.deepEqual(state.stats, {
-                compressTokenCounter: 13,
-                totalCompressTokens: 21,
-            })
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -434,14 +387,6 @@ describe("saveSessionState", () => {
                     source: "squash",
                 },
             ]
-            state.stats = {
-                compressTokenCounter: 8,
-                totalCompressTokens: 34,
-            }
-            state.autoCompressionEnabledOverride = false
-            state.autoCompressionTokenThresholdOverride = 425_000
-            state.autoCompressionContextWindowRatioOverride = 0.82
-            state.compressionCooldownAfterMessageId = "m-compress"
             state.lastCompaction = 123_456
 
             await saveSessionState(state, logger, "session-name")
@@ -483,14 +428,6 @@ describe("saveSessionState", () => {
                     source: "squash",
                 },
             ])
-            assert.deepEqual(loadResult.state.stats, {
-                compressTokenCounter: 8,
-                totalCompressTokens: 34,
-            })
-            assert.equal(loadResult.state.autoCompressionEnabledOverride, false)
-            assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, 425_000)
-            assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, 0.82)
-            assert.equal(loadResult.state.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(loadResult.state.lastCompaction, 123_456)
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
@@ -499,10 +436,6 @@ describe("saveSessionState", () => {
             await ensureSessionInitialized(reloadedState, sessionId, logger, [
                 createMessage("m1", sessionId, "user"),
             ])
-            assert.equal(reloadedState.autoCompressionEnabledOverride, false)
-            assert.equal(reloadedState.autoCompressionTokenThresholdOverride, 425_000)
-            assert.equal(reloadedState.autoCompressionContextWindowRatioOverride, 0.82)
-            assert.equal(reloadedState.compressionCooldownAfterMessageId, "m-compress")
             assert.equal(reloadedState.lastCompaction, 123_456)
             assert.deepEqual(reloadedState.anthropicStubIds, new Set(["tool-1"]))
         } finally {
@@ -549,10 +482,6 @@ describe("saveSessionState", () => {
                     triggerMessageId: "msg_compress_manage_legacy",
                 },
             ])
-            assert.equal(loadResult.state.autoCompressionEnabledOverride, undefined)
-            assert.equal(loadResult.state.autoCompressionTokenThresholdOverride, undefined)
-            assert.equal(loadResult.state.autoCompressionContextWindowRatioOverride, undefined)
-            assert.equal(loadResult.state.compressionCooldownAfterMessageId, undefined)
         } finally {
             await cleanupSessionFiles(sessionId)
         }

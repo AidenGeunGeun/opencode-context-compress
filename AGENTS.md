@@ -19,29 +19,37 @@ Requires `bun` (build runtime) and `tsc` (TypeScript compiler, resolved via `nod
 - Return command/status feedback with `session.synthetic({ resume: false })` so it never starts a
   model run. Clients must show admitted feedback immediately and in full; queue admission alone does
   not verify that behavior. Do not enable `resume` merely to make feedback visible.
-- Start management turns with `session.prompt()`.
-- Mark management prompts with `opencode.context-compress.management` metadata so side chats hide
-  internal compression exchanges without hiding user messages.
-- Automatic prompts use a stable ID derived from the session and completed triggering message so the
-  host deduplicates admission across plugin instances. Manual prompts retain fresh IDs. Local locks
-  serialize only one state-manager instance. Event ownership compares directory and workspace ID
-  when the event carries them; public Session lookup supplies the directory fallback.
-- Register `compress` and `squash` with Zod input schemas.
-- Apply durable folds in the session `context` hook.
-- Observe automatic thresholds, forks, and native compaction through the event stream. Remap
-  inherited compression references to copied message IDs before a fork's first model request;
-  the context hook also recovers when its fork event was missed.
-- Require `compaction.auto: false` in OpenCode configuration. The API cannot veto native compaction,
-  so post a synthetic warning to the owning session when auto-compaction starts. Manual `/compact`
-  is a deliberate reset that clears every block; it gets no warning.
+- Send fold requests with `session.prompt()` (steer, resume). The automatic request uses a stable ID
+  derived from the session and the triggering message so the host deduplicates admission across
+  plugin instances; `/compress manage` uses a fresh ID. Event ownership compares directory and
+  workspace ID when the event carries them; public Session lookup supplies the directory fallback.
+- Register `compress` with a Zod input schema.
+- Observe the token threshold, forks, and compaction through the event stream. Remap inherited
+  compression references to copied message IDs before a fork's first model request; the context hook
+  also recovers when its fork event was missed.
+- Keep `compaction.auto: false` in OpenCode configuration. A fold is a manual compaction and does not
+  need it; automatic compaction would fold at a token count without the documentation pass.
 
-Compression selection is deterministic: exclude existing blocks, select eligible uncompressed
-history after the newest block, and preserve the newest `protectedTurns` execution steps. `squash`
-changes only a contiguous range of existing blocks. Automatic squash opens only after a successful
-fold leaves more than 7 blocks or 100,000 summary characters; the agent, never the plugin, chooses
-the range, and the turn closes if a step ends without a successful squash. Durable state remains
-compatible with existing blocks, management turns, cooldowns, auto overrides, and the legacy `dcp`
-migration directory; ignore retired fields.
+A fold goes through OpenCode's compaction (`lib/plugin.ts`, `lib/tools/compress.ts`). `compress`
+saves the agent's summary in memory and calls `session.compact()`, which core runs right after the
+step. The `compaction` hook then sets `event.result` to that summary, so core makes no model
+request, and `metadata.keepID: undefined`, so core keeps no recent messages beside it: they would
+repeat the summary, loaded skill text, and edit inputs. Core loads the instruction baseline fresh at
+every compaction, which the earlier block design never triggered. The summary stays in memory until
+the compaction ends, fails, or is cancelled in the inbox; the fold request skips a step whose summary is pending,
+because a request sent then arrives after the fold and folds again. A compaction without a pending
+summary is a manual `/compact`: its request gets the same message list and Anthropic headers as a
+primary request so it reads the prompt cache.
+
+The fold request (`lib/fold-request.ts`) is sent when a step ends at the threshold and again at each
+further 100,000 tokens. Its level lives in memory only, so a reload sends one extra request to a
+session still above the threshold.
+
+Sessions folded by releases before 2026-11-10 hold compressed blocks and management turns in their
+state. `lib/messages/compress-transform.ts`, `blocks.ts`, and `legacy-residue.ts` keep rendering
+them byte for byte until the session's next fold, when `reconcileSessionLifecycle` clears them. Do
+not change that rendering; delete it once no live session holds a block. Durable state also stays
+compatible with the legacy `dcp` migration directory; ignore retired fields.
 
 Background pruning (`lib/messages/prune.ts`) is programmatic and never prompts the agent. Its marks
 live in `compressed.toolIds` and only grow, so request bytes change only at a pruning event. On
@@ -65,26 +73,23 @@ OpenAI prune the cache resumes at an earlier request's end, usually the previous
 so the rule prices the rewrite as the whole conversation. Client-side stubs cost OpenAI no reasoning: token deltas
 show the encrypted reasoning of earlier steps carried through prunes and user turns (gpt-6.x, 2026-11-03).
 
-The compress and squash receipts are the only messages the agent gets after either operation. Keep
-them in the tool result: a message added to one request and dropped from the next breaks the cache.
-The squash receipt lists every renumbered block, because block labels are positions: without that list, agents
-read a moved block under a reused label as one they had merged, and reported a squash as lost (3 of 7 squashes).
-The compress and squash tool descriptions go out with every request, so changing one drops every Anthropic
-session's thinking and rewrites its cache once. Batch such changes; put turn-specific guidance in receipts or the
-per-turn system prompts instead.
+After a fold the summary is the only message the agent sees, so the plugin appends `FOLD_NOTE` to it
+to say how to resume. The compress tool description goes out with every request, so changing it
+drops every Anthropic session's thinking and rewrites its cache once. Batch such changes; put
+turn-specific guidance in the fold request (`lib/prompts/fold-request.md`) instead.
 
 ## Structure
 
 - `index.ts` exports the Promise plugin.
 - `lib/plugin.ts` registers commands, tools, hooks, and events.
 - `lib/commands` implements command behavior.
-- `lib/messages` owns projection, selection, transforms, and cleanup.
-- `lib/state` owns per-session locking, persistence, migration, fork remapping, and native-compaction
+- `lib/messages` owns projection, pruning, and the rendering of earlier releases' blocks.
+- `lib/state` owns per-session locking, persistence, migration, fork remapping, and compaction
   reconciliation.
-- `lib/tools` owns durable compress and squash writes.
+- `lib/tools` owns the compress tool.
 - `lib/sdk` owns the client and session message listing.
-- `lib/ui` owns notification rendering.
-- `lib/*.ts` (auto-compression, auto-policy, config, logger, shared-utils, token-utils) own cross-cutting utilities.
+- `lib/ui` owns command feedback messages.
+- `lib/*.ts` (fold-request, config, logger, shared-utils, token-utils) own cross-cutting utilities.
 - `lib/prompts/*.md` are sources; `lib/prompts/_codegen` is generated. Do not edit generated files directly.
 - `compress.schema.json` is the JSON Schema for plugin configuration.
 - Build pipeline: `tsc` then `bun build index.ts --outdir dist` (ESM). The `prebuild` step runs `generate:prompts` first.
@@ -110,7 +115,7 @@ Prepare a candidate without activating it:
 
 ```bash
 npm run typecheck
-node --import tsx --test tests/prompts.test.ts
+node --import tsx --test tests/fold.test.ts
 compression_stage=$(mktemp -d /private/tmp/opencode-compress-stage.XXXXXX)
 ./node_modules/.bin/tsc --outDir "$compression_stage/dist"
 bun build index.ts --outdir "$compression_stage/dist" --entry-naming index.js --target bun --format esm --packages external --sourcemap=linked

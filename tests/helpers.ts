@@ -8,6 +8,7 @@ import type { Part, WithParts } from "../lib/state/types.ts"
 
 type Session = PluginClient["session"]
 type ContextInput = Parameters<Session["context"]>[0]
+export type CompactInput = Parameters<Session["compact"]>[0]
 export type ContextMessage = Awaited<ReturnType<Session["context"]>>[number]
 export type PromptInput = Parameters<Session["prompt"]>[0]
 export type SyntheticInput = Parameters<Session["synthetic"]>[0]
@@ -25,6 +26,7 @@ export async function isolateHostDirs(): Promise<string> {
 }
 
 export interface SessionFake {
+    compact?: (input: CompactInput) => unknown
     context?: (input: ContextInput) => Promise<ContextMessage[] | WithParts[]>
     prompt?: (input: PromptInput) => unknown
     synthetic?: (input: SyntheticInput) => unknown
@@ -37,6 +39,17 @@ function asContextMessages(messages: ContextMessage[] | WithParts[]): ContextMes
 
 export function fakeSession(fake: SessionFake = {}): Session {
     return {
+        compact: async (input) => {
+            await fake.compact?.(input)
+            return {
+                id: input.id ?? "compaction",
+                sessionID: input.sessionID,
+                time: { created: Date.now() },
+                type: "compaction",
+                payload: {},
+                delivery: input.delivery ?? "steer",
+            }
+        },
         context: async (input) => asContextMessages((await fake.context?.(input)) ?? []),
         prompt: async (input) => {
             await fake.prompt?.(input)
@@ -107,6 +120,10 @@ export interface ModelHookInput {
     options: Record<string, unknown>
 }
 
+export interface CompactionHookInput extends ModelHookInput {
+    result?: { summary: string; metadata?: Record<string, unknown> }
+}
+
 export interface ModelRequestHookInput {
     sessionID: string
     agent: string
@@ -130,8 +147,10 @@ export interface HostFake {
     readonly session: Session & {
         readonly get: (input: { sessionID: string }) => Promise<SessionInfo>
         readonly hook?: (
-            name: "context" | "generate" | "model.request",
-            callback: (input: ModelHookInput | ModelRequestHookInput) => Promise<void> | void,
+            name: "context" | "generate" | "compaction" | "model.request",
+            callback: (
+                input: ModelHookInput | CompactionHookInput | ModelRequestHookInput,
+            ) => Promise<void> | void,
         ) => Promise<Registration>
     }
     readonly model: {

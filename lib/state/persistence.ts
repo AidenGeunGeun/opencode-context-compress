@@ -8,13 +8,7 @@ import * as fs from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type {
-    SessionState,
-    SessionStats,
-    CompressSummary,
-    ManagementTurn,
-    WithParts,
-} from "./types.js"
+import type { SessionState, CompressSummary, ManagementTurn, WithParts } from "./types.js"
 import type { Logger } from "../logger.js"
 
 /** Compressed state as stored on disk (arrays for JSON compatibility) */
@@ -29,12 +23,7 @@ export interface PersistedSessionState {
     anthropicStubIds?: string[]
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    stats: SessionStats
     pruneOff?: boolean
-    autoCompressionEnabledOverride?: boolean
-    autoCompressionTokenThresholdOverride?: number
-    autoCompressionContextWindowRatioOverride?: number
-    compressionCooldownAfterMessageId?: string
     lastCompaction?: number
     lastUpdated: string
 }
@@ -50,13 +39,7 @@ interface PersistedSessionStateFile {
     anthropicStubIds?: string[]
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
-    stats: SessionStats
     pruneOff?: unknown
-    autoCompressionEnabledOverride?: unknown
-    autoCompressionTokenThresholdOverride?: unknown
-    autoCompressionContextWindowRatioOverride?: unknown
-    compressionCooldownAfterMessageId?: unknown
-    goalOverflowRecovery?: unknown
     lastCompaction?: unknown
     lastUpdated: string
 }
@@ -139,23 +122,15 @@ function getLegacySessionFilePath(sessionId: string): string {
     return join(LEGACY_STORAGE_DIR, `${sessionId}.json`)
 }
 
-/** Old persisted state format (pre-rebrand): used `prune` key and prune-prefixed stats */
+/** Old persisted state format (pre-rebrand): used the `prune` key */
 interface LegacyPersistedSessionStateFile {
     sessionName?: string
     prune: PersistedCompressed
     compressSummaries?: MaybeBackfilledCompressSummary[]
-    stats: {
-        pruneTokenCounter: number
-        totalPruneTokens: number
-    }
     lastUpdated: string
 }
 
-/**
- * Remap legacy persisted state to the current (compress) format.
- * Transforms: prune → compressed, pruneTokenCounter → compressTokenCounter,
- * totalPruneTokens → totalCompressTokens.
- */
+/** Remap legacy persisted state to the current (compress) format: prune → compressed. */
 function remapLegacyState(legacy: LegacyPersistedSessionStateFile): PersistedSessionStateFile {
     return {
         sessionName: legacy.sessionName,
@@ -165,10 +140,6 @@ function remapLegacyState(legacy: LegacyPersistedSessionStateFile): PersistedSes
         },
         compressSummaries: legacy.compressSummaries ?? [],
         managementTurns: [],
-        stats: {
-            compressTokenCounter: legacy.stats?.pruneTokenCounter ?? 0,
-            totalCompressTokens: legacy.stats?.totalPruneTokens ?? 0,
-        },
         lastUpdated: legacy.lastUpdated,
     }
 }
@@ -309,29 +280,7 @@ export async function saveSessionState(
                 : {}),
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
-            stats: sessionState.stats,
             ...(sessionState.pruneOff ? { pruneOff: true } : {}),
-            ...(typeof sessionState.autoCompressionEnabledOverride === "boolean"
-                ? { autoCompressionEnabledOverride: sessionState.autoCompressionEnabledOverride }
-                : {}),
-            ...(sessionState.autoCompressionTokenThresholdOverride !== undefined
-                ? {
-                      autoCompressionTokenThresholdOverride:
-                          sessionState.autoCompressionTokenThresholdOverride,
-                  }
-                : {}),
-            ...(sessionState.autoCompressionContextWindowRatioOverride !== undefined
-                ? {
-                      autoCompressionContextWindowRatioOverride:
-                          sessionState.autoCompressionContextWindowRatioOverride,
-                  }
-                : {}),
-            ...(sessionState.compressionCooldownAfterMessageId
-                ? {
-                      compressionCooldownAfterMessageId:
-                          sessionState.compressionCooldownAfterMessageId,
-                  }
-                : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
                 : {}),
@@ -339,7 +288,9 @@ export async function saveSessionState(
         }
 
         const filePath = getSessionFilePath(sessionState.sessionId)
-        const content = JSON.stringify(state, null, 2)
+        // The previous release rejects a state file without `stats`, so writing it keeps a rollback safe.
+        // Remove it together with the legacy block rendering.
+        const content = JSON.stringify({ ...state, stats: {} }, null, 2)
         await writeFileAtomic(filePath, content)
         sessionState.hasPersistedState = true
         sessionState.persistedLastUpdated = lastUpdated
@@ -395,7 +346,7 @@ export async function loadSessionState(
         migrated = true
     }
 
-    if (!state?.compressed || !Array.isArray(state.compressed.toolIds) || !state.stats) {
+    if (!state?.compressed || !Array.isArray(state.compressed.toolIds)) {
         logger.warn("Invalid session state file, preserving in-memory state", {
             sessionId,
             path: migrated ? getLegacySessionFilePath(sessionId) : filePath,
@@ -456,34 +407,7 @@ export async function loadSessionState(
             : {}),
         compressSummaries,
         managementTurns,
-        stats: state.stats,
         ...(state.pruneOff === true ? { pruneOff: true } : {}),
-        ...(typeof state.autoCompressionEnabledOverride === "boolean"
-            ? { autoCompressionEnabledOverride: state.autoCompressionEnabledOverride }
-            : {}),
-        ...(typeof state.autoCompressionTokenThresholdOverride === "number" &&
-        Number.isSafeInteger(state.autoCompressionTokenThresholdOverride) &&
-        state.autoCompressionTokenThresholdOverride > 0
-            ? {
-                  autoCompressionTokenThresholdOverride:
-                      state.autoCompressionTokenThresholdOverride,
-              }
-            : {}),
-        ...(typeof state.autoCompressionContextWindowRatioOverride === "number" &&
-        Number.isFinite(state.autoCompressionContextWindowRatioOverride) &&
-        state.autoCompressionContextWindowRatioOverride > 0 &&
-        state.autoCompressionContextWindowRatioOverride < 1
-            ? {
-                  autoCompressionContextWindowRatioOverride:
-                      state.autoCompressionContextWindowRatioOverride,
-              }
-            : {}),
-        ...(typeof state.compressionCooldownAfterMessageId === "string" &&
-        state.compressionCooldownAfterMessageId.length > 0
-            ? {
-                  compressionCooldownAfterMessageId: state.compressionCooldownAfterMessageId,
-              }
-            : {}),
         ...(typeof state.lastCompaction === "number" &&
         Number.isFinite(state.lastCompaction) &&
         state.lastCompaction > 0
@@ -510,52 +434,4 @@ export async function loadSessionState(
         status: "loaded",
         state: result,
     }
-}
-
-export interface AggregatedStats {
-    totalTokens: number
-    totalTools: number
-    totalMessages: number
-    sessionCount: number
-}
-
-export async function loadAllSessionStats(logger: Logger): Promise<AggregatedStats> {
-    const result: AggregatedStats = {
-        totalTokens: 0,
-        totalTools: 0,
-        totalMessages: 0,
-        sessionCount: 0,
-    }
-
-    try {
-        if (!existsSync(STORAGE_DIR)) {
-            return result
-        }
-
-        const files = await fs.readdir(STORAGE_DIR)
-        const jsonFiles = files.filter((f) => f.endsWith(".json"))
-
-        for (const file of jsonFiles) {
-            try {
-                const filePath = join(STORAGE_DIR, file)
-                const content = await fs.readFile(filePath, "utf-8")
-                const state = JSON.parse(content) as PersistedSessionStateFile
-
-                if (state?.stats?.totalCompressTokens && state?.compressed?.toolIds) {
-                    result.totalTokens += state.stats.totalCompressTokens
-                    result.totalTools += state.compressed.toolIds.length
-                    result.totalMessages += state.compressed.messageIds?.length || 0
-                    result.sessionCount++
-                }
-            } catch {
-                // Skip invalid files
-            }
-        }
-    } catch (error) {
-        logger.warn("Failed to load all-time stats", {
-            error: error instanceof Error ? error.message : String(error),
-        })
-    }
-
-    return result
 }
