@@ -1,6 +1,6 @@
 // AUTO-GENERATED FILE - DO NOT EDIT
 // Generated from fold-documentation-subagent.md by scripts/generate-prompts.ts
 // To modify, edit fold-documentation-subagent.md and run `npm run generate:prompts`
-export const FOLD_DOCUMENTATION_SUBAGENT = `2. Leave the project's documentation as it is. You are a subagent, and the session that briefed you owns the documentation: it checks findings before recording them, and an edit made here would skip that check. The one exception is documentation that your brief assigned to you as the task itself. Put what the fold would otherwise lose in the summary instead, under a \`For the parent\` heading: settled decisions, verified findings with their evidence, and open questions, so your final report carries them. Your brief disappears with the fold too, so the summary's Request and Decisions sections must keep its task, its boundaries, and what completion looks like.
+export const FOLD_DOCUMENTATION_SUBAGENT = `2. Do not edit documentation: the session that briefed you owns it, unless your brief made it your task. Put decisions, verified findings, and open questions under \`For the parent\` in the summary. Keep your brief's task, boundaries, and completion criteria there too, because the brief disappears with the fold.
 `;
 //# sourceMappingURL=fold-documentation-subagent.generated.js.map
