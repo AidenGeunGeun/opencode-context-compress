@@ -1464,6 +1464,7 @@ var FOLD_DOCUMENTATION = `2. Update the project's documentation with the \`libra
 
 // lib/prompts/_codegen/fold-documentation-subagent.generated.ts
 var FOLD_DOCUMENTATION_SUBAGENT = `2. Do not edit documentation: the session that briefed you owns it, unless your brief made it your task. Put decisions, verified findings, and open questions under \`For the parent\` in the summary. Keep your brief's task, boundaries, and completion criteria there too, because the brief disappears with the fold.
+   If your final report is already written, skip the fold and send that report again in full as your last message, because the parent receives only your last message.
 `;
 
 // lib/prompts/_codegen/fold-request.generated.ts
@@ -1607,11 +1608,16 @@ import { createHash as createHash2 } from "crypto";
 var REPEAT_TOKENS = 1e5;
 function createFoldRequestHandler(client, stateManager, logger, config, pending, acceptsSession) {
   const levels = new Map;
+  const undelivered = new Map;
   return async (input) => {
     const event = isRecord(input) ? input : {};
     const data = isRecord(event.data) ? event.data : {};
     const sessionID = data.sessionID;
-    if (event.type !== "session.step.ended" || typeof sessionID !== "string")
+    if (typeof sessionID !== "string")
+      return;
+    if ((event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") && data.inboxID === undelivered.get(sessionID))
+      undelivered.delete(sessionID);
+    if (event.type !== "session.step.ended")
       return;
     if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number")
       return;
@@ -1633,10 +1639,13 @@ function createFoldRequestHandler(client, stateManager, logger, config, pending,
     const ratioThreshold = contextLimit ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio) : undefined;
     const thresholdTokens = Math.min(ratioThreshold ?? tokenThreshold, tokenThreshold);
     const level = contextTokens < thresholdTokens ? 0 : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1;
-    if (level > (levels.get(sessionID) ?? 0)) {
+    if (level > (levels.get(sessionID) ?? 0) && !undelivered.has(sessionID)) {
       if (!await acceptsSession(sessionID, event))
         return;
       const session = await client.session.get({ sessionID });
+      if (session.parentID !== undefined && data.finish === "stop")
+        return;
+      const messageId = generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created);
       const number = (value) => value.toLocaleString("en-US");
       const basis = ratioThreshold !== undefined && ratioThreshold <= tokenThreshold ? `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window` : "the system-wide absolute token limit";
       await promptSession(client, {
@@ -1647,8 +1656,9 @@ function createFoldRequestHandler(client, stateManager, logger, config, pending,
             text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`, session.parentID !== undefined)
           }
         ],
-        messageId: generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created)
+        messageId
       });
+      undelivered.set(sessionID, messageId);
       logger.info("Fold request sent", {
         sessionId: sessionID,
         contextTokens,
@@ -2971,13 +2981,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var context_compress_default = Plugin.define({
+var stage_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  context_compress_default as default
+  stage_default as default
 };
 
-//# debugId=7C5B98789A9BF77764756E2164756E21
+//# debugId=05D750A7B9A578DD64756E2164756E21
 //# sourceMappingURL=index.js.map

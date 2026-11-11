@@ -1,1 +1,1 @@
-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../../../../Users/aidenkim/projects/opencode-plugins/context-compress/lib/prompts/index.ts"],"names":[],"mappings":"AAKA,OAAO,EAAE,QAAQ,EAAE,MAAM,kCAAkC,CAAA;AAE3D,2GAA2G;AAC3G,wBAAgB,iBAAiB,CAAC,MAAM,EAAE,MAAM,EAAE,QAAQ,EAAE,OAAO,GAAG,MAAM,CAK3E"}
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../lib/prompts/index.ts"],"names":[],"mappings":"AAKA,OAAO,EAAE,QAAQ,EAAE,MAAM,kCAAkC,CAAA;AAE3D,2GAA2G;AAC3G,wBAAgB,iBAAiB,CAAC,MAAM,EAAE,MAAM,EAAE,QAAQ,EAAE,OAAO,GAAG,MAAM,CAK3E"}

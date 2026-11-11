@@ -1,1 +1,1 @@
-{"version":3,"file":"fold-request.generated.d.ts","sourceRoot":"","sources":["../../../../../../../Users/aidenkim/projects/opencode-plugins/context-compress/lib/prompts/_codegen/fold-request.generated.ts"],"names":[],"mappings":"AAIA,eAAO,MAAM,YAAY,8hDAuBxB,CAAA"}
+{"version":3,"file":"fold-request.generated.d.ts","sourceRoot":"","sources":["../../../../lib/prompts/_codegen/fold-request.generated.ts"],"names":[],"mappings":"AAIA,eAAO,MAAM,YAAY,8hDAuBxB,CAAA"}
