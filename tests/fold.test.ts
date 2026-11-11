@@ -158,6 +158,12 @@ describe("fold request", () => {
             })
         const sentAfter = async (input: number) => {
             await stepEnded(input)
+            const latest = plugin.prompts.at(-1)?.id
+            if (latest)
+                await plugin.send({
+                    type: "session.inbox.delivered",
+                    data: { sessionID: "s3", inboxID: latest },
+                })
             return plugin.prompts.length
         }
 
@@ -167,6 +173,50 @@ describe("fold request", () => {
         assert.equal(await sentAfter(101_000), 2)
         assert.equal(await sentAfter(500), 2)
         assert.equal(await sentAfter(1_000), 3)
+    })
+
+    it("is not queued again while an earlier request is undelivered, which would fold twice", async () => {
+        const plugin = await start()
+        let step = 0
+        const stepEnded = (input: number) =>
+            plugin.send({
+                type: "session.step.ended",
+                data: {
+                    sessionID: "s7",
+                    assistantMessageID: `step-${++step}`,
+                    tokens: { input, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                },
+            })
+
+        await stepEnded(1_000)
+        await stepEnded(101_000)
+        assert.equal(plugin.prompts.length, 1)
+
+        await plugin.send({
+            type: "session.inbox.delivered",
+            data: { sessionID: "s7", inboxID: plugin.prompts[0]?.id },
+        })
+        await stepEnded(201_000)
+        assert.equal(plugin.prompts.length, 2)
+    })
+
+    it("waits when a subagent's step ends its turn, because that last message is its report", async () => {
+        const plugin = await start()
+        const stepEnded = (finish: string) =>
+            plugin.send({
+                type: "session.step.ended",
+                data: {
+                    sessionID: "child-s6",
+                    assistantMessageID: `step-${finish}`,
+                    finish,
+                    tokens: { input: 5_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                },
+            })
+
+        await stepEnded("stop")
+        assert.equal(plugin.prompts.length, 0)
+        await stepEnded("tool-calls")
+        assert.equal(plugin.prompts.length, 1)
     })
 
     it("is not sent for the step that called compress, which the fold is about to replace", async () => {

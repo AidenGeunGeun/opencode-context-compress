@@ -23,11 +23,20 @@ export function createFoldRequestHandler(
 ) {
     // Shortcut: in memory only, so a plugin reload sends one extra request to a session above the threshold.
     const levels = new Map<string, number>()
+    // A request still in the inbox. A second one queued behind it would arrive after the fold and fold again.
+    const undelivered = new Map<string, string>()
     return async (input: unknown) => {
         const event = isRecord(input) ? input : {}
         const data = isRecord(event.data) ? event.data : {}
         const sessionID = data.sessionID
-        if (event.type !== "session.step.ended" || typeof sessionID !== "string") return
+        if (typeof sessionID !== "string") return
+        if (
+            (event.type === "session.inbox.delivered" ||
+                event.type === "session.inbox.cancelled") &&
+            data.inboxID === undelivered.get(sessionID)
+        )
+            undelivered.delete(sessionID)
+        if (event.type !== "session.step.ended") return
         if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number") return
         if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
         // This step called `compress`. A request sent now would arrive after the fold and fold again.
@@ -56,9 +65,16 @@ export function createFoldRequestHandler(
                 ? 0
                 : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1
 
-        if (level > (levels.get(sessionID) ?? 0)) {
+        if (level > (levels.get(sessionID) ?? 0) && !undelivered.has(sessionID)) {
             if (!(await acceptsSession(sessionID, event))) return
             const session = await client.session.get({ sessionID })
+            // A subagent's turn-ending message is what its parent receives; a fold now would replace it.
+            if (session.parentID !== undefined && data.finish === "stop") return
+            const messageId = generateAutomaticPromptMessageId(
+                sessionID,
+                data.assistantMessageID,
+                event.created,
+            )
             const number = (value: number) => value.toLocaleString("en-US")
             const basis =
                 ratioThreshold !== undefined && ratioThreshold <= tokenThreshold
@@ -75,12 +91,9 @@ export function createFoldRequestHandler(
                         ),
                     },
                 ],
-                messageId: generateAutomaticPromptMessageId(
-                    sessionID,
-                    data.assistantMessageID,
-                    event.created,
-                ),
+                messageId,
             })
+            undelivered.set(sessionID, messageId)
             logger.info("Fold request sent", {
                 sessionId: sessionID,
                 contextTokens,
