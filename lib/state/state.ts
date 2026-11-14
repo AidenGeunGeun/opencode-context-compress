@@ -18,6 +18,7 @@ export function commitDurableSessionState(state: SessionState, candidate: Sessio
     state.compressSummaries = candidate.compressSummaries
     state.managementTurns = candidate.managementTurns
     state.pruneOff = candidate.pruneOff
+    state.tokenThreshold = candidate.tokenThreshold
     state.lastCompaction = candidate.lastCompaction
     state.hasPersistedState = candidate.hasPersistedState
     state.persistedLastUpdated = candidate.persistedLastUpdated
@@ -42,6 +43,7 @@ function applyPersistedState(
     state.compressSummaries = persistedState.compressSummaries || []
     state.managementTurns = persistedState.managementTurns || []
     state.pruneOff = persistedState.pruneOff
+    state.tokenThreshold = persistedState.tokenThreshold
     state.lastCompaction = persistedState.lastCompaction ?? 0
     state.hasPersistedState = true
     state.persistedLastUpdated = persistedState.lastUpdated || null

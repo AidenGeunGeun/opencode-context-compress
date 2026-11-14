@@ -91,6 +91,8 @@ Edits to `compress.jsonc` apply from the next request or `/compress` command, wi
 - `/compress manage [instruction]` asks the agent for a fold now; the instruction guides its summary.
 - `/compress prune [status|on|off]` pauses or resumes background pruning for this session. Outputs pruned so far
   stay pruned, because restoring them would rewrite the prompt cache and grow the context at once.
+- `/compress threshold [N|reset]` shows or sets this session's `tokenThreshold`, a whole token count; `reset`
+  returns to the configured one. The context window share still applies.
 - `/compress context` and `/compress help` post feedback without a model call.
   OpenCode may hold that feedback in the session queue until the next delivery.
 - `compress({ summary })` replaces the whole conversation with the summary after the current step.

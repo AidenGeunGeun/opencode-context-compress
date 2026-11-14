@@ -136,6 +136,7 @@ export async function inheritForkCompression(
                 : {}),
         })),
         pruneOff: parentState.state.pruneOff,
+        tokenThreshold: parentState.state.tokenThreshold,
         lastCompaction: parentState.state.lastCompaction ?? 0,
     }
     if (!(await saveSessionState(candidate, logger)))

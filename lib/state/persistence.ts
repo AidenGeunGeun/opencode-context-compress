@@ -24,6 +24,7 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
     pruneOff?: boolean
+    tokenThreshold?: number
     lastCompaction?: number
     lastUpdated: string
 }
@@ -40,6 +41,7 @@ interface PersistedSessionStateFile {
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
     pruneOff?: unknown
+    tokenThreshold?: unknown
     lastCompaction?: unknown
     lastUpdated: string
 }
@@ -281,6 +283,7 @@ export async function saveSessionState(
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             ...(sessionState.pruneOff ? { pruneOff: true } : {}),
+            ...(sessionState.tokenThreshold ? { tokenThreshold: sessionState.tokenThreshold } : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
                 : {}),
@@ -408,6 +411,9 @@ export async function loadSessionState(
         compressSummaries,
         managementTurns,
         ...(state.pruneOff === true ? { pruneOff: true } : {}),
+        ...(Number.isSafeInteger(state.tokenThreshold) && Number(state.tokenThreshold) > 0
+            ? { tokenThreshold: Number(state.tokenThreshold) }
+            : {}),
         ...(typeof state.lastCompaction === "number" &&
         Number.isFinite(state.lastCompaction) &&
         state.lastCompaction > 0

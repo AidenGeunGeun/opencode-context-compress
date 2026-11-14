@@ -110,6 +110,8 @@ export interface SessionState {
      * restoring them would rewrite the prompt cache and grow the context at once.
      */
     pruneOff?: boolean
+    /** Set by `/compress threshold N`: this session's token limit in place of the configured one. */
+    tokenThreshold?: number
     /** Latest native compaction whose compression-state reset was durably reconciled. */
     lastCompaction: number
     /** Runtime-only model metadata resolved from the host model list on each model request. */
