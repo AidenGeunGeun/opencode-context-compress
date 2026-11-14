@@ -4,6 +4,7 @@ import { handleContextCommand } from "./context.js";
 import { handleHelpCommand } from "./help.js";
 import { handleManageCommand } from "./manage.js";
 import { handlePruneCommand } from "./prune.js";
+import { handleThresholdCommand } from "./threshold.js";
 export async function handleCompressCommand(input, dependencies) {
     if (!dependencies.config.commands.enabled || input.command !== "compress")
         return false;
@@ -35,6 +36,18 @@ export async function handleCompressCommand(input, dependencies) {
             client,
             stateManager,
             state,
+            logger,
+            sessionId: input.sessionID,
+            arguments: args.slice(1),
+        });
+        return true;
+    }
+    if (subcommand === "threshold") {
+        await handleThresholdCommand({
+            client,
+            stateManager,
+            state,
+            config,
             logger,
             sessionId: input.sessionID,
             arguments: args.slice(1),

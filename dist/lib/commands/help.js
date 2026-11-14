@@ -10,6 +10,7 @@ function formatHelpMessage() {
     lines.push("- `/compress context` — Show token usage breakdown for current session");
     lines.push("- `/compress manage [instruction]` — Ask the agent to fold the context now, optionally with your guidance for the summary");
     lines.push("- `/compress prune [status|on|off]` — Pause or resume background pruning for this session; pruned outputs stay pruned");
+    lines.push("- `/compress threshold [N|reset]` — Show or set this session's fold threshold in tokens; `reset` returns to the config value");
     lines.push("- `/compress help` — Show this command list");
     return lines.join("\n");
 }

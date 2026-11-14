@@ -179,6 +179,7 @@ export async function saveSessionState(sessionState, logger, sessionName) {
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
             ...(sessionState.pruneOff ? { pruneOff: true } : {}),
+            ...(sessionState.tokenThreshold ? { tokenThreshold: sessionState.tokenThreshold } : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
                 : {}),
@@ -287,6 +288,9 @@ export async function loadSessionState(sessionId, logger, messages) {
         compressSummaries,
         managementTurns,
         ...(state.pruneOff === true ? { pruneOff: true } : {}),
+        ...(Number.isSafeInteger(state.tokenThreshold) && Number(state.tokenThreshold) > 0
+            ? { tokenThreshold: Number(state.tokenThreshold) }
+            : {}),
         ...(typeof state.lastCompaction === "number" &&
             Number.isFinite(state.lastCompaction) &&
             state.lastCompaction > 0

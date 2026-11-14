@@ -835,6 +835,7 @@ async function saveSessionState(sessionState, logger, sessionName) {
       compressSummaries: sessionState.compressSummaries,
       managementTurns: sessionState.managementTurns,
       ...sessionState.pruneOff ? { pruneOff: true } : {},
+      ...sessionState.tokenThreshold ? { tokenThreshold: sessionState.tokenThreshold } : {},
       ...sessionState.lastCompaction > 0 ? { lastCompaction: sessionState.lastCompaction } : {},
       lastUpdated
     };
@@ -923,6 +924,7 @@ async function loadSessionState(sessionId, logger, messages) {
     compressSummaries,
     managementTurns,
     ...state.pruneOff === true ? { pruneOff: true } : {},
+    ...Number.isSafeInteger(state.tokenThreshold) && Number(state.tokenThreshold) > 0 ? { tokenThreshold: Number(state.tokenThreshold) } : {},
     ...typeof state.lastCompaction === "number" && Number.isFinite(state.lastCompaction) && state.lastCompaction > 0 ? { lastCompaction: state.lastCompaction } : {},
     lastUpdated: state.lastUpdated
   };
@@ -972,6 +974,7 @@ function commitDurableSessionState(state, candidate) {
   state.compressSummaries = candidate.compressSummaries;
   state.managementTurns = candidate.managementTurns;
   state.pruneOff = candidate.pruneOff;
+  state.tokenThreshold = candidate.tokenThreshold;
   state.lastCompaction = candidate.lastCompaction;
   state.hasPersistedState = candidate.hasPersistedState;
   state.persistedLastUpdated = candidate.persistedLastUpdated;
@@ -989,6 +992,7 @@ function applyPersistedState(state, persisted) {
   state.compressSummaries = persistedState.compressSummaries || [];
   state.managementTurns = persistedState.managementTurns || [];
   state.pruneOff = persistedState.pruneOff;
+  state.tokenThreshold = persistedState.tokenThreshold;
   state.lastCompaction = persistedState.lastCompaction ?? 0;
   state.hasPersistedState = true;
   state.persistedLastUpdated = persistedState.lastUpdated || null;
@@ -1448,6 +1452,7 @@ function formatHelpMessage() {
   lines.push("- `/compress context` \u2014 Show token usage breakdown for current session");
   lines.push("- `/compress manage [instruction]` \u2014 Ask the agent to fold the context now, optionally with your guidance for the summary");
   lines.push("- `/compress prune [status|on|off]` \u2014 Pause or resume background pruning for this session; pruned outputs stay pruned");
+  lines.push("- `/compress threshold [N|reset]` \u2014 Show or set this session's fold threshold in tokens; `reset` returns to the config value");
   lines.push("- `/compress help` \u2014 Show this command list");
   return lines.join(`
 `);
@@ -1561,6 +1566,117 @@ async function handlePruneCommand(ctx) {
   await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
 }
 
+// lib/fold-request.ts
+import { createHash as createHash2 } from "crypto";
+var REPEAT_TOKENS = 1e5;
+function createFoldRequestHandler(client, stateManager, logger, config, pending, acceptsSession) {
+  const levels = new Map;
+  const undelivered = new Map;
+  return async (input) => {
+    const event = isRecord(input) ? input : {};
+    const data = isRecord(event.data) ? event.data : {};
+    const sessionID = data.sessionID;
+    if (typeof sessionID !== "string")
+      return;
+    if ((event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") && data.inboxID === undelivered.get(sessionID))
+      undelivered.delete(sessionID);
+    if (event.type !== "session.step.ended")
+      return;
+    if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number")
+      return;
+    if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
+      return;
+    if (pending.has(sessionID))
+      return;
+    const tokens = isRecord(data.tokens) ? data.tokens : {};
+    const cache = isRecord(tokens.cache) ? tokens.cache : {};
+    const contextTokens = [
+      tokens.input,
+      tokens.output,
+      tokens.reasoning,
+      cache.read,
+      cache.write
+    ].reduce((sum, value) => sum + (typeof value === "number" && value > 0 ? value : 0), 0);
+    const threshold = foldThreshold(config, stateManager.get(sessionID));
+    const thresholdTokens = threshold.tokens;
+    const level = contextTokens < thresholdTokens ? 0 : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1;
+    if (level > (levels.get(sessionID) ?? 0) && !undelivered.has(sessionID)) {
+      if (!await acceptsSession(sessionID, event))
+        return;
+      const session = await client.session.get({ sessionID });
+      if (session.parentID !== undefined && data.finish === "stop")
+        return;
+      const messageId = generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created);
+      const number = (value) => value.toLocaleString("en-US");
+      await promptSession(client, {
+        sessionId: sessionID,
+        parts: [
+          {
+            type: "text",
+            text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${threshold.basis}). The plugin sent this request automatically.`, session.parentID !== undefined)
+          }
+        ],
+        messageId
+      });
+      undelivered.set(sessionID, messageId);
+      logger.info("Fold request sent", {
+        sessionId: sessionID,
+        contextTokens,
+        thresholdTokens
+      });
+    }
+    if (level === 0)
+      levels.delete(sessionID);
+    else
+      levels.set(sessionID, level);
+  };
+}
+function foldThreshold(config, state) {
+  const tokenThreshold = state.tokenThreshold ?? config.autoCompression.tokenThreshold;
+  const contextLimit = state.modelContext?.contextLimit;
+  const ratioThreshold = contextLimit ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio) : undefined;
+  if (ratioThreshold !== undefined && ratioThreshold <= tokenThreshold)
+    return {
+      tokens: ratioThreshold,
+      basis: `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window`
+    };
+  return {
+    tokens: tokenThreshold,
+    basis: state.tokenThreshold === undefined ? "the system-wide absolute token limit" : "this session's token limit"
+  };
+}
+function generateAutomaticPromptMessageId(sessionId, triggerId, time) {
+  const inverted = ~(BigInt(Math.floor(time)) * 0x1000n);
+  const prefix = Array.from({ length: 6 }, (_, index) => Number(inverted >> BigInt(40 - 8 * index) & 0xffn).toString(16).padStart(2, "0")).join("");
+  const identity = JSON.stringify(["automatic-compression", sessionId, triggerId]);
+  return `msg_${prefix}${createHash2("sha256").update(identity).digest("hex").slice(0, 14)}`;
+}
+
+// lib/commands/threshold.ts
+var THRESHOLD_USAGE = "Usage: `/compress threshold [N|reset]`, where N is a whole number of tokens above zero.";
+async function handleThresholdCommand(ctx) {
+  const action = ctx.arguments.length <= 1 ? ctx.arguments[0]?.toLowerCase() ?? "status" : "";
+  const value = /^[0-9]+$/.test(action) ? Number(action) : 0;
+  const response = action === "status" || action === "reset" || Number.isSafeInteger(value) && value > 0 ? await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
+    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
+    if (action !== "status") {
+      if (!ctx.state.persistenceSynchronized)
+        return "The threshold is unavailable because saved session state could not be loaded. Nothing was changed.";
+      const candidate = {
+        ...ctx.state,
+        tokenThreshold: action === "reset" ? undefined : value
+      };
+      if (!await saveSessionState(candidate, ctx.logger))
+        return "The threshold could not be saved. Nothing was changed.";
+      commitDurableSessionState(ctx.state, candidate);
+    }
+    const threshold = foldThreshold(ctx.config, ctx.state);
+    return `The fold threshold for this session is ~${threshold.tokens.toLocaleString("en-US")} tokens (${threshold.basis}).`;
+  }) : THRESHOLD_USAGE;
+  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
+}
+
 // lib/commands/route.ts
 async function handleCompressCommand(input, dependencies) {
   if (!dependencies.config.commands.enabled || input.command !== "compress")
@@ -1599,83 +1715,20 @@ async function handleCompressCommand(input, dependencies) {
     });
     return true;
   }
+  if (subcommand === "threshold") {
+    await handleThresholdCommand({
+      client,
+      stateManager,
+      state,
+      config,
+      logger,
+      sessionId: input.sessionID,
+      arguments: args.slice(1)
+    });
+    return true;
+  }
   await handleHelpCommand({ client, logger, sessionId: input.sessionID });
   return true;
-}
-
-// lib/fold-request.ts
-import { createHash as createHash2 } from "crypto";
-var REPEAT_TOKENS = 1e5;
-function createFoldRequestHandler(client, stateManager, logger, config, pending, acceptsSession) {
-  const levels = new Map;
-  const undelivered = new Map;
-  return async (input) => {
-    const event = isRecord(input) ? input : {};
-    const data = isRecord(event.data) ? event.data : {};
-    const sessionID = data.sessionID;
-    if (typeof sessionID !== "string")
-      return;
-    if ((event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") && data.inboxID === undelivered.get(sessionID))
-      undelivered.delete(sessionID);
-    if (event.type !== "session.step.ended")
-      return;
-    if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number")
-      return;
-    if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
-      return;
-    if (pending.has(sessionID))
-      return;
-    const tokens = isRecord(data.tokens) ? data.tokens : {};
-    const cache = isRecord(tokens.cache) ? tokens.cache : {};
-    const contextTokens = [
-      tokens.input,
-      tokens.output,
-      tokens.reasoning,
-      cache.read,
-      cache.write
-    ].reduce((sum, value) => sum + (typeof value === "number" && value > 0 ? value : 0), 0);
-    const tokenThreshold = config.autoCompression.tokenThreshold;
-    const contextLimit = stateManager.get(sessionID).modelContext?.contextLimit;
-    const ratioThreshold = contextLimit ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio) : undefined;
-    const thresholdTokens = Math.min(ratioThreshold ?? tokenThreshold, tokenThreshold);
-    const level = contextTokens < thresholdTokens ? 0 : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1;
-    if (level > (levels.get(sessionID) ?? 0) && !undelivered.has(sessionID)) {
-      if (!await acceptsSession(sessionID, event))
-        return;
-      const session = await client.session.get({ sessionID });
-      if (session.parentID !== undefined && data.finish === "stop")
-        return;
-      const messageId = generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created);
-      const number = (value) => value.toLocaleString("en-US");
-      const basis = ratioThreshold !== undefined && ratioThreshold <= tokenThreshold ? `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window` : "the system-wide absolute token limit";
-      await promptSession(client, {
-        sessionId: sessionID,
-        parts: [
-          {
-            type: "text",
-            text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`, session.parentID !== undefined)
-          }
-        ],
-        messageId
-      });
-      undelivered.set(sessionID, messageId);
-      logger.info("Fold request sent", {
-        sessionId: sessionID,
-        contextTokens,
-        thresholdTokens
-      });
-    }
-    if (level === 0)
-      levels.delete(sessionID);
-    else
-      levels.set(sessionID, level);
-  };
-}
-function generateAutomaticPromptMessageId(sessionId, triggerId, time) {
-  const inverted = ~(BigInt(Math.floor(time)) * 0x1000n);
-  const prefix = Array.from({ length: 6 }, (_, index) => Number(inverted >> BigInt(40 - 8 * index) & 0xffn).toString(16).padStart(2, "0")).join("");
-  const identity = JSON.stringify(["automatic-compression", sessionId, triggerId]);
-  return `msg_${prefix}${createHash2("sha256").update(identity).digest("hex").slice(0, 14)}`;
 }
 
 // lib/logger.ts
@@ -2732,6 +2785,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
       ...turn.protectedMessageIds ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) } : {}
     })),
     pruneOff: parentState.state.pruneOff,
+    tokenThreshold: parentState.state.tokenThreshold,
     lastCompaction: parentState.state.lastCompaction ?? 0
   };
   if (!await saveSessionState(candidate, logger))
@@ -2981,13 +3035,13 @@ async function ownsSession(context, sessionID, event) {
 }
 
 // index.ts
-var stage_default = Plugin.define({
+var context_compress_default = Plugin.define({
   id: "opencode-context-compress",
   setup
 });
 export {
-  stage_default as default
+  context_compress_default as default
 };
 
-//# debugId=05D750A7B9A578DD64756E2164756E21
+//# debugId=4C679B6268EACF8C64756E2164756E21
 //# sourceMappingURL=index.js.map

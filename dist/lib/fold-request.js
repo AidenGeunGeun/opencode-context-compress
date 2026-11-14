@@ -41,12 +41,8 @@ export function createFoldRequestHandler(client, stateManager, logger, config, p
             cache.read,
             cache.write,
         ].reduce((sum, value) => sum + (typeof value === "number" && value > 0 ? value : 0), 0);
-        const tokenThreshold = config.autoCompression.tokenThreshold;
-        const contextLimit = stateManager.get(sessionID).modelContext?.contextLimit;
-        const ratioThreshold = contextLimit
-            ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio)
-            : undefined;
-        const thresholdTokens = Math.min(ratioThreshold ?? tokenThreshold, tokenThreshold);
+        const threshold = foldThreshold(config, stateManager.get(sessionID));
+        const thresholdTokens = threshold.tokens;
         const level = contextTokens < thresholdTokens
             ? 0
             : Math.floor((contextTokens - thresholdTokens) / REPEAT_TOKENS) + 1;
@@ -59,15 +55,12 @@ export function createFoldRequestHandler(client, stateManager, logger, config, p
                 return;
             const messageId = generateAutomaticPromptMessageId(sessionID, data.assistantMessageID, event.created);
             const number = (value) => value.toLocaleString("en-US");
-            const basis = ratioThreshold !== undefined && ratioThreshold <= tokenThreshold
-                ? `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window`
-                : "the system-wide absolute token limit";
             await promptSession(client, {
                 sessionId: sessionID,
                 parts: [
                     {
                         type: "text",
-                        text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${basis}). The plugin sent this request automatically.`, session.parentID !== undefined),
+                        text: renderFoldRequest(`Working context reached ~${number(contextTokens)} tokens; the fold threshold is ~${number(thresholdTokens)} tokens (${threshold.basis}). The plugin sent this request automatically.`, session.parentID !== undefined),
                     },
                 ],
                 messageId,
@@ -83,6 +76,25 @@ export function createFoldRequestHandler(client, stateManager, logger, config, p
             levels.delete(sessionID);
         else
             levels.set(sessionID, level);
+    };
+}
+/** Where the first fold request goes out: the token limit or the context window share, whichever is lower. */
+export function foldThreshold(config, state) {
+    const tokenThreshold = state.tokenThreshold ?? config.autoCompression.tokenThreshold;
+    const contextLimit = state.modelContext?.contextLimit;
+    const ratioThreshold = contextLimit
+        ? Math.floor(contextLimit * config.autoCompression.contextWindowRatio)
+        : undefined;
+    if (ratioThreshold !== undefined && ratioThreshold <= tokenThreshold)
+        return {
+            tokens: ratioThreshold,
+            basis: `${Math.round(config.autoCompression.contextWindowRatio * 100)}% of the model-reported context window`,
+        };
+    return {
+        tokens: tokenThreshold,
+        basis: state.tokenThreshold === undefined
+            ? "the system-wide absolute token limit"
+            : "this session's token limit",
     };
 }
 // The host deduplicates prompt admission by ID, including across plugin instances.

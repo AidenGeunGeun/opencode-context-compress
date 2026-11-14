@@ -17,6 +17,7 @@ export interface PersistedSessionState {
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
     pruneOff?: boolean;
+    tokenThreshold?: number;
     lastCompaction?: number;
     lastUpdated: string;
 }
