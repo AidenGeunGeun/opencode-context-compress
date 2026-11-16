@@ -130,7 +130,7 @@ export async function setup(context) {
             // A prune moves the frontier, so the request anchors both: it resumes the cache at the old
             // frontier and writes the new one for the next prune.
             const before = anchored ? pruneFrontier(messages, state) : undefined;
-            if (kind === "context" && !state.pruneOff)
+            if (kind === "context")
                 await pruneStaleToolOutputs(messages, state, logger, anchored);
             const after = anchored ? pruneFrontier(messages, state) : undefined;
             transformed = transformV2Messages(messages, stubs ? { ...state, compressed: { ...state.compressed, toolIds: stubs } } : state, event.messages);

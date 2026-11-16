@@ -16,7 +16,7 @@ export interface PersistedSessionState {
     anthropicStubIds?: string[];
     compressSummaries: CompressSummary[];
     managementTurns: ManagementTurn[];
-    pruneOff?: boolean;
+    foldOff?: boolean;
     tokenThreshold?: number;
     lastCompaction?: number;
     lastUpdated: string;

@@ -834,7 +834,7 @@ async function saveSessionState(sessionState, logger, sessionName) {
       ...sessionState.anthropicStubIds ? { anthropicStubIds: [...sessionState.anthropicStubIds] } : {},
       compressSummaries: sessionState.compressSummaries,
       managementTurns: sessionState.managementTurns,
-      ...sessionState.pruneOff ? { pruneOff: true } : {},
+      ...sessionState.foldOff ? { foldOff: true } : {},
       ...sessionState.tokenThreshold ? { tokenThreshold: sessionState.tokenThreshold } : {},
       ...sessionState.lastCompaction > 0 ? { lastCompaction: sessionState.lastCompaction } : {},
       lastUpdated
@@ -923,7 +923,7 @@ async function loadSessionState(sessionId, logger, messages) {
     ...Array.isArray(state.anthropicStubIds) ? { anthropicStubIds: state.anthropicStubIds } : {},
     compressSummaries,
     managementTurns,
-    ...state.pruneOff === true ? { pruneOff: true } : {},
+    ...state.foldOff === true ? { foldOff: true } : {},
     ...Number.isSafeInteger(state.tokenThreshold) && Number(state.tokenThreshold) > 0 ? { tokenThreshold: Number(state.tokenThreshold) } : {},
     ...typeof state.lastCompaction === "number" && Number.isFinite(state.lastCompaction) && state.lastCompaction > 0 ? { lastCompaction: state.lastCompaction } : {},
     lastUpdated: state.lastUpdated
@@ -973,7 +973,7 @@ function commitDurableSessionState(state, candidate) {
   state.anthropicStubIds = candidate.anthropicStubIds;
   state.compressSummaries = candidate.compressSummaries;
   state.managementTurns = candidate.managementTurns;
-  state.pruneOff = candidate.pruneOff;
+  state.foldOff = candidate.foldOff;
   state.tokenThreshold = candidate.tokenThreshold;
   state.lastCompaction = candidate.lastCompaction;
   state.hasPersistedState = candidate.hasPersistedState;
@@ -991,7 +991,7 @@ function applyPersistedState(state, persisted) {
   state.anthropicStubIds = persistedState.anthropicStubIds && new Set(persistedState.anthropicStubIds);
   state.compressSummaries = persistedState.compressSummaries || [];
   state.managementTurns = persistedState.managementTurns || [];
-  state.pruneOff = persistedState.pruneOff;
+  state.foldOff = persistedState.foldOff;
   state.tokenThreshold = persistedState.tokenThreshold;
   state.lastCompaction = persistedState.lastCompaction ?? 0;
   state.hasPersistedState = true;
@@ -1444,6 +1444,30 @@ async function handleContextCommand(ctx) {
   await sendIgnoredMessage(client, sessionId, message, logger);
 }
 
+// lib/commands/fold.ts
+async function handleFoldCommand(ctx) {
+  const response = await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
+    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
+    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
+    if (!ctx.state.persistenceSynchronized)
+      return "Fold settings are unavailable because saved session state could not be loaded. Nothing was changed.";
+    const off = ctx.state.foldOff === true;
+    if (ctx.action === "status")
+      return `Automatic fold requests are ${off ? "off" : "on"} for this session.`;
+    if (ctx.action === "off" === off)
+      return `Automatic fold requests are already ${ctx.action} for this session.`;
+    const candidate = {
+      ...ctx.state,
+      foldOff: ctx.action === "off" ? true : undefined
+    };
+    if (!await saveSessionState(candidate, ctx.logger))
+      return "Fold settings could not be saved. Nothing was changed.";
+    commitDurableSessionState(ctx.state, candidate);
+    return ctx.action === "off" ? "Automatic fold requests are off for this session. `/compress manage` still folds on demand." : "Automatic fold requests are on for this session.";
+  });
+  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
+}
+
 // lib/commands/help.ts
 function formatHelpMessage() {
   const lines = [];
@@ -1451,7 +1475,7 @@ function formatHelpMessage() {
   lines.push("");
   lines.push("- `/compress context` \u2014 Show token usage breakdown for current session");
   lines.push("- `/compress manage [instruction]` \u2014 Ask the agent to fold the context now, optionally with your guidance for the summary");
-  lines.push("- `/compress prune [status|on|off]` \u2014 Pause or resume background pruning for this session; pruned outputs stay pruned");
+  lines.push("- `/compress off`, `/compress on`, `/compress status` \u2014 Stop, resume, or show automatic fold requests for this session");
   lines.push("- `/compress threshold [N|reset]` \u2014 Show or set this session's fold threshold in tokens; `reset` returns to the config value");
   lines.push("- `/compress help` \u2014 Show this command list");
   return lines.join(`
@@ -1540,32 +1564,6 @@ ${instruction}
   });
 }
 
-// lib/commands/prune.ts
-var PRUNE_USAGE = "Usage: `/compress prune [status|on|off]`";
-async function handlePruneCommand(ctx) {
-  const action = ctx.arguments.length <= 1 ? ctx.arguments[0]?.toLowerCase() ?? "status" : "";
-  const response = ["status", "on", "off"].includes(action) ? await ctx.stateManager.runExclusive(ctx.sessionId, async () => {
-    const messages = await listSessionMessages(ctx.client, ctx.sessionId);
-    await reconcileSessionLifecycle(ctx.state, ctx.sessionId, ctx.logger, messages);
-    if (!ctx.state.persistenceSynchronized)
-      return "Pruning settings are unavailable because saved session state could not be loaded. Nothing was changed.";
-    const off = ctx.state.pruneOff === true;
-    if (action === "status")
-      return `Background pruning is ${off ? "off" : "on"} for this session.`;
-    if (action === "off" === off)
-      return `Background pruning is already ${action} for this session.`;
-    const candidate = {
-      ...ctx.state,
-      pruneOff: action === "off" ? true : undefined
-    };
-    if (!await saveSessionState(candidate, ctx.logger))
-      return "Pruning settings could not be saved. Nothing was changed.";
-    commitDurableSessionState(ctx.state, candidate);
-    return action === "off" ? "Background pruning is off for this session. Outputs pruned so far stay pruned." : "Background pruning is on for this session.";
-  }) : PRUNE_USAGE;
-  await sendIgnoredMessage(ctx.client, ctx.sessionId, response, ctx.logger);
-}
-
 // lib/fold-request.ts
 import { createHash as createHash2 } from "crypto";
 var REPEAT_TOKENS = 1e5;
@@ -1585,6 +1583,8 @@ function createFoldRequestHandler(client, stateManager, logger, config, pending,
     if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number")
       return;
     if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
+      return;
+    if (stateManager.get(sessionID).foldOff)
       return;
     if (pending.has(sessionID))
       return;
@@ -1704,14 +1704,14 @@ async function handleCompressCommand(input, dependencies) {
     });
     return true;
   }
-  if (subcommand === "prune") {
-    await handlePruneCommand({
+  if (["on", "off", "status"].includes(subcommand) && args.length === 1) {
+    await handleFoldCommand({
       client,
       stateManager,
       state,
       logger,
       sessionId: input.sessionID,
-      arguments: args.slice(1)
+      action: subcommand
     });
     return true;
   }
@@ -2784,7 +2784,7 @@ async function inheritForkCompression(session, client, state, logger, childMessa
       ...turn.completedMessageId ? { completedMessageId: messageID(turn.completedMessageId) } : {},
       ...turn.protectedMessageIds ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) } : {}
     })),
-    pruneOff: parentState.state.pruneOff,
+    foldOff: parentState.state.foldOff,
     tokenThreshold: parentState.state.tokenThreshold,
     lastCompaction: parentState.state.lastCompaction ?? 0
   };
@@ -2915,7 +2915,7 @@ async function setup(context) {
         state.anthropicStubIds ??= new Set(state.compressed.toolIds);
       const stubs = anthropic ? state.anthropicStubIds : undefined;
       const before = anchored ? pruneFrontier(messages, state) : undefined;
-      if (kind === "context" && !state.pruneOff)
+      if (kind === "context")
         await pruneStaleToolOutputs(messages, state, logger, anchored);
       const after = anchored ? pruneFrontier(messages, state) : undefined;
       transformed = transformV2Messages(messages, stubs ? { ...state, compressed: { ...state.compressed, toolIds: stubs } } : state, event.messages);
@@ -3043,5 +3043,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=4C679B6268EACF8C64756E2164756E21
+//# debugId=7AC834FA4A243F1464756E2164756E21
 //# sourceMappingURL=index.js.map

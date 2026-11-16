@@ -1,9 +1,9 @@
 import { listSessionMessages } from "../sdk/client.js";
 import { reconcileSessionLifecycle } from "../state/index.js";
 import { handleContextCommand } from "./context.js";
+import { handleFoldCommand } from "./fold.js";
 import { handleHelpCommand } from "./help.js";
 import { handleManageCommand } from "./manage.js";
-import { handlePruneCommand } from "./prune.js";
 import { handleThresholdCommand } from "./threshold.js";
 export async function handleCompressCommand(input, dependencies) {
     if (!dependencies.config.commands.enabled || input.command !== "compress")
@@ -31,14 +31,14 @@ export async function handleCompressCommand(input, dependencies) {
         });
         return true;
     }
-    if (subcommand === "prune") {
-        await handlePruneCommand({
+    if (["on", "off", "status"].includes(subcommand) && args.length === 1) {
+        await handleFoldCommand({
             client,
             stateManager,
             state,
             logger,
             sessionId: input.sessionID,
-            arguments: args.slice(1),
+            action: subcommand,
         });
         return true;
     }

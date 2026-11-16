@@ -29,6 +29,8 @@ export function createFoldRequestHandler(client, stateManager, logger, config, p
             return;
         if (!config.autoCompression.enabled || config.tools.compress.permission === "deny")
             return;
+        if (stateManager.get(sessionID).foldOff)
+            return;
         // This step called `compress`. A request sent now would arrive after the fold and fold again.
         if (pending.has(sessionID))
             return;
