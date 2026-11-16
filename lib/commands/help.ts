@@ -23,7 +23,7 @@ function formatHelpMessage(): string {
         "- `/compress manage [instruction]` — Ask the agent to fold the context now, optionally with your guidance for the summary",
     )
     lines.push(
-        "- `/compress prune [status|on|off]` — Pause or resume background pruning for this session; pruned outputs stay pruned",
+        "- `/compress off`, `/compress on`, `/compress status` — Stop, resume, or show automatic fold requests for this session",
     )
     lines.push(
         "- `/compress threshold [N|reset]` — Show or set this session's fold threshold in tokens; `reset` returns to the config value",

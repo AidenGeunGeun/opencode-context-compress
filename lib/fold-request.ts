@@ -39,6 +39,7 @@ export function createFoldRequestHandler(
         if (event.type !== "session.step.ended") return
         if (typeof data.assistantMessageID !== "string" || typeof event.created !== "number") return
         if (!config.autoCompression.enabled || config.tools.compress.permission === "deny") return
+        if (stateManager.get(sessionID).foldOff) return
         // This step called `compress`. A request sent now would arrive after the fold and fold again.
         if (pending.has(sessionID)) return
 

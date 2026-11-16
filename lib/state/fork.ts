@@ -135,7 +135,7 @@ export async function inheritForkCompression(
                 ? { protectedMessageIds: turn.protectedMessageIds.map(messageID) }
                 : {}),
         })),
-        pruneOff: parentState.state.pruneOff,
+        foldOff: parentState.state.foldOff,
         tokenThreshold: parentState.state.tokenThreshold,
         lastCompaction: parentState.state.lastCompaction ?? 0,
     }

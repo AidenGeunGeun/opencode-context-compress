@@ -23,7 +23,7 @@ export interface PersistedSessionState {
     anthropicStubIds?: string[]
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    pruneOff?: boolean
+    foldOff?: boolean
     tokenThreshold?: number
     lastCompaction?: number
     lastUpdated: string
@@ -40,7 +40,7 @@ interface PersistedSessionStateFile {
     anthropicStubIds?: string[]
     compressSummaries: MaybeBackfilledCompressSummary[]
     managementTurns?: MaybePersistedManagementTurn[]
-    pruneOff?: unknown
+    foldOff?: unknown
     tokenThreshold?: unknown
     lastCompaction?: unknown
     lastUpdated: string
@@ -282,7 +282,7 @@ export async function saveSessionState(
                 : {}),
             compressSummaries: sessionState.compressSummaries,
             managementTurns: sessionState.managementTurns,
-            ...(sessionState.pruneOff ? { pruneOff: true } : {}),
+            ...(sessionState.foldOff ? { foldOff: true } : {}),
             ...(sessionState.tokenThreshold ? { tokenThreshold: sessionState.tokenThreshold } : {}),
             ...(sessionState.lastCompaction > 0
                 ? { lastCompaction: sessionState.lastCompaction }
@@ -410,7 +410,7 @@ export async function loadSessionState(
             : {}),
         compressSummaries,
         managementTurns,
-        ...(state.pruneOff === true ? { pruneOff: true } : {}),
+        ...(state.foldOff === true ? { foldOff: true } : {}),
         ...(Number.isSafeInteger(state.tokenThreshold) && Number(state.tokenThreshold) > 0
             ? { tokenThreshold: Number(state.tokenThreshold) }
             : {}),

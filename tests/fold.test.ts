@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import {
+    type CommandFake,
     type CompactInput,
     type CompactionHookInput,
     fakeSession,
@@ -27,6 +28,7 @@ after(() => rm(root, { recursive: true, force: true }))
 async function start() {
     const registration = { dispose: async () => undefined }
     const tools: ToolFake[] = []
+    const commands: CommandFake[] = []
     const prompts: PromptInput[] = []
     const compactions: CompactInput[] = []
     let compactionHook: ((input: CompactionHookInput) => Promise<void> | void) | undefined
@@ -46,7 +48,12 @@ async function start() {
     await setup(
         hostContext({
             location: { directory: root },
-            command: { transform: async () => registration },
+            command: {
+                transform: async (callback) => {
+                    callback({ add: (command) => commands.push(command) })
+                    return registration
+                },
+            },
             tool: {
                 transform: async (callback) => {
                     callback({ add: (tool) => tools.push(tool) })
@@ -79,6 +86,10 @@ async function start() {
     return {
         prompts,
         compactions,
+        command: (sessionID: string, text: string) =>
+            commands
+                .find((item) => item.name === "compress")
+                ?.execute({ sessionID, prompt: { text }, delivery: "queue" }),
         compress: (sessionID: string, summary: string) =>
             tool.execute(
                 { summary },
@@ -173,6 +184,29 @@ describe("fold request", () => {
         assert.equal(await sentAfter(101_000), 2)
         assert.equal(await sentAfter(500), 2)
         assert.equal(await sentAfter(1_000), 3)
+    })
+
+    it("is not sent while the session has fold requests turned off", async () => {
+        const plugin = await start()
+        let step = 0
+        const stepEnded = (input: number) =>
+            plugin.send({
+                type: "session.step.ended",
+                data: {
+                    sessionID: "s-off",
+                    assistantMessageID: `step-${++step}`,
+                    tokens: { input, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                },
+            })
+
+        await plugin.command("s-off", "off")
+        await stepEnded(1_000)
+        await stepEnded(101_000)
+        assert.equal(plugin.prompts.length, 0)
+
+        await plugin.command("s-off", "on")
+        await stepEnded(101_000)
+        assert.equal(plugin.prompts.length, 1)
     })
 
     it("is not queued again while an earlier request is undelivered, which would fold twice", async () => {

@@ -105,11 +105,8 @@ export interface SessionState {
     anthropicStubIds?: Set<string>
     compressSummaries: CompressSummary[]
     managementTurns: ManagementTurn[]
-    /**
-     * Set by `/compress prune off`: no new background prunes. Already pruned outputs stay pruned, because
-     * restoring them would rewrite the prompt cache and grow the context at once.
-     */
-    pruneOff?: boolean
+    /** Set by `/compress off`: no automatic fold requests for this session. */
+    foldOff?: boolean
     /** Set by `/compress threshold N`: this session's token limit in place of the configured one. */
     tokenThreshold?: number
     /** Latest native compaction whose compression-state reset was durably reconciled. */

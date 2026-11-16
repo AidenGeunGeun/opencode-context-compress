@@ -13,7 +13,7 @@ const { SessionStateManager } = await import("../lib/state/state.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
-const sessionId = "session-prune-command"
+const sessionId = "session-fold-command"
 const messages: WithParts[] = [
     {
         info: {
@@ -45,21 +45,17 @@ function createHarness() {
     }
 }
 
-describe("/compress prune", () => {
-    it("persists prune off and on, and a fresh state manager reads it back", async () => {
+describe("/compress on|off", () => {
+    it("persists fold requests off and on, and a fresh state manager reads it back", async () => {
         const run = createHarness()
 
-        assert.match(await run("prune"), /pruning is on for this session/)
-        assert.match(await run("prune on"), /already on/)
-        assert.match(
-            await run("prune off"),
-            /off for this session\. Outputs pruned so far stay pruned/,
-        )
+        assert.match(await run("status"), /fold requests are on for this session/)
+        assert.match(await run("on"), /already on/)
+        assert.match(await run("off"), /off for this session/)
         assert.equal((await loadSessionState(sessionId, logger)).status, "loaded")
         const fresh = createHarness()
-        assert.match(await fresh("prune status"), /pruning is off/)
-        assert.match(await fresh("prune on"), /pruning is on for this session/)
-        assert.match(await createHarness()("prune"), /pruning is on/)
-        assert.match(await run("prune maybe"), /Usage: `\/compress prune/)
+        assert.match(await fresh("status"), /fold requests are off/)
+        assert.match(await fresh("on"), /fold requests are on for this session/)
+        assert.match(await createHarness()("status"), /fold requests are on/)
     })
 })

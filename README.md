@@ -89,8 +89,9 @@ Edits to `compress.jsonc` apply from the next request or `/compress` command, wi
 ## Use
 
 - `/compress manage [instruction]` asks the agent for a fold now; the instruction guides its summary.
-- `/compress prune [status|on|off]` pauses or resumes background pruning for this session. Outputs pruned so far
-  stay pruned, because restoring them would rewrite the prompt cache and grow the context at once.
+- `/compress off` stops automatic fold requests for this session, and `/compress on` resumes them; `/compress status`
+  shows which applies. Pruning and `/compress manage` keep working. Without folds the session grows until it reaches
+  the model's context limit, since native auto-compaction is off.
 - `/compress threshold [N|reset]` shows or sets this session's `tokenThreshold`, a whole token count; `reset`
   returns to the configured one. The context window share still applies.
 - `/compress context` and `/compress help` post feedback without a model call.
