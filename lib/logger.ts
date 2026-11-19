@@ -243,6 +243,21 @@ export class Logger {
         })
     }
 
+    /** Appends one JSON record to `daily/<day>.<name>.log`, which the daily log's cleanup also deletes. */
+    async record(name: string, value: unknown) {
+        if (!this.dailyEnabled) return
+        try {
+            const dailyLogDir = join(this.logDir, "daily")
+            await mkdir(dailyLogDir, { recursive: true })
+            const day = new Date().toISOString().split("T")[0]
+            await writeFile(join(dailyLogDir, `${day}.${name}.log`), `${JSON.stringify(value)}\n`, {
+                flag: "a",
+            })
+        } catch (error) {
+            console.error("context-compress: failed to write record", error)
+        }
+    }
+
     async saveContext(sessionId: string, messages: readonly unknown[]) {
         if (!this.contextEnabled) return
 

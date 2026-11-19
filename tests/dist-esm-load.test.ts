@@ -134,7 +134,7 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
             )
             assert.deepEqual(
                 [...hooks.keys()],
-                ["context", "generate", "compaction", "model.request"],
+                ["context", "generate", "compaction", "http.request", "model.request"],
             )
 
             await commands[0].execute({

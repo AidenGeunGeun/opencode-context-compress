@@ -68,7 +68,8 @@ session state, since losing it on reload stubs results Anthropic had only cleare
 prune reaches Anthropic as server-side clearing (`clear_tool_uses_20250919`), which the API does not
 count as an edit. The `x-opencode-tool-clearing` header names the oldest call to keep and the protected
 tools, and `anthropic-auth` turns it into the clearing config before signing. The full Anthropic thinking and cache
-rules are in `anthropic-auth`'s README, under Thinking and prompt cache.
+rules are in `anthropic-auth`'s README, under Thinking and prompt cache. `lib/prefix-watch.ts` logs every primary
+Anthropic request that does not extend the session's previous one to `logs/compress/daily/<day>.prefix.log`.
 
 OpenAI has no such marker. On the ChatGPT token-sharing route, a cache entry exists only at the exact
 end of an earlier request, and the API rejects `prompt_cache_breakpoint` and `prompt_cache_options`
