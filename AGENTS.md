@@ -94,7 +94,7 @@ turn-specific guidance in the fold request (`lib/prompts/fold-request.md`) inste
 - `lib/tools` owns the compress tool.
 - `lib/sdk` owns the client and session message listing.
 - `lib/ui` owns command feedback messages.
-- `lib/*.ts` (fold-request, config, logger, shared-utils, token-utils) own cross-cutting utilities.
+- `lib/*.ts` (fold-request, prefix-watch, config, logger, shared-utils, token-utils) own cross-cutting utilities.
 - `lib/prompts/*.md` are sources; `lib/prompts/_codegen` is generated. Do not edit generated files directly.
 - `compress.schema.json` is the JSON Schema for plugin configuration.
 - Build pipeline: `tsc` then `bun build index.ts --outdir dist` (ESM). The `prebuild` step runs `generate:prompts` first.

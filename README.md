@@ -36,15 +36,6 @@ conversation with OpenCode's own summary at a token count, without the documenta
 runs as a manual compaction, so it works with that setting. Manual `/compact` still gives OpenCode's
 own summary.
 
-## In practice
-
-From the maintainer's own OpenCode use:
-
-- Background pruning shipped on 2026-11-01. In the first 1.5 days after it, folds fell from 3.5 to
-  1.05 per 1,000 model steps (156 in 44,224 steps since 2026-10-18, against 15 in 14,249), and the
-  median growing step added 1,162 tokens of context instead of 1,538. The window is short and the
-  workload differed, so read this as early evidence.
-
 ## Install
 
 Requires OpenCode 2; the plugin is built against the `2.3.2` plugin API. OpenCode 1.x needs the
