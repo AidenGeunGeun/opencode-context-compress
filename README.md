@@ -47,7 +47,7 @@ From the maintainer's own OpenCode use:
 
 ## Install
 
-Requires OpenCode 2; the plugin is built against the `2.2.5` plugin API. OpenCode 1.x needs the
+Requires OpenCode 2; the plugin is built against the `2.3.2` plugin API. OpenCode 1.x needs the
 0.5 line, pinned so it does not resolve to this release:
 `"plugin": ["@skybluejacket/opencode-context-compress@0.5.0"]`.
 

@@ -8,7 +8,7 @@ import { setTimeout } from "node:timers/promises"
 
 type PluginInventory = { data: Array<{ id: string; state: { status: string } }> }
 
-test("OpenCode 2.2.5 activates compression and registers its command", {
+test("OpenCode 2.3.2 activates compression and registers its command", {
     timeout: 20_000,
 }, async () => {
     const root = await mkdtemp(join(tmpdir(), "context-compress-host-"))

@@ -224,7 +224,7 @@ test("a full fork through the parent's idle marker inherits its blocks", async (
         const { listSessionMessages } = await import("../lib/sdk/client.ts")
         const { Logger } = await import("../lib/logger.ts")
         const logger = new Logger({ daily: false, context: false })
-        // session.context() as OpenCode 2.2.5 projects it: a completed turn ends with an idle marker.
+        // session.context() as OpenCode 2.3.2 projects it: a completed turn ends with an idle marker.
         const projected = (prefix: string): ContextMessage[] => [
             { id: `${prefix}-0`, type: "user", text: "first", time: { created: 1 } },
             {

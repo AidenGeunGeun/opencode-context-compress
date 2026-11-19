@@ -39,7 +39,7 @@
     ],
     "dependencies": {
         "@anthropic-ai/tokenizer": "^0.0.4",
-        "@opencode/plugin": "2.2.5",
+        "@opencode/plugin": "2.3.2",
         "js-tiktoken": "^1.0.21",
         "jsonc-parser": "^3.3.1",
         "ulid": "^3.0.2",
@@ -47,7 +47,7 @@
     },
     "devDependencies": {
         "@biomejs/biome": "2.5.15",
-        "@opencode/cli": "2.2.5",
+        "@opencode/cli": "2.3.2",
         "@types/node": "^25.1.0",
         "tsx": "^4.21.0",
         "typescript": "^5.9.3"
