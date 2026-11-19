@@ -31,6 +31,8 @@ export declare class Logger {
      * - tool calls with: tool, callID, input, output
      */
     private minimizeForDebug;
+    /** Appends one JSON record to `daily/<day>.<name>.log`, which the daily log's cleanup also deletes. */
+    record(name: string, value: unknown): Promise<void>;
     saveContext(sessionId: string, messages: readonly unknown[]): Promise<void>;
 }
 //# sourceMappingURL=logger.d.ts.map

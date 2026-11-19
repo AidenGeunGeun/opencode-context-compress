@@ -4,6 +4,7 @@ import { handleCompressCommand } from "./commands/route.js";
 import { createFoldRequestHandler } from "./fold-request.js";
 import { Logger } from "./logger.js";
 import { PROTECTED_TOOLS, pruneFrontier, pruneStaleToolOutputs } from "./messages/prune.js";
+import { createPrefixWatch } from "./prefix-watch.js";
 import { transformV2Messages } from "./messages/v2-transform.js";
 import { isRecord } from "./shared-utils.js";
 import { listSessionMessages, pluginClient, setSessionSelection } from "./sdk/client.js";
@@ -149,6 +150,7 @@ export async function setup(context) {
         if (kind === "context" && transformed)
             await logger.saveContext(event.sessionID, transformed);
     };
+    const watchPrefix = createPrefixWatch(logger, (sessionID) => stateManager.get(sessionID).lastCompaction);
     registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), 
     // A pending summary from `compress` replaces core's own summary request. Without one (a manual
     // `/compact`), core summarizes the conversation itself.
@@ -162,6 +164,18 @@ export async function setup(context) {
             metadata: { keepID: undefined },
         };
         logger.info("Fold applied", { sessionId: event.sessionID });
+    }), 
+    // Diagnostics only: it reads a copy in the background, so it never delays the request and its failure never reaches it.
+    await context.session.hook("http.request", (event) => {
+        if (event.kind !== "primary" || !isAnthropic(event.model.providerID))
+            return;
+        if (event.request.method !== "POST" ||
+            !new URL(event.request.url).pathname.endsWith("/messages"))
+            return;
+        void watchPrefix(event, event.request.clone()).catch((error) => logger.error("Prefix watch failed", {
+            sessionId: event.sessionID,
+            error: String(error),
+        }));
     }), await context.session.hook("model.request", (event) => {
         if (event.kind !== "primary" && event.kind !== "compaction")
             return;

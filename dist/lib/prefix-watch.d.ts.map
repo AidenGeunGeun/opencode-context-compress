@@ -1,0 +1,1 @@
+{"version":3,"file":"prefix-watch.d.ts","sourceRoot":"","sources":["../../lib/prefix-watch.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,kBAAkB,EAAE,MAAM,kCAAkC,CAAA;AAE1E,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,aAAa,CAAA;AAQzC;;;;;GAKG;AACH,wBAAgB,iBAAiB,CAAC,MAAM,EAAE,MAAM,EAAE,cAAc,EAAE,CAAC,SAAS,EAAE,MAAM,KAAK,MAAM,IAE7E,OAAO,kBAAkB,EAAE,SAAS,OAAO,mBAmC5D"}

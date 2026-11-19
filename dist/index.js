@@ -1916,6 +1916,21 @@ class Logger {
       return minimized;
     });
   }
+  async record(name, value) {
+    if (!this.dailyEnabled)
+      return;
+    try {
+      const dailyLogDir = join3(this.logDir, "daily");
+      await mkdir2(dailyLogDir, { recursive: true });
+      const day = new Date().toISOString().split("T")[0];
+      await writeFile(join3(dailyLogDir, `${day}.${name}.log`), `${JSON.stringify(value)}
+`, {
+        flag: "a"
+      });
+    } catch (error) {
+      console.error("context-compress: failed to write record", error);
+    }
+  }
   async saveContext(sessionId, messages) {
     if (!this.contextEnabled)
       return;
@@ -2579,6 +2594,68 @@ function outputChars(output) {
   }, 0);
 }
 
+// lib/prefix-watch.ts
+import { gunzipSync } from "zlib";
+var SESSIONS = 8;
+var SHOWN = 3;
+function createPrefixWatch(logger, lastCompaction) {
+  const previous = new Map;
+  return async (event, request) => {
+    const body = await readBody(request);
+    const parts = [
+      JSON.stringify(withoutMarkers(body.tools ?? [])),
+      JSON.stringify(withoutMarkers(withoutBilling(body.system))),
+      ...body.messages.map((message) => JSON.stringify(withoutMarkers(message)))
+    ];
+    const fold = lastCompaction(event.sessionID);
+    const last = previous.get(event.sessionID);
+    previous.delete(event.sessionID);
+    previous.set(event.sessionID, { fold, parts });
+    if (previous.size > SESSIONS)
+      previous.delete(previous.keys().next().value);
+    if (last === undefined)
+      return;
+    const index = last.parts.findIndex((part, i) => part !== parts[i]);
+    if (index === -1)
+      return;
+    const at = index === 0 ? "tools" : index === 1 ? "system" : `messages.${index - 2}`;
+    const folded = fold !== last.fold;
+    await logger.info("Request prefix changed", {
+      sessionId: event.sessionID,
+      at,
+      fold: folded,
+      previousParts: last.parts.length,
+      parts: parts.length
+    });
+    await logger.record("prefix", {
+      time: new Date().toISOString(),
+      sessionID: event.sessionID,
+      model: event.model.id,
+      at,
+      fold: folded,
+      previous: last.parts.slice(index, index + SHOWN).map((part) => JSON.parse(part)),
+      current: parts.slice(index, index + SHOWN).map((part) => JSON.parse(part))
+    });
+  };
+}
+async function readBody(request) {
+  const bytes = Buffer.from(await request.arrayBuffer());
+  const text = (request.headers.get("content-encoding") === "gzip" ? gunzipSync(bytes) : bytes).toString("utf8");
+  return JSON.parse(text);
+}
+function withoutMarkers(value) {
+  if (Array.isArray(value))
+    return value.map(withoutMarkers);
+  if (!isRecord(value))
+    return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "cache_control").map(([key, item]) => [key, withoutMarkers(item)]));
+}
+function withoutBilling(system) {
+  if (!Array.isArray(system))
+    return system;
+  return system.filter((block) => !(isRecord(block) && String(block.text).startsWith("x-anthropic-billing-header")));
+}
+
 // lib/messages/v2-transform.ts
 function transformV2Messages(raw, state, modelMessages) {
   const projected = new Map(raw.map((message) => [message.info.id, message]));
@@ -2934,6 +3011,7 @@ async function setup(context) {
     if (kind === "context" && transformed)
       await logger.saveContext(event.sessionID, transformed);
   };
+  const watchPrefix = createPrefixWatch(logger, (sessionID) => stateManager.get(sessionID).lastCompaction);
   registrations.push(await context.session.hook("context", (event) => applyCompression(event, "context")), await context.session.hook("generate", (event) => applyCompression(event, "generate")), await context.session.hook("compaction", (event) => {
     const summary = pending.get(event.sessionID)?.summary;
     if (summary === undefined)
@@ -2945,6 +3023,15 @@ ${FOLD_NOTE}`,
       metadata: { keepID: undefined }
     };
     logger.info("Fold applied", { sessionId: event.sessionID });
+  }), await context.session.hook("http.request", (event) => {
+    if (event.kind !== "primary" || !isAnthropic(event.model.providerID))
+      return;
+    if (event.request.method !== "POST" || !new URL(event.request.url).pathname.endsWith("/messages"))
+      return;
+    watchPrefix(event, event.request.clone()).catch((error) => logger.error("Prefix watch failed", {
+      sessionId: event.sessionID,
+      error: String(error)
+    }));
   }), await context.session.hook("model.request", (event) => {
     if (event.kind !== "primary" && event.kind !== "compaction")
       return;
@@ -3043,5 +3130,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=7AC834FA4A243F1464756E2164756E21
+//# debugId=E5E39619E50A960C64756E2164756E21
 //# sourceMappingURL=index.js.map
