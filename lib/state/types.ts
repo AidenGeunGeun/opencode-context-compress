@@ -1,4 +1,4 @@
-export interface MessageBase {
+interface MessageBase {
     id: string
     sessionID: string
     role: "user" | "assistant" | "system"
@@ -44,17 +44,16 @@ export interface ToolPart {
     }
 }
 
-export interface MarkerPart {
+interface MarkerPart {
     type: "step-start" | "step-finish" | "compaction" | "file" | "patch" | "snapshot" | "subtask"
     [key: string]: unknown
 }
 
-export type Message = MessageBase
 export type AssistantMessage = MessageBase
 export type Part = TextPart | ToolPart | MarkerPart
 
 export interface WithParts {
-    info: Message
+    info: MessageBase
     parts: Part[]
 }
 
@@ -84,7 +83,7 @@ export interface ManagementTurn {
     completedMessageId?: string
 }
 
-export interface Compressed {
+interface Compressed {
     toolIds: Set<string>
     messageIds: Set<string>
 }

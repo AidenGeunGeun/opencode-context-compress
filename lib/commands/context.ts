@@ -1,41 +1,3 @@
-/**
- * Compress context command
- * Shows a visual breakdown of token usage in the current session.
- *
- * TOKEN CALCULATION STRATEGY
- * ==========================
- * We minimize tokenizer estimation by leveraging API-reported values wherever possible.
- *
- * WHAT WE GET FROM THE API (exact):
- *   - tokens.input    : Input tokens for each assistant response
- *   - tokens.output   : Output tokens generated (includes text + tool calls)
- *   - tokens.reasoning: Reasoning tokens used
- *   - tokens.cache    : Cache read/write tokens
- *
- * HOW WE CALCULATE EACH CATEGORY:
- *
- *   SYSTEM = firstAssistant.input + cache.read - tokenizer(firstUserMessage)
- *            The first response's input contains system + first user message.
- *
- *   TOOLS  = tokenizer(toolInputs + toolOutputs), skipping pruned outputs
- *
- *   USER   = tokenizer(all user messages)
- *            User messages are typically small, so estimation is acceptable.
- *
- *   ASSISTANT = total - system - user - tools
- *               Calculated as residual. This absorbs:
- *               - Assistant text output tokens
- *               - Reasoning tokens (if persisted by the model)
- *               - Any estimation errors
- *
- *   TOTAL  = input + output + reasoning + cache.read + cache.write
- *            Matches opencode's UI display.
- *
- * WHY ASSISTANT IS THE RESIDUAL:
- *   If reasoning tokens persist in context (model-dependent), they semantically
- *   belong with "Assistant" since reasoning IS assistant-generated content.
- */
-
 import type { Logger } from "../logger.js"
 import type { PluginClient } from "../sdk/client.js"
 import type { SessionState, WithParts } from "../state/index.js"
@@ -178,6 +140,7 @@ function analyzeTokens(
     }
 
     breakdown.tools = toolInputTokens + toolOutputTokens
+    // Persisted reasoning belongs to assistant usage, so it absorbs the estimation residual.
     breakdown.assistant = Math.max(
         0,
         breakdown.total - breakdown.system - breakdown.user - breakdown.tools,
@@ -186,7 +149,7 @@ function analyzeTokens(
     return breakdown
 }
 
-function createBar(value: number, maxValue: number, width: number, char: string = "█"): string {
+function createBar(value: number, maxValue: number, width: number, char: string): string {
     if (maxValue === 0) return ""
     const filled = Math.round((value / maxValue) * width)
     const bar = char.repeat(Math.max(0, filled))

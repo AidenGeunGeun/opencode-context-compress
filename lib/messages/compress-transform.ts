@@ -103,7 +103,7 @@ function collectSuppressedOrRetainedSpan(
     }
 }
 
-export function buildManagementTurnSuppressionPlan(
+function buildManagementTurnSuppressionPlan(
     state: SessionState,
     rawMessages: WithParts[],
 ): ManagementTurnSuppressionPlan {
@@ -295,33 +295,6 @@ function buildV2CleanupPlan(state: SessionState, rawMessages: WithParts[]): V2Cl
         retainedPartsByMessageId,
         protectedMessageIds,
     }
-}
-
-/** Remove exact Version 2 machinery from material selected into a future summary. */
-export function stripV2MachineryForCompressionSelection(
-    messages: WithParts[],
-    state: SessionState,
-): WithParts[] {
-    const triggers = new Map(
-        state.managementTurns
-            .filter((turn) => turn.cleanupVersion === 2)
-            .map((turn) => [turn.triggerMessageId, turn]),
-    )
-    const completions = new Map(
-        state.managementTurns
-            .filter((turn) => turn.cleanupVersion === 2 && turn.completedMessageId)
-            .map((turn) => [turn.completedMessageId as string, turn]),
-    )
-
-    return messages.flatMap((message) => {
-        const trigger = triggers.get(message.info.id)
-        if (trigger && !trigger.retainedText) return []
-
-        const completion = completions.get(message.info.id)
-        if (!completion) return [message]
-        const parts = withoutCompletionTool(message, completion)
-        return parts.length > 0 ? [{ ...message, parts }] : []
-    })
 }
 
 function createRetainedUserMessage(message: WithParts, retainedText: string): WithParts {

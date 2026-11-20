@@ -1,8 +1,3 @@
-/**
- * Compress help command handler.
- * Shows available compression commands and their descriptions.
- */
-
 import type { Logger } from "../logger.js"
 import type { PluginClient } from "../sdk/client.js"
 import { sendIgnoredMessage } from "../ui/notification.js"

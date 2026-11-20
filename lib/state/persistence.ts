@@ -1,9 +1,3 @@
-/**
- * State persistence module for Context Compress plugin.
- * Persists compressed tool IDs across sessions so they survive OpenCode restarts.
- * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
- */
-
 import * as fs from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
@@ -11,13 +5,12 @@ import { join } from "node:path"
 import type { SessionState, CompressSummary, ManagementTurn, WithParts } from "./types.js"
 import type { Logger } from "../logger.js"
 
-/** Compressed state as stored on disk (arrays for JSON compatibility) */
-export interface PersistedCompressed {
+interface PersistedCompressed {
     toolIds: string[]
     messageIds: string[]
 }
 
-export interface PersistedSessionState {
+interface PersistedSessionState {
     sessionName?: string
     compressed: PersistedCompressed
     anthropicStubIds?: string[]
@@ -215,7 +208,7 @@ function normalizeManagementTurns(
     return normalized
 }
 
-export function backfillCompressSummaryMessageIds(
+function backfillCompressSummaryMessageIds(
     summaries: MaybeBackfilledCompressSummary[],
     messages: WithParts[],
     compressedMessageIds: Set<string>,

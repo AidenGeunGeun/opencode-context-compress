@@ -33,7 +33,6 @@ export class Logger {
         for (const [key, value] of Object.entries(data)) {
             if (value === undefined || value === null) continue
 
-            // Format arrays compactly
             if (Array.isArray(value)) {
                 if (value.length === 0) continue
                 parts.push(
@@ -59,11 +58,9 @@ export class Logger {
             const stack = err.stack as unknown as NodeJS.CallSite[]
             Error.prepareStackTrace = originalPrepareStackTrace
 
-            // Skip specified number of frames to get to actual caller
             for (let i = skipFrames; i < stack.length; i++) {
                 const filename = stack[i]?.getFileName()
                 if (filename && !filename.includes("/logger.")) {
-                    // Extract just the filename without path and extension
                     const match = filename.match(/([^/\\]+)\.[tj]s$/)
                     return match ? match[1] : filename
                 }

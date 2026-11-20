@@ -8,31 +8,30 @@ export interface ConfigContext {
     directory: string
 }
 
-export interface CompressTool {
+interface CompressTool {
     permission: "ask" | "allow" | "deny"
 }
 
-export interface Tools {
+interface Tools {
     compress: CompressTool
 }
 
-export interface Commands {
+interface Commands {
     enabled: boolean
 }
 
-export interface AutoCompression {
+interface AutoCompression {
     enabled: boolean
     contextWindowRatio: number
     tokenThreshold: number
 }
 
-export const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
+const DEFAULT_AUTO_COMPRESSION: AutoCompression = {
     enabled: true,
     contextWindowRatio: 0.9,
     tokenThreshold: 432_000,
 }
 
-// One rule per numeric field, shared by validation warnings and layer merging.
 function isContextWindowRatio(value: unknown): value is number {
     return typeof value === "number" && value > 0 && value <= 1
 }
@@ -57,9 +56,7 @@ export interface PluginConfig {
     tools: Tools
 }
 
-// Valid config keys for validation against user config
-export const VALID_CONFIG_KEYS = new Set([
-    // Top-level keys
+const VALID_CONFIG_KEYS = new Set([
     "$schema",
     "enabled",
     "debug",
@@ -75,7 +72,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.compress.permission",
 ])
 
-// Extract all key paths from a config object for validation
 function getConfigKeyPaths(obj: Record<string, unknown>, prefix = ""): string[] {
     const keys: string[] = []
     for (const [key, value] of Object.entries(obj)) {
@@ -88,13 +84,6 @@ function getConfigKeyPaths(obj: Record<string, unknown>, prefix = ""): string[] 
     return keys
 }
 
-// Returns invalid keys found in user config
-export function getInvalidConfigKeys(userConfig: Record<string, unknown>): string[] {
-    const userKeys = getConfigKeyPaths(userConfig)
-    return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key))
-}
-
-// Type validators for config values
 interface ValidationError {
     key: string
     expected: string
@@ -109,7 +98,6 @@ function typeName(value: unknown): string {
 function validateConfigTypes(config: Record<string, unknown>): ValidationError[] {
     const errors: ValidationError[] = []
 
-    // Top-level validators
     if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
         errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) })
     }
@@ -162,7 +150,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
         }
     }
 
-    // Commands validator
     const commands = config.commands
     if (commands !== undefined) {
         if (isRecord(commands)) {
@@ -182,7 +169,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
         }
     }
 
-    // Tools validators
     const tools = config.tools
     if (isRecord(tools) && isRecord(tools.compress)) {
         const compress = tools.compress
@@ -206,7 +192,7 @@ function showConfigValidationWarnings(
     configData: Record<string, unknown>,
     isProject: boolean,
 ): void {
-    const invalidKeys = getInvalidConfigKeys(configData)
+    const invalidKeys = getConfigKeyPaths(configData).filter((key) => !VALID_CONFIG_KEYS.has(key))
     const typeErrors = validateConfigTypes(configData)
 
     if (invalidKeys.length === 0 && typeErrors.length === 0) {
