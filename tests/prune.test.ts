@@ -97,6 +97,27 @@ const freshState = () => {
     return state
 }
 
+const requestWithResults = (messages: WithParts[]) =>
+    modelRequest(messages).flatMap((message) => [
+        message,
+        ...message.content.flatMap((part) =>
+            part.type === "tool-call"
+                ? [
+                      {
+                          role: "tool",
+                          content: [
+                              {
+                                  type: "tool-result",
+                                  id: part.id,
+                                  result: { type: "text", value: "raw evidence" },
+                              },
+                          ],
+                      },
+                  ]
+                : [],
+        ),
+    ])
+
 describe("background pruning", () => {
     it("prunes every aged output in one batch and keeps recent and protected calls", async () => {
         const outputs: Array<[string, string]> = [
@@ -207,26 +228,7 @@ describe("background pruning", () => {
             10,
         )
         const context = await startContextHook(setup, root, { context: async () => messages })
-        const request = () =>
-            modelRequest(messages).flatMap((message) => [
-                message,
-                ...message.content.flatMap((part) =>
-                    part.type === "tool-call"
-                        ? [
-                              {
-                                  role: "tool",
-                                  content: [
-                                      {
-                                          type: "tool-result",
-                                          id: part.id,
-                                          result: { type: "text", value: "raw evidence" },
-                                      },
-                                  ],
-                              },
-                          ]
-                        : [],
-                ),
-            ])
+        const request = () => requestWithResults(messages)
         const first = request()
         await context("prune-prefix", first)
         assert.deepEqual(first[2], {
@@ -309,26 +311,7 @@ describe("background pruning", () => {
                 agent: "build",
                 model: { providerID, id: "model" },
                 system: [],
-                // Each call gets its result, so a stub would show in the request.
-                messages: modelRequest(messages).flatMap((message) => [
-                    message,
-                    ...message.content.flatMap((part) =>
-                        part.type === "tool-call"
-                            ? [
-                                  {
-                                      role: "tool" as const,
-                                      content: [
-                                          {
-                                              type: "tool-result",
-                                              id: part.id,
-                                              result: { type: "text", value: "original" },
-                                          },
-                                      ],
-                                  },
-                              ]
-                            : [],
-                    ),
-                ]),
+                messages: requestWithResults(messages),
                 tools: {},
                 options: {},
             }

@@ -46,12 +46,11 @@ describe("automatic compression defaults", () => {
 
 describe("refreshConfig", () => {
     it("reloads the same object after a file is edited, added or removed", async () => {
-        await loadLayers({ global: { autoCompression: { tokenThreshold: 100 } } })
+        const config = await loadLayers({ global: { autoCompression: { tokenThreshold: 100 } } })
         const globalFile = join(layerDirs.global, "compress.jsonc")
         const timestamp = new Date("2024-01-01T00:00:00Z")
         await utimes(globalFile, timestamp, timestamp)
         const ctx = { directory: join(root, "project") }
-        const config = getConfig(ctx)
         refreshConfig(config, ctx)
         assert.equal(config.autoCompression.tokenThreshold, 100)
 

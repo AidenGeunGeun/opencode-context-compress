@@ -464,12 +464,15 @@ describe("saveSessionState", () => {
             assert.equal(typeof state.persistedLastUpdated, "string")
 
             const open = fs.open
+            const write = fs.writeFile
+            const interruptWrite = async (file: Parameters<typeof fs.writeFile>[0]) => {
+                await write(file, "{ interrupted")
+                throw new Error("simulated interrupted write")
+            }
+            t.mock.method(fs, "writeFile", interruptWrite)
             t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
                 const handle = await open(...args)
-                t.mock.method(handle, "writeFile", async () => {
-                    await handle.write("{ interrupted")
-                    throw new Error("simulated interrupted write")
-                })
+                t.mock.method(handle, "writeFile", () => interruptWrite(handle))
                 return handle
             })
             syncBuiltinESMExports()

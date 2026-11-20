@@ -30,7 +30,9 @@ describe("model-visible user history", () => {
             ]
             assert.deepEqual(
                 transformV2Messages([userMessage("user", parts)], createSessionState(), model),
-                retained ? model : [],
+                retained
+                    ? [{ id: "user", role: "user", content: [{ type: "text", text: "visible" }] }]
+                    : [],
             )
         })
     }
