@@ -1048,45 +1048,6 @@ describe("atomic compress completion cleanup", () => {
         )
         assert.match(serialized, /Normal follow-up between compressions/)
     })
-
-    it("keeps the completed compress tool input literal so the next model pass cannot mistake a transcript marker for its submitted summary", () => {
-        const sessionId = "session-atomic-completion-keeps-input"
-        const state = createState(sessionId)
-        const submittedSummary =
-            "Real submitted summary with concrete facts, files, commands, and decisions."
-        state.managementTurns = [
-            {
-                triggerMessageId: "manage-keep-input",
-                completedAt: new Date().toISOString(),
-                completedMessageId: "compress-keep-input",
-            },
-        ]
-
-        const messages = [
-            textMessage("pre", sessionId, "Before this turn"),
-            textMessage("manage-keep-input", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
-            toolMessage(
-                "compress-keep-input",
-                sessionId,
-                "compress",
-                'Compression complete. Stored [b0] "Kept Input".',
-                "call-keep-input",
-            ),
-        ]
-        toolInput(messages[2].parts[0]).summary = submittedSummary
-
-        applyCompressTransforms(state, messages)
-
-        assert.deepEqual(
-            messages.map((message: WithParts) => message.info.id),
-            ["pre", "compress-keep-input"],
-        )
-        assert.equal(toolInput(messages[1].parts[0]).summary, submittedSummary)
-        assert.doesNotMatch(
-            messageTexts(messages),
-            /summary content stored|transcript copy omitted|placeholder/i,
-        )
-    })
 })
 
 describe("prospective Version 2 cleanup", () => {

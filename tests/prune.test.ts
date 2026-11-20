@@ -14,13 +14,12 @@ import {
 } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { PROTECTED_TOOLS, pruneFrontier, pruneStaleToolOutputs } = await import(
-    "../lib/messages/prune.ts"
-)
+const { PROTECTED_TOOLS, pruneStaleToolOutputs } = await import("../lib/messages/prune.ts")
 const { setup } = await import("../lib/plugin.ts")
 const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
 const { Logger } = await import("../lib/logger.ts")
 const { SessionStateManager } = await import("../lib/state/state.ts")
+const { loadSessionState } = await import("../lib/state/persistence.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const logger = new Logger({ daily: false, context: false })
@@ -154,7 +153,7 @@ describe("background pruning", () => {
         assert.equal(await prune(0.05), 0)
     })
 
-    it("does not prune again when the only newly aged output has paid no reads yet", async () => {
+    it("only grows pruning marks across two pruning events and a reload", async () => {
         const outputs: Array<[string, string]> = [
             ...Array.from({ length: 40 }, (): [string, string] => ["read", "r".repeat(20_000)]),
             ...Array.from({ length: 10 }, (): [string, string] => ["shell", "s".repeat(3_000)]),
@@ -162,11 +161,29 @@ describe("background pruning", () => {
         const messages = transcript(outputs, 0)
         const state = freshState()
         await pruneStaleToolOutputs(messages, state, logger, false)
-        assert.equal(state.compressed.toolIds.size, 40)
+        const firstMarks = Array.from({ length: 40 }, (_, index) => `call-a${index}`)
+        assert.deepEqual(state.compressed.toolIds, new Set(firstMarks))
 
         messages.push(step("next", "shell", "s".repeat(3_000), NOW + MINUTE))
         await pruneStaleToolOutputs(messages, state, logger, false)
-        assert.equal(state.compressed.toolIds.size, 40)
+        assert.deepEqual(state.compressed.toolIds, new Set(firstMarks))
+
+        messages.push(
+            ...Array.from({ length: 30 }, (_, index) =>
+                step(`later-${index}`, "read", "r".repeat(20_000), NOW + (index + 2) * MINUTE),
+            ),
+        )
+        await pruneStaleToolOutputs(messages, state, logger, false)
+        const allMarks = [
+            ...Array.from({ length: 50 }, (_, index) => `call-a${index}`),
+            "call-next",
+            ...Array.from({ length: 20 }, (_, index) => `call-later-${index}`),
+        ]
+        assert.deepEqual(state.compressed.toolIds, new Set(allMarks))
+        assert.ok(state.sessionId)
+        const reloaded = await loadSessionState(state.sessionId, logger)
+        assert.equal(reloaded.status, "loaded")
+        assert.deepEqual(new Set(reloaded.state.compressed.toolIds), new Set(allMarks))
     })
 
     it("keeps request bytes stable and shows the stub in place of pruned output", async () => {
@@ -227,25 +244,6 @@ describe("background pruning", () => {
         const anchored = freshState()
         await pruneStaleToolOutputs(transcript(outputs, 0), anchored, logger, true)
         assert.deepEqual([...anchored.compressed.toolIds], ["call-a1", "call-a2", "call-a3"])
-    })
-
-    it("finds the oldest call a prune may still change", () => {
-        const messages = transcript(
-            [
-                ["read", "r"],
-                ["edit", "Edit applied"],
-                ["shell", "s"],
-            ],
-            0,
-        )
-        const state = freshState()
-        assert.equal(pruneFrontier(messages, state), "call-a0")
-
-        state.compressed.toolIds.add("call-a0")
-        assert.equal(pruneFrontier(messages, state), "call-a2")
-
-        state.compressed.toolIds.add("call-a2")
-        assert.equal(pruneFrontier(messages, state), undefined)
     })
 
     it("prunes Anthropic requests server-side, with both frontiers anchored for the next primary request", async () => {
@@ -343,7 +341,10 @@ describe("background pruning", () => {
             { length: 12 },
             (): [string, string] => ["shell", "s".repeat(1_000)],
         )
-        const messages = transcript(outputs, 10)
+        const messages = transcript(outputs, 61)
+        const control = freshState()
+        await pruneStaleToolOutputs(messages, control, logger, false)
+        assert.deepEqual([...control.compressed.toolIds], ["call-a0", "call-a1"])
         const state = freshState()
         state.managementTurns = [{ triggerMessageId: "user", cleanupVersion: 2 }]
 

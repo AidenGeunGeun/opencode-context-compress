@@ -1,7 +1,9 @@
 import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
+import fs from "node:fs/promises"
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 
 import type { WithParts } from "../lib/state/types.ts"
@@ -199,15 +201,35 @@ describe("ensureSessionInitialized", () => {
         })
     })
 
-    it("does not mark an observed compaction as reconciled during initialization", async () => {
+    it("clears legacy compression on native compaction and keeps it cleared after reload", async () => {
         const sessionId = `session-state-compaction-baseline-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFiles(sessionId)
         const state = createSessionState()
+        state.sessionId = sessionId
+        state.compressed.messageIds.add("old")
+        state.compressed.toolIds.add("old-call")
+        state.compressSummaries = [
+            { anchorMessageId: "old", messageIds: ["old"], summary: "Legacy block" },
+        ]
+        state.managementTurns = [{ triggerMessageId: "old-manage", cleanupVersion: 2 }]
+        assert.equal(await saveSessionState(state, logger), true)
+        const before = [
+            createMessage("old", sessionId, "user"),
+            createMessage("old-manage", sessionId, "user"),
+        ]
+        await reconcileSessionLifecycle(state, sessionId, logger, before)
+        assert.equal(
+            state.compressSummaries.length,
+            1,
+            "ordinary requests must retain legacy blocks",
+        )
         const compaction: WithParts = {
             ...createMessage("native-compaction", sessionId, "assistant"),
             info: {
                 ...createMessage("native-compaction", sessionId, "assistant").info,
                 summary: true,
+                sourceType: "compaction",
+                finish: "stop",
                 time: { created: Date.now() + 1 },
             },
         }
@@ -217,6 +239,18 @@ describe("ensureSessionInitialized", () => {
 
             assert.equal(state.initialized, true)
             assert.equal(state.lastCompaction, 0)
+            await reconcileSessionLifecycle(state, sessionId, logger, [compaction])
+            assert.deepEqual([...state.compressed.messageIds], [])
+            assert.deepEqual([...state.compressed.toolIds], [])
+            assert.deepEqual(state.compressSummaries, [])
+            assert.deepEqual(state.managementTurns, [])
+            const reloaded = createSessionState()
+            await ensureSessionInitialized(reloaded, sessionId, logger, [compaction])
+            assert.deepEqual([...reloaded.compressed.messageIds], [])
+            assert.deepEqual([...reloaded.compressed.toolIds], [])
+            assert.deepEqual(reloaded.compressSummaries, [])
+            assert.deepEqual(reloaded.managementTurns, [])
+            assert.equal(reloaded.lastCompaction, compaction.info.time.created)
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -354,7 +388,7 @@ describe("rewind reconciliation", () => {
 })
 
 describe("saveSessionState", () => {
-    it("writes via a temp file and leaves only the final session json", async () => {
+    it("keeps the old durable file valid on an interrupted write and can save again", async (t) => {
         const sessionId = `session-state-save-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFiles(sessionId)
 
@@ -431,6 +465,38 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.lastCompaction, 123_456)
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
+
+            const open = fs.open
+            t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+                const handle = await open(...args)
+                t.mock.method(handle, "writeFile", async () => {
+                    await handle.write("{ interrupted")
+                    throw new Error("simulated interrupted write")
+                })
+                return handle
+            })
+            syncBuiltinESMExports()
+            state.compressed.toolIds.add("new-call")
+            try {
+                assert.equal(await saveSessionState(state, logger), false)
+            } finally {
+                t.mock.restoreAll()
+                syncBuiltinESMExports()
+            }
+            const afterFault = await loadSessionState(sessionId, logger)
+            assert.equal(
+                afterFault.status,
+                "loaded",
+                "interrupted writes must leave the previous JSON readable",
+            )
+            assert.deepEqual(afterFault.state.compressed.toolIds, ["tool-1"])
+            assert.deepEqual(afterFault.state.compressSummaries, [
+                { anchorMessageId: "m2", messageIds: ["m2", "m3"], summary: "persisted summary" },
+            ])
+            assert.equal(await saveSessionState(state, logger), true)
+            const afterRetry = await loadSessionState(sessionId, logger)
+            assert.equal(afterRetry.status, "loaded")
+            assert.deepEqual(afterRetry.state.compressed.toolIds, ["tool-1", "new-call"])
 
             const reloadedState = new SessionStateManager().get(sessionId)
             await ensureSessionInitialized(reloadedState, sessionId, logger, [

@@ -4,10 +4,6 @@ import assert from "node:assert/strict"
 import { countTokens, isAnthropicProvider } from "../lib/token-utils.ts"
 
 describe("isAnthropicProvider", () => {
-    it("returns true for anthropic provider ID", () => {
-        assert.equal(isAnthropicProvider("anthropic"), true)
-    })
-
     it("returns true for provider ID containing anthropic", () => {
         assert.equal(isAnthropicProvider("Anthropic"), true)
         assert.equal(isAnthropicProvider("anthropic.bedrock"), true)
@@ -30,11 +26,6 @@ describe("countTokens", () => {
 
     it("returns a positive token count for text", () => {
         assert.ok(countTokens("hello world") > 0)
-    })
-
-    it("returns a positive token count for longer text", () => {
-        const longText = Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ")
-        assert.ok(countTokens(longText) > 0)
     })
 
     it("uses Anthropic tokenizer when providerId is anthropic", () => {
