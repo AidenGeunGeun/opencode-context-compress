@@ -416,15 +416,18 @@ function deepCloneConfig(config: PluginConfig): PluginConfig {
     }
 }
 
-// The file signature each loaded config was read at, so `refreshConfig` re-reads only after a file changes.
 const signatures = new WeakMap<PluginConfig, string>()
 
 function configSignature(paths: ReturnType<typeof getConfigPaths>): string {
-    return [paths.global, paths.configDir, paths.project]
-        .map((path) =>
-            path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "",
-        )
-        .join("|")
+    return JSON.stringify(
+        [paths.global, paths.configDir, paths.project].map((path) => {
+            try {
+                return [path, path ? readFileSync(path, "utf-8") : null]
+            } catch {
+                return [path, null]
+            }
+        }),
+    )
 }
 
 // Reloads `config` in place when a config file was added, removed or edited since it was read. Every
