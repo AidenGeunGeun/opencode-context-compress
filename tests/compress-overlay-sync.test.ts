@@ -92,10 +92,14 @@ describe("session-scoped compress overlay", () => {
 
         const messages = await (await startInstance(rawMessages))(sessionId)
 
-        assert.equal(messages.filter((message) => isSummary(modelText(message))).length, 2)
         assert.deepEqual(
-            messages.map((message) => message.role),
-            ["user", "user", "user", "user"],
+            messages.map((message) => [message.role, modelText(message)]),
+            [
+                ["user", "message-m1"],
+                ["user", "[Compressed conversation block]\n\n[b0]\n\nfirst block"],
+                ["user", "message-m4"],
+                ["user", "[Compressed conversation block]\n\n[b1]\n\nsecond block"],
+            ],
         )
     })
 

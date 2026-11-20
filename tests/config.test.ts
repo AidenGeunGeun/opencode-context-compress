@@ -1,14 +1,12 @@
 import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { isolateHostDirs } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { DEFAULT_AUTO_COMPRESSION, getConfig, getInvalidConfigKeys, refreshConfig } = await import(
-    "../lib/config.ts"
-)
+const { getConfig, refreshConfig } = await import("../lib/config.ts")
 after(() => rm(root, { recursive: true, force: true }))
 
 const layerDirs = {
@@ -30,13 +28,18 @@ async function loadLayers(layers: Partial<Record<keyof typeof layerDirs, unknown
 }
 
 describe("automatic compression defaults", () => {
-    it("rejects keys outside the documented surface", () => {
-        assert.deepEqual(
-            getInvalidConfigKeys({
+    it("warns about unknown file keys without discarding supported values", async (t) => {
+        const warn = t.mock.method(console, "warn", () => undefined)
+        const config = await loadLayers({
+            global: {
                 autoCompression: { tokenThreshold: 200_000 },
                 periodicNudge: { enabled: true },
-            }),
-            ["periodicNudge", "periodicNudge.enabled"],
+            },
+        })
+        assert.equal(config.autoCompression.tokenThreshold, 200_000)
+        assert.match(
+            warn.mock.calls.map((call) => call.arguments.join(" ")).join("\n"),
+            /periodicNudge\.enabled/,
         )
     })
 })
@@ -44,14 +47,16 @@ describe("automatic compression defaults", () => {
 describe("refreshConfig", () => {
     it("reloads the same object after a file is edited, added or removed", async () => {
         const config = await loadLayers({ global: { autoCompression: { tokenThreshold: 100 } } })
+        const globalFile = join(layerDirs.global, "compress.jsonc")
+        const timestamp = new Date("2024-01-01T00:00:00Z")
+        await utimes(globalFile, timestamp, timestamp)
         const ctx = { directory: join(root, "project") }
         refreshConfig(config, ctx)
         assert.equal(config.autoCompression.tokenThreshold, 100)
 
-        await writeFile(
-            join(layerDirs.global, "compress.jsonc"),
-            JSON.stringify({ autoCompression: { tokenThreshold: 500 } }),
-        )
+        await writeFile(globalFile, JSON.stringify({ autoCompression: { tokenThreshold: 500 } }))
+        await utimes(globalFile, timestamp, timestamp)
+        assert.equal((await stat(globalFile)).mtimeMs, timestamp.getTime())
         refreshConfig(config, ctx)
         assert.equal(config.autoCompression.tokenThreshold, 500)
 
@@ -85,7 +90,8 @@ describe("getConfig layering", () => {
         assert.equal(config.debug, true)
         assert.equal(config.tools.compress.permission, "ask")
         assert.deepEqual(config.autoCompression, {
-            ...DEFAULT_AUTO_COMPRESSION,
+            enabled: true,
+            contextWindowRatio: 0.9,
             tokenThreshold: 300,
         })
     })
@@ -98,7 +104,11 @@ describe("getConfig layering", () => {
         })
         assert.equal(config.commands.enabled, false)
         assert.equal(config.tools.compress.permission, "ask")
-        assert.deepEqual(config.autoCompression, DEFAULT_AUTO_COMPRESSION)
+        assert.deepEqual(config.autoCompression, {
+            enabled: true,
+            contextWindowRatio: 0.9,
+            tokenThreshold: 432_000,
+        })
         const message = warn.mock.calls[0]?.arguments[0]
         assert.match(message, /autoCompression: expected object, got null/)
         assert.match(message, /commands: expected \{ enabled: boolean \}, got null/)

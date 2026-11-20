@@ -1,9 +1,12 @@
 import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
+import fs from "node:fs/promises"
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 
+import { countTokens, getCurrentProviderId } from "../lib/token-utils.ts"
 import type { WithParts } from "../lib/state/types.ts"
 import { isolateHostDirs } from "./helpers.ts"
 
@@ -74,18 +77,13 @@ describe("SessionStateManager", () => {
         assert.equal(subagentState.modelContext, undefined)
     })
 
-    it("returns the same object when the same session is requested again", () => {
+    it("carries session mutations into the next durable save", async () => {
         const manager = new SessionStateManager()
-        const state = manager.get("main-session")
-
-        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
-
-        assert.strictEqual(manager.get("main-session"), state)
-        assert.deepEqual(manager.get("main-session").modelContext, {
-            providerId: "openai",
-            modelId: "gpt-test",
-            contextLimit: 1_000,
-        })
+        manager.get("carried").compressed.toolIds.add("previous-prune")
+        assert.equal(await saveSessionState(manager.get("carried"), logger), true)
+        const loaded = await loadSessionState("carried", logger)
+        assert.equal(loaded.status, "loaded")
+        assert.deepEqual(loaded.state.compressed.toolIds, ["previous-prune"])
     })
 
     it("serializes mutations per session without blocking a different session", async () => {
@@ -174,11 +172,15 @@ describe("SessionStateManager", () => {
 })
 
 describe("ensureSessionInitialized", () => {
-    it("marks state initialized without clearing cached model context", async () => {
+    it("uses the cached provider for token accounting after initialization", async () => {
         const sessionId = `session-state-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const state = createSessionState()
         state.sessionId = sessionId
-        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
+        state.modelContext = {
+            providerId: "anthropic",
+            modelId: "claude-test",
+            contextLimit: 1_000,
+        }
 
         const messages: WithParts[] = [
             createMessage("m1", sessionId, "user"),
@@ -190,24 +192,41 @@ describe("ensureSessionInitialized", () => {
 
         await ensureSessionInitialized(state, sessionId, logger, messages)
 
-        assert.equal(state.initialized, true)
-        assert.equal(state.sessionId, sessionId)
-        assert.deepEqual(state.modelContext, {
-            providerId: "openai",
-            modelId: "gpt-test",
-            contextLimit: 1_000,
-        })
+        assert.equal(
+            countTokens("function add(a, b) { return a + b; }", getCurrentProviderId(state, [])),
+            14,
+        )
     })
 
-    it("does not mark an observed compaction as reconciled during initialization", async () => {
+    it("clears legacy compression on native compaction and keeps it cleared after reload", async () => {
         const sessionId = `session-state-compaction-baseline-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFiles(sessionId)
         const state = createSessionState()
+        state.sessionId = sessionId
+        state.compressed.messageIds.add("old")
+        state.compressed.toolIds.add("old-call")
+        state.compressSummaries = [
+            { anchorMessageId: "old", messageIds: ["old"], summary: "Legacy block" },
+        ]
+        state.managementTurns = [{ triggerMessageId: "old-manage", cleanupVersion: 2 }]
+        assert.equal(await saveSessionState(state, logger), true)
+        const before = [
+            createMessage("old", sessionId, "user"),
+            createMessage("old-manage", sessionId, "user"),
+        ]
+        await reconcileSessionLifecycle(state, sessionId, logger, before)
+        assert.equal(
+            state.compressSummaries.length,
+            1,
+            "ordinary requests must retain legacy blocks",
+        )
         const compaction: WithParts = {
             ...createMessage("native-compaction", sessionId, "assistant"),
             info: {
                 ...createMessage("native-compaction", sessionId, "assistant").info,
                 summary: true,
+                sourceType: "compaction",
+                finish: "stop",
                 time: { created: Date.now() + 1 },
             },
         }
@@ -217,6 +236,18 @@ describe("ensureSessionInitialized", () => {
 
             assert.equal(state.initialized, true)
             assert.equal(state.lastCompaction, 0)
+            await reconcileSessionLifecycle(state, sessionId, logger, [compaction])
+            assert.deepEqual([...state.compressed.messageIds], [])
+            assert.deepEqual([...state.compressed.toolIds], [])
+            assert.deepEqual(state.compressSummaries, [])
+            assert.deepEqual(state.managementTurns, [])
+            const reloaded = createSessionState()
+            await ensureSessionInitialized(reloaded, sessionId, logger, [compaction])
+            assert.deepEqual([...reloaded.compressed.messageIds], [])
+            assert.deepEqual([...reloaded.compressed.toolIds], [])
+            assert.deepEqual(reloaded.compressSummaries, [])
+            assert.deepEqual(reloaded.managementTurns, [])
+            assert.equal(reloaded.lastCompaction, compaction.info.time.created)
         } finally {
             await cleanupSessionFiles(sessionId)
         }
@@ -354,7 +385,7 @@ describe("rewind reconciliation", () => {
 })
 
 describe("saveSessionState", () => {
-    it("writes via a temp file and leaves only the final session json", async () => {
+    it("keeps the old durable file valid on an interrupted write and can save again", async (t) => {
         const sessionId = `session-state-save-${Date.now()}-${Math.random().toString(36).slice(2)}`
         await cleanupSessionFiles(sessionId)
 
@@ -431,6 +462,41 @@ describe("saveSessionState", () => {
             assert.equal(loadResult.state.lastCompaction, 123_456)
             assert.equal(state.hasPersistedState, true)
             assert.equal(typeof state.persistedLastUpdated, "string")
+
+            const open = fs.open
+            const write = fs.writeFile
+            const interruptWrite = async (file: Parameters<typeof fs.writeFile>[0]) => {
+                await write(file, "{ interrupted")
+                throw new Error("simulated interrupted write")
+            }
+            t.mock.method(fs, "writeFile", interruptWrite)
+            t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+                const handle = await open(...args)
+                t.mock.method(handle, "writeFile", () => interruptWrite(handle))
+                return handle
+            })
+            syncBuiltinESMExports()
+            state.compressed.toolIds.add("new-call")
+            try {
+                assert.equal(await saveSessionState(state, logger), false)
+            } finally {
+                t.mock.restoreAll()
+                syncBuiltinESMExports()
+            }
+            const afterFault = await loadSessionState(sessionId, logger)
+            assert.equal(
+                afterFault.status,
+                "loaded",
+                "interrupted writes must leave the previous JSON readable",
+            )
+            assert.deepEqual(afterFault.state.compressed.toolIds, ["tool-1"])
+            assert.deepEqual(afterFault.state.compressSummaries, [
+                { anchorMessageId: "m2", messageIds: ["m2", "m3"], summary: "persisted summary" },
+            ])
+            assert.equal(await saveSessionState(state, logger), true)
+            const afterRetry = await loadSessionState(sessionId, logger)
+            assert.equal(afterRetry.status, "loaded")
+            assert.deepEqual(afterRetry.state.compressed.toolIds, ["tool-1", "new-call"])
 
             const reloadedState = new SessionStateManager().get(sessionId)
             await ensureSessionInitialized(reloadedState, sessionId, logger, [

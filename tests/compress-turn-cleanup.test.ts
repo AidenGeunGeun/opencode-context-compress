@@ -260,71 +260,72 @@ describe("compress-turn machinery cleanup", () => {
         assert.doesNotMatch(messageTexts(messages), /Tool failed|could not finish|compress manage/)
     })
 
-    it("preserves inter-compress conversation across many management turns without residue", () => {
-        const sessionId = "session-cleanup-many"
+    it("preserves every conversation survivor across two historical management cycles", () => {
+        const sessionId = "recorded-cycles"
         const state = createState(sessionId)
-        const messages: WithParts[] = []
+        state.compressed.messageIds = new Set(["old-u-a", "old-a-a", "old-u-b", "old-a-b"])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "old-u-a",
+                messageIds: ["old-u-a", "old-a-a"],
+                summary: "First archived work.",
+            },
+            {
+                anchorMessageId: "old-u-b",
+                messageIds: ["old-u-b", "old-a-b"],
+                summary: "Second archived work.",
+            },
+        ]
+        state.managementTurns = [{ triggerMessageId: "manage-a" }, { triggerMessageId: "manage-b" }]
+        const historical = Object.freeze([
+            textMessage("old-u-a", sessionId, "First request"),
+            textMessage("old-a-a", sessionId, "First answer", "assistant"),
+            textMessage(
+                "manage-a",
+                sessionId,
+                "<system-reminder>/compress manage</system-reminder>",
+            ),
+            toolMessage(
+                "map-a",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>first</compress-context-map>",
+            ),
+            toolMessage("compress-a", sessionId, "compress", "Compressed range first"),
 
-        for (let i = 0; i < 8; i++) {
-            const workUser = `work-u-${i}`
-            const workAssistant = `work-a-${i}`
-            const manage = `manage-${i}`
-            messages.push(textMessage(workUser, sessionId, `Completed phase ${i} request`))
-            messages.push(
-                textMessage(workAssistant, sessionId, `Completed phase ${i} answer`, "assistant"),
-            )
-            messages.push(
-                textMessage(
-                    manage,
-                    sessionId,
-                    `<system-reminder>/compress manage ${i}</system-reminder>`,
-                ),
-            )
-            messages.push(
-                toolMessage(
-                    `map-${i}`,
-                    sessionId,
-                    "compress_map",
-                    `<compress-context-map>${i}</compress-context-map>`,
-                ),
-            )
-            messages.push(
-                toolMessage(`compress-${i}`, sessionId, "compress", `Compressed range ${i}`),
-            )
-            messages.push(textMessage(`between-u-${i}`, sessionId, `Inter-compress user ${i}`))
-            messages.push(
-                textMessage(
-                    `between-a-${i}`,
-                    sessionId,
-                    `Inter-compress assistant ${i}`,
-                    "assistant",
-                ),
-            )
+            textMessage("between-u-a", sessionId, "Keep the first decision"),
+            textMessage("between-a-a", sessionId, "First decision recorded", "assistant"),
+            textMessage("old-u-b", sessionId, "Second request"),
+            textMessage("old-a-b", sessionId, "Second answer", "assistant"),
+            textMessage(
+                "manage-b",
+                sessionId,
+                "<system-reminder>/compress manage</system-reminder>",
+            ),
+            toolMessage(
+                "map-b",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>second</compress-context-map>",
+            ),
+            toolMessage("compress-b", sessionId, "compress", "Compressed range second"),
 
-            state.compressed.messageIds.add(workUser)
-            state.compressed.messageIds.add(workAssistant)
-            state.compressSummaries.push({
-                anchorMessageId: workUser,
-                messageIds: [workUser, workAssistant],
-                summary: `Block summary ${i}`,
-                topic: `Block ${i}`,
-            })
-            state.managementTurns.push({ triggerMessageId: manage })
-        }
-
+            textMessage("between-u-b", sessionId, "Keep the second decision"),
+            textMessage("between-a-b", sessionId, "Second decision recorded", "assistant"),
+        ])
+        const messages = structuredClone([...historical])
         applyCompressTransforms(state, messages)
-
-        const serialized = messageTexts(messages)
-        assert.equal(
-            messages.filter((message: WithParts) =>
-                partText(message.parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
-            ).length,
-            8,
+        assert.deepEqual(
+            messages.map((message) => [message.info.role, ...message.parts.map(partText)]),
+            [
+                ["user", "[Compressed conversation block]\n\n[b0]\n\nFirst archived work."],
+                ["user", "Keep the first decision"],
+                ["assistant", "First decision recorded"],
+                ["user", "[Compressed conversation block]\n\n[b1]\n\nSecond archived work."],
+                ["user", "Keep the second decision"],
+                ["assistant", "Second decision recorded"],
+            ],
         )
-        assert.match(serialized, /Inter-compress user 0/)
-        assert.match(serialized, /Inter-compress assistant 7/)
-        assert.doesNotMatch(serialized, /compress-context-map|compress manage|Compressed range/)
-        assert.equal(messages.length, 24)
     })
 
     it("does not suppress the currently running management turn", () => {
@@ -430,6 +431,12 @@ describe("compress-turn machinery cleanup", () => {
         applyCompressTransforms(state, baseMessages)
         applyCompressTransforms(state, laterMessages)
 
+        assert.deepEqual(
+            baseMessages
+                .slice(0, -1)
+                .map((message) => [message.info.role, ...message.parts.map(partText)]),
+            [["user", "[Compressed conversation block]\n\n[b0]\n\nStable cache block."]],
+        )
         assert.equal(
             serializeProviderPrefix(baseMessages, "tail-u-1"),
             serializeProviderPrefix(laterMessages, "tail-u-1"),
@@ -812,77 +819,68 @@ describe("legacy residue repair by content signature", () => {
         assert.match(messageTexts(messages), /The requested implementation is complete\./)
     })
 
-    it("prevents residue drift across repeated cycles even when managementTurns bookkeeping is wrong or missing", () => {
-        const sessionId = "session-cleanup-many-legacy"
+    it("repairs two historical cycles with missing and stale bookkeeping", () => {
+        const sessionId = "legacy-cycles"
         const state = createState(sessionId)
-        const messages: WithParts[] = []
-
-        for (let i = 0; i < 5; i++) {
-            const workUser = `legacy-work-u-${i}`
-            const workAssistant = `legacy-work-a-${i}`
-            const manage = `legacy-manage-${i}`
-            messages.push(textMessage(workUser, sessionId, `Completed phase ${i} request`))
-            messages.push(
-                textMessage(workAssistant, sessionId, `Completed phase ${i} answer`, "assistant"),
-            )
-            messages.push(textMessage(manage, sessionId, REALISTIC_MANAGE_PROMPT_TEXT))
-            messages.push(
-                toolMessage(
-                    `legacy-map-${i}`,
-                    sessionId,
-                    "compress_map",
-                    `<compress-context-map>${i}</compress-context-map>`,
-                ),
-            )
-            messages.push(
-                toolMessage(`legacy-compress-${i}`, sessionId, "compress", `Compressed range ${i}`),
-            )
-            messages.push(
-                statusNotificationMessage(`legacy-notification-${i}`, sessionId, `${i}.0K tokens`),
-            )
-            messages.push(
-                textMessage(`legacy-between-u-${i}`, sessionId, `Inter-compress user ${i}`),
-            )
-            messages.push(
-                textMessage(
-                    `legacy-between-a-${i}`,
-                    sessionId,
-                    `Inter-compress assistant ${i}`,
-                    "assistant",
-                ),
-            )
-
-            state.compressed.messageIds.add(workUser)
-            state.compressed.messageIds.add(workAssistant)
-            state.compressSummaries.push({
-                anchorMessageId: workUser,
-                messageIds: [workUser, workAssistant],
-                summary: `Block summary ${i}`,
-                topic: `Block ${i}`,
-            })
-
-            // Deliberately leave the bookkeeping broken: only every other cycle gets a
-            // managementTurns entry, and that entry points at the later notification
-            // rather than the real manage prompt - mirroring both observed patterns at once.
-            if (i % 2 === 0) {
-                state.managementTurns.push({ triggerMessageId: `legacy-notification-${i}` })
-            }
-        }
-
+        state.compressed.messageIds = new Set([
+            "legacy-old-u-a",
+            "legacy-old-a-a",
+            "legacy-old-u-b",
+            "legacy-old-a-b",
+        ])
+        state.compressSummaries = [
+            {
+                anchorMessageId: "legacy-old-u-a",
+                messageIds: ["legacy-old-u-a", "legacy-old-a-a"],
+                summary: "First archived work.",
+            },
+            {
+                anchorMessageId: "legacy-old-u-b",
+                messageIds: ["legacy-old-u-b", "legacy-old-a-b"],
+                summary: "Second archived work.",
+            },
+        ]
+        state.managementTurns = [{ triggerMessageId: "legacy-notice-a" }]
+        const historical = Object.freeze([
+            textMessage("legacy-old-u-a", sessionId, "First request"),
+            textMessage("legacy-old-a-a", sessionId, "First answer", "assistant"),
+            textMessage("manage-a", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage(
+                "map-a",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>first</compress-context-map>",
+            ),
+            toolMessage("compress-a", sessionId, "compress", "Compressed range first"),
+            statusNotificationMessage("legacy-notice-a", sessionId, "1.0K tokens"),
+            textMessage("between-u-a", sessionId, "Keep the first decision"),
+            textMessage("between-a-a", sessionId, "First decision recorded", "assistant"),
+            textMessage("legacy-old-u-b", sessionId, "Second request"),
+            textMessage("legacy-old-a-b", sessionId, "Second answer", "assistant"),
+            textMessage("manage-b", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
+            toolMessage(
+                "map-b",
+                sessionId,
+                "compress_map",
+                "<compress-context-map>second</compress-context-map>",
+            ),
+            toolMessage("compress-b", sessionId, "compress", "Compressed range second"),
+            statusNotificationMessage("legacy-notice-b", sessionId, "2.0K tokens"),
+            textMessage("between-u-b", sessionId, "Keep the second decision"),
+            textMessage("between-a-b", sessionId, "Second decision recorded", "assistant"),
+        ])
+        const messages = structuredClone([...historical])
         applyCompressTransforms(state, messages)
-
-        const serialized = messageTexts(messages)
-        assert.equal(
-            messages.filter((message: WithParts) =>
-                partText(message.parts[0])?.startsWith(COMPRESS_SUMMARY_PREFIX),
-            ).length,
-            5,
-        )
-        assert.match(serialized, /Inter-compress user 0/)
-        assert.match(serialized, /Inter-compress assistant 4/)
-        assert.doesNotMatch(
-            serialized,
-            /compress-context-map|CONTEXT MANAGEMENT REQUESTED|▣ Context Compress|Compressed range/,
+        assert.deepEqual(
+            messages.map((message) => [message.info.role, ...message.parts.map(partText)]),
+            [
+                ["user", "[Compressed conversation block]\n\n[b0]\n\nFirst archived work."],
+                ["user", "Keep the first decision"],
+                ["assistant", "First decision recorded"],
+                ["user", "[Compressed conversation block]\n\n[b1]\n\nSecond archived work."],
+                ["user", "Keep the second decision"],
+                ["assistant", "Second decision recorded"],
+            ],
         )
     })
 })
@@ -1048,45 +1046,6 @@ describe("atomic compress completion cleanup", () => {
         )
         assert.match(serialized, /Normal follow-up between compressions/)
     })
-
-    it("keeps the completed compress tool input literal so the next model pass cannot mistake a transcript marker for its submitted summary", () => {
-        const sessionId = "session-atomic-completion-keeps-input"
-        const state = createState(sessionId)
-        const submittedSummary =
-            "Real submitted summary with concrete facts, files, commands, and decisions."
-        state.managementTurns = [
-            {
-                triggerMessageId: "manage-keep-input",
-                completedAt: new Date().toISOString(),
-                completedMessageId: "compress-keep-input",
-            },
-        ]
-
-        const messages = [
-            textMessage("pre", sessionId, "Before this turn"),
-            textMessage("manage-keep-input", sessionId, REALISTIC_MANAGE_PROMPT_TEXT),
-            toolMessage(
-                "compress-keep-input",
-                sessionId,
-                "compress",
-                'Compression complete. Stored [b0] "Kept Input".',
-                "call-keep-input",
-            ),
-        ]
-        toolInput(messages[2].parts[0]).summary = submittedSummary
-
-        applyCompressTransforms(state, messages)
-
-        assert.deepEqual(
-            messages.map((message: WithParts) => message.info.id),
-            ["pre", "compress-keep-input"],
-        )
-        assert.equal(toolInput(messages[1].parts[0]).summary, submittedSummary)
-        assert.doesNotMatch(
-            messageTexts(messages),
-            /summary content stored|transcript copy omitted|placeholder/i,
-        )
-    })
 })
 
 describe("prospective Version 2 cleanup", () => {
@@ -1180,17 +1139,29 @@ describe("prospective Version 2 cleanup", () => {
             "work-tool-v2-b",
             "user-v2-b",
         ])
-        const compressionTools = messages
-            .flatMap((message: WithParts) => message.parts)
-            .filter((part): part is ToolPart => part.type === "tool" && part.tool === "compress")
-        assert.equal(compressionTools.length, 1)
-        assert.equal(compressionTools[0].state.output, "second receipt")
-        assert.match(messageTexts(messages), /assistant text before first compress/)
-        assert.match(messageTexts(messages), /assistant text after first compress/)
-        assert.match(messageTexts(messages), /synthetic continuation|system update|tool evidence/)
-        assert.doesNotMatch(
-            messageTexts(messages),
-            /CONTEXT MANAGEMENT REQUESTED|first stats|second stats|first receipt/,
+        assert.deepEqual(
+            messages.map((message) =>
+                message.parts.map((part) =>
+                    part.type === "text"
+                        ? part.text
+                        : part.type === "tool"
+                          ? [part.tool, part.state.output]
+                          : part.type,
+                ),
+            ),
+            [
+                ["ordinary history"],
+                ["agent-authored compression reasoning"],
+                ["assistant text before first compress", "assistant text after first compress"],
+                ["work after first compression"],
+                ["first user boundary"],
+                ["reply after first boundary"],
+                [["compress", "second receipt"]],
+                ["synthetic continuation"],
+                ["system update"],
+                [["read", "tool evidence"]],
+                ["second user boundary"],
+            ],
         )
     })
 

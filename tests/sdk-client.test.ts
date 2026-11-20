@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { listSessionMessages, promptSession, setSessionSelection } from "../lib/sdk/client.ts"
-import { fakeClient } from "./helpers.ts"
+import { fakeClient, type PromptInput, type SyntheticInput } from "./helpers.ts"
 
 describe("beta Promise session adapter", () => {
     it("projects session.context history with the current selection", async () => {
@@ -35,10 +35,11 @@ describe("beta Promise session adapter", () => {
     })
 
     it("uses prompt for model work and admit-only synthetic feedback", async () => {
-        const calls: Array<[string, unknown]> = []
+        const prompts: PromptInput[] = []
+        const feedback: SyntheticInput[] = []
         const client = fakeClient({
-            prompt: (input) => calls.push(["prompt", input]),
-            synthetic: (input) => calls.push(["synthetic", input]),
+            prompt: (input) => prompts.push(input),
+            synthetic: (input) => feedback.push(input),
         })
 
         await promptSession(client, {
@@ -52,28 +53,16 @@ describe("beta Promise session adapter", () => {
             parts: [{ type: "text", text: "status" }],
         })
 
-        assert.deepEqual(calls, [
-            [
-                "prompt",
-                {
-                    sessionID: "session",
-                    text: "manage",
-                    id: "message",
-                    delivery: "steer",
-                    resume: true,
-                },
-            ],
-            [
-                "synthetic",
-                {
-                    sessionID: "session",
-                    id: undefined,
-                    text: "status",
-                    description: "status",
-                    metadata: { "opencode.context-compress.ignored": true },
-                    resume: false,
-                },
-            ],
-        ])
+        assert.equal(prompts.length, 1)
+        assert.equal(feedback.length, 1)
+        assert.equal(prompts[0].sessionID, "session")
+        assert.equal(prompts[0].id, "message")
+        assert.equal(prompts[0].text, "manage")
+        assert.equal(prompts[0].delivery, "steer")
+        assert.equal(prompts[0].resume, true)
+        assert.equal(feedback[0].sessionID, "session")
+        assert.equal(feedback[0].text, "status")
+        assert.equal(feedback[0].resume, false)
+        assert.equal(feedback[0].metadata?.["opencode.context-compress.ignored"], true)
     })
 })
