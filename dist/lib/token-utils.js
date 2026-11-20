@@ -1,7 +1,6 @@
-import { getLastUserMessage } from "./shared-utils.js";
+import { isIgnoredUserMessage } from "./messages/utils.js";
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
 import { encodingForModel } from "js-tiktoken";
-// Lazy-initialized tiktoken encoder (created on first non-Anthropic call)
 let _tiktokenEncoder = null;
 function getTiktokenEncoder() {
     if (!_tiktokenEncoder) {
@@ -9,13 +8,13 @@ function getTiktokenEncoder() {
     }
     return _tiktokenEncoder;
 }
-export function isAnthropicProvider(providerId) {
+function isAnthropicProvider(providerId) {
     if (!providerId)
         return false;
     return providerId.toLowerCase().includes("anthropic");
 }
 export function getCurrentProviderId(state, messages) {
-    return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
+    return (messages.findLast((message) => message.info.role === "user" && !isIgnoredUserMessage(message))?.info.model?.providerID ?? state.modelContext?.providerId);
 }
 export function countTokens(text, providerId) {
     if (!text)
@@ -27,7 +26,6 @@ export function countTokens(text, providerId) {
         return getTiktokenEncoder().encode(text).length;
     }
     catch {
-        // Fallback to heuristic if tokenizers fail
         return Math.ceil(text.length / 4);
     }
 }

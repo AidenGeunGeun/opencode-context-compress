@@ -1,21 +1,20 @@
 export interface ConfigContext {
     directory: string;
 }
-export interface CompressTool {
+interface CompressTool {
     permission: "ask" | "allow" | "deny";
 }
-export interface Tools {
+interface Tools {
     compress: CompressTool;
 }
-export interface Commands {
+interface Commands {
     enabled: boolean;
 }
-export interface AutoCompression {
+interface AutoCompression {
     enabled: boolean;
     contextWindowRatio: number;
     tokenThreshold: number;
 }
-export declare const DEFAULT_AUTO_COMPRESSION: AutoCompression;
 export interface PluginConfig {
     enabled: boolean;
     debug: boolean;
@@ -25,8 +24,7 @@ export interface PluginConfig {
     autoCompression: AutoCompression;
     tools: Tools;
 }
-export declare const VALID_CONFIG_KEYS: Set<string>;
-export declare function getInvalidConfigKeys(userConfig: Record<string, unknown>): string[];
 export declare function refreshConfig(config: PluginConfig, ctx: ConfigContext): void;
 export declare function getConfig(ctx: ConfigContext): PluginConfig;
+export {};
 //# sourceMappingURL=config.d.ts.map

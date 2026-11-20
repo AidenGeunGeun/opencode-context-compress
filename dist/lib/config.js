@@ -3,12 +3,11 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { parse } from "jsonc-parser";
 import { isRecord } from "./shared-utils.js";
-export const DEFAULT_AUTO_COMPRESSION = {
+const DEFAULT_AUTO_COMPRESSION = {
     enabled: true,
     contextWindowRatio: 0.9,
     tokenThreshold: 432_000,
 };
-// One rule per numeric field, shared by validation warnings and layer merging.
 function isContextWindowRatio(value) {
     return typeof value === "number" && value > 0 && value <= 1;
 }
@@ -19,9 +18,7 @@ const PERMISSIONS = ["ask", "allow", "deny"];
 function isOneOf(values, value) {
     return values.some((candidate) => candidate === value);
 }
-// Valid config keys for validation against user config
-export const VALID_CONFIG_KEYS = new Set([
-    // Top-level keys
+const VALID_CONFIG_KEYS = new Set([
     "$schema",
     "enabled",
     "debug",
@@ -36,7 +33,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "tools.compress",
     "tools.compress.permission",
 ]);
-// Extract all key paths from a config object for validation
 function getConfigKeyPaths(obj, prefix = "") {
     const keys = [];
     for (const [key, value] of Object.entries(obj)) {
@@ -48,11 +44,6 @@ function getConfigKeyPaths(obj, prefix = "") {
     }
     return keys;
 }
-// Returns invalid keys found in user config
-export function getInvalidConfigKeys(userConfig) {
-    const userKeys = getConfigKeyPaths(userConfig);
-    return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
-}
 function typeName(value) {
     if (value === null)
         return "null";
@@ -60,7 +51,6 @@ function typeName(value) {
 }
 function validateConfigTypes(config) {
     const errors = [];
-    // Top-level validators
     if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
         errors.push({ key: "enabled", expected: "boolean", actual: typeName(config.enabled) });
     }
@@ -106,7 +96,6 @@ function validateConfigTypes(config) {
             }
         }
     }
-    // Commands validator
     const commands = config.commands;
     if (commands !== undefined) {
         if (isRecord(commands)) {
@@ -126,7 +115,6 @@ function validateConfigTypes(config) {
             });
         }
     }
-    // Tools validators
     const tools = config.tools;
     if (isRecord(tools) && isRecord(tools.compress)) {
         const compress = tools.compress;
@@ -142,9 +130,8 @@ function validateConfigTypes(config) {
     }
     return errors;
 }
-// Show validation warnings for a config file
 function showConfigValidationWarnings(configPath, configData, isProject) {
-    const invalidKeys = getInvalidConfigKeys(configData);
+    const invalidKeys = getConfigKeyPaths(configData).filter((key) => !VALID_CONFIG_KEYS.has(key));
     const typeErrors = validateConfigTypes(configData);
     if (invalidKeys.length === 0 && typeErrors.length === 0) {
         return;
@@ -199,7 +186,6 @@ function findOpencodeDir(startDir) {
     return null;
 }
 function getConfigPaths(ctx) {
-    // Global: ~/.config/opencode/compress.jsonc|json
     let globalPath = null;
     if (existsSync(GLOBAL_CONFIG_PATH_JSONC)) {
         globalPath = GLOBAL_CONFIG_PATH_JSONC;
@@ -207,7 +193,6 @@ function getConfigPaths(ctx) {
     else if (existsSync(GLOBAL_CONFIG_PATH_JSON)) {
         globalPath = GLOBAL_CONFIG_PATH_JSON;
     }
-    // Custom config directory: $OPENCODE_CONFIG_DIR/compress.jsonc|json
     let configDirPath = null;
     const opencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
     if (opencodeConfigDir) {
@@ -220,7 +205,6 @@ function getConfigPaths(ctx) {
             configDirPath = configJson;
         }
     }
-    // Project: <project>/.opencode/compress.jsonc|json
     let projectPath = null;
     if (ctx?.directory) {
         const opencodeDir = findOpencodeDir(ctx.directory);
@@ -253,7 +237,6 @@ function loadConfigFile(configPath) {
         fileContent = readFileSync(configPath, "utf-8");
     }
     catch {
-        // File doesn't exist or can't be read - not a parse error
         return { data: null };
     }
     try {
@@ -322,15 +305,18 @@ function deepCloneConfig(config) {
         },
     };
 }
-// The file signature each loaded config was read at, so `refreshConfig` re-reads only after a file changes.
 const signatures = new WeakMap();
 function configSignature(paths) {
-    return [paths.global, paths.configDir, paths.project]
-        .map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "")
-        .join("|");
+    return JSON.stringify([paths.global, paths.configDir, paths.project].map((path) => {
+        try {
+            return [path, path ? readFileSync(path, "utf-8") : null];
+        }
+        catch {
+            return [path, null];
+        }
+    }));
 }
-// Reloads `config` in place when a config file was added, removed or edited since it was read. Every
-// consumer holds this object, so new values apply from the next call without a server restart.
+// Consumers retain this object, so refresh it in place.
 export function refreshConfig(config, ctx) {
     if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
         return;
@@ -342,42 +328,35 @@ export function getConfig(ctx) {
     let config = deepCloneConfig(defaultConfig);
     const configPaths = getConfigPaths(ctx);
     const signature = configSignature(configPaths);
-    // Load and merge global config
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global);
         if (result.parseError) {
             console.warn(`Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`);
         }
         else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false);
             config = mergeConfigLayer(config, result.data);
         }
     }
     else {
-        // No config exists, create default
         createDefaultConfig();
     }
-    // Load and merge $OPENCODE_CONFIG_DIR/compress.jsonc|json (overrides global)
     if (configPaths.configDir) {
         const result = loadConfigFile(configPaths.configDir);
         if (result.parseError) {
             console.warn(`Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`);
         }
         else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true);
             config = mergeConfigLayer(config, result.data);
         }
     }
-    // Load and merge project config (overrides global)
     if (configPaths.project) {
         const result = loadConfigFile(configPaths.project);
         if (result.parseError) {
             console.warn(`Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`);
         }
         else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true);
             config = mergeConfigLayer(config, result.data);
         }

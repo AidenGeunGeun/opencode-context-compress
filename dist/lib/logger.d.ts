@@ -15,21 +15,6 @@ export declare class Logger {
     debug(message: string, data?: Record<string, unknown>): Promise<void>;
     warn(message: string, data?: Record<string, unknown>): Promise<void>;
     error(message: string, data?: Record<string, unknown>): Promise<void>;
-    /**
-     * Strips unnecessary metadata from messages for cleaner debug logs.
-     *
-     * Removed:
-     * - All IDs (id, sessionID, messageID, parentID, callID on parts)
-     * - summary, path, cost, model, agent, mode, finish, providerID, modelID
-     * - step-start and step-finish parts entirely
-     * - snapshot fields
-     * - ignored text parts
-     *
-     * Kept:
-     * - role, time (created only), tokens (input, output, reasoning, cache)
-     * - text, reasoning, tool parts with content
-     * - tool calls with: tool, callID, input, output
-     */
     private minimizeForDebug;
     /** Appends one JSON record to `daily/<day>.<name>.log`, which the daily log's cleanup also deletes. */
     record(name: string, value: unknown): Promise<void>;

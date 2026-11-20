@@ -4,10 +4,6 @@ export interface TransformMessagesForSearchResult {
     transformed: WithParts[];
     syntheticMap: Map<string, SessionState["compressSummaries"][number]>;
 }
-interface ManagementTurnSuppressionPlan {
-    suppressedMessageIds: Set<string>;
-    retainedTextByMessageId: Map<string, string>;
-}
 /**
  * Finds the session's currently open management turn, if any: a turn that is not yet
  * marked completed by a successful `compress` call AND has no later visible user message
@@ -19,9 +15,5 @@ export declare function findActiveManagementTurn(state: SessionState, rawMessage
     turn: SessionState["managementTurns"][number];
     triggerIndex: number;
 } | undefined;
-export declare function buildManagementTurnSuppressionPlan(state: SessionState, rawMessages: WithParts[]): ManagementTurnSuppressionPlan;
-/** Remove exact Version 2 machinery from material selected into a future summary. */
-export declare function stripV2MachineryForCompressionSelection(messages: WithParts[], state: SessionState): WithParts[];
 export declare const transformMessagesForSearch: (rawMessages: WithParts[], state: SessionState) => TransformMessagesForSearchResult;
-export {};
 //# sourceMappingURL=compress-transform.d.ts.map

@@ -11,53 +11,6 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { parse } from "jsonc-parser";
 
-// lib/messages/utils.ts
-import { ulid } from "ulid";
-import { createHash } from "crypto";
-var COMPRESS_SUMMARY_PREFIX = `[Compressed conversation block]
-
-`;
-var generateUniqueId = (prefix) => `${prefix}_${ulid()}`;
-var generateStableId = (prefix, seed) => `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
-var createSyntheticUserMessage = (baseMessage, content, variant, stableSeed) => {
-  const info = baseMessage.info;
-  const now = stableSeed ? info.time.created : Date.now();
-  const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg");
-  const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt");
-  return {
-    info: {
-      id: messageId,
-      sessionID: info.sessionID,
-      role: "user",
-      agent: info.agent,
-      model: info.model,
-      time: { created: now },
-      ...variant !== undefined && { variant }
-    },
-    parts: [
-      {
-        id: partId,
-        sessionID: info.sessionID,
-        messageID: messageId,
-        type: "text",
-        text: content
-      }
-    ]
-  };
-};
-var isIgnoredUserMessage = (message) => {
-  const parts = Array.isArray(message.parts) ? message.parts : [];
-  if (parts.length === 0) {
-    return true;
-  }
-  for (const part of parts) {
-    if (!("ignored" in part) || !part.ignored) {
-      return false;
-    }
-  }
-  return true;
-};
-
 // lib/shared-utils.ts
 var isMessageCompacted = (state, msg) => {
   if (msg.info.time.created < state.lastCompaction) {
@@ -67,16 +20,6 @@ var isMessageCompacted = (state, msg) => {
     return true;
   }
   return false;
-};
-var getLastUserMessage = (messages, startIndex) => {
-  const start = startIndex ?? messages.length - 1;
-  for (let i = start;i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.info.role === "user" && !isIgnoredUserMessage(msg)) {
-      return msg;
-    }
-  }
-  return null;
 };
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -123,10 +66,6 @@ function getConfigKeyPaths(obj, prefix = "") {
     }
   }
   return keys;
-}
-function getInvalidConfigKeys(userConfig) {
-  const userKeys = getConfigKeyPaths(userConfig);
-  return userKeys.filter((key) => !VALID_CONFIG_KEYS.has(key));
 }
 function typeName(value) {
   if (value === null)
@@ -210,7 +149,7 @@ function validateConfigTypes(config) {
   return errors;
 }
 function showConfigValidationWarnings(configPath, configData, isProject) {
-  const invalidKeys = getInvalidConfigKeys(configData);
+  const invalidKeys = getConfigKeyPaths(configData).filter((key) => !VALID_CONFIG_KEYS.has(key));
   const typeErrors = validateConfigTypes(configData);
   if (invalidKeys.length === 0 && typeErrors.length === 0) {
     return;
@@ -376,7 +315,13 @@ function deepCloneConfig(config) {
 }
 var signatures = new WeakMap;
 function configSignature(paths) {
-  return [paths.global, paths.configDir, paths.project].map((path) => path ? `${path}:${statSync(path, { throwIfNoEntry: false })?.mtimeMs}` : "").join("|");
+  return JSON.stringify([paths.global, paths.configDir, paths.project].map((path) => {
+    try {
+      return [path, path ? readFileSync(path, "utf-8") : null];
+    } catch {
+      return [path, null];
+    }
+  }));
 }
 function refreshConfig(config, ctx) {
   if (signatures.get(config) === configSignature(getConfigPaths(ctx)))
@@ -1272,6 +1217,53 @@ function formatTokenCount(tokens) {
   return `${tokens} tokens`;
 }
 
+// lib/messages/utils.ts
+import { ulid } from "ulid";
+import { createHash } from "crypto";
+var COMPRESS_SUMMARY_PREFIX = `[Compressed conversation block]
+
+`;
+var generateUniqueId = (prefix) => `${prefix}_${ulid()}`;
+var generateStableId = (prefix, seed) => `${prefix}_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
+var createSyntheticUserMessage = (baseMessage, content, variant, stableSeed) => {
+  const info = baseMessage.info;
+  const now = stableSeed ? info.time.created : Date.now();
+  const messageId = stableSeed ? generateStableId("msg", stableSeed) : generateUniqueId("msg");
+  const partId = stableSeed ? generateStableId("prt", stableSeed) : generateUniqueId("prt");
+  return {
+    info: {
+      id: messageId,
+      sessionID: info.sessionID,
+      role: "user",
+      agent: info.agent,
+      model: info.model,
+      time: { created: now },
+      ...variant !== undefined && { variant }
+    },
+    parts: [
+      {
+        id: partId,
+        sessionID: info.sessionID,
+        messageID: messageId,
+        type: "text",
+        text: content
+      }
+    ]
+  };
+};
+var isIgnoredUserMessage = (message) => {
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+  if (parts.length === 0) {
+    return true;
+  }
+  for (const part of parts) {
+    if (!("ignored" in part) || !part.ignored) {
+      return false;
+    }
+  }
+  return true;
+};
+
 // lib/token-utils.ts
 import { countTokens as anthropicCountTokens } from "@anthropic-ai/tokenizer";
 import { encodingForModel } from "js-tiktoken";
@@ -1288,7 +1280,7 @@ function isAnthropicProvider(providerId) {
   return providerId.toLowerCase().includes("anthropic");
 }
 function getCurrentProviderId(state, messages) {
-  return getLastUserMessage(messages)?.info.model?.providerID ?? state.modelContext?.providerId;
+  return messages.findLast((message) => message.info.role === "user" && !isIgnoredUserMessage(message))?.info.model?.providerID ?? state.modelContext?.providerId;
 }
 function countTokens(text, providerId) {
   if (!text)
@@ -1395,13 +1387,6 @@ function analyzeTokens(state, messages, providerId) {
   breakdown.assistant = Math.max(0, breakdown.total - breakdown.system - breakdown.user - breakdown.tools);
   return breakdown;
 }
-function createBar(value, maxValue, width, char = "\u2588") {
-  if (maxValue === 0)
-    return "";
-  const filled = Math.round(value / maxValue * width);
-  const bar = char.repeat(Math.max(0, filled));
-  return bar;
-}
 function formatContextMessage(breakdown) {
   const lines = [];
   const barWidth = 30;
@@ -1422,7 +1407,8 @@ function formatContextMessage(breakdown) {
   lines.push("\u2500".repeat(60));
   lines.push("");
   for (const cat of categories) {
-    const bar = createBar(cat.value, breakdown.total, barWidth, cat.char);
+    const filled = breakdown.total === 0 ? 0 : Math.round(cat.value / breakdown.total * barWidth);
+    const bar = cat.char.repeat(Math.max(0, filled));
     const percentage = breakdown.total > 0 ? (cat.value / breakdown.total * 100).toFixed(1) : "0.0";
     const labelWithPct = `${cat.label.padEnd(maxLabelLen)} ${percentage.padStart(5)}% `;
     const valueStr = formatTokenCount(cat.value).padStart(13);
@@ -3130,5 +3116,5 @@ export {
   context_compress_default as default
 };
 
-//# debugId=E5E39619E50A960C64756E2164756E21
+//# debugId=07CC8EDD54BEF93764756E2164756E21
 //# sourceMappingURL=index.js.map

@@ -1,8 +1,3 @@
-/**
- * State persistence module for Context Compress plugin.
- * Persists compressed tool IDs across sessions so they survive OpenCode restarts.
- * Storage location: ~/.local/share/opencode/storage/plugin/compress/{sessionId}.json
- */
 import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -126,7 +121,7 @@ function normalizeManagementTurns(turns) {
     }
     return normalized;
 }
-export function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
+function backfillCompressSummaryMessageIds(summaries, messages, compressedMessageIds) {
     return summaries.map((summary) => {
         if (Array.isArray(summary.messageIds) && summary.messageIds.length > 0) {
             return {

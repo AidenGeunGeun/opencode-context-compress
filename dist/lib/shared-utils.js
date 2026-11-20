@@ -1,4 +1,3 @@
-import { isIgnoredUserMessage } from "./messages/utils.js";
 export const isMessageCompacted = (state, msg) => {
     if (msg.info.time.created < state.lastCompaction) {
         return true;
@@ -7,16 +6,6 @@ export const isMessageCompacted = (state, msg) => {
         return true;
     }
     return false;
-};
-export const getLastUserMessage = (messages, startIndex) => {
-    const start = startIndex ?? messages.length - 1;
-    for (let i = start; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.info.role === "user" && !isIgnoredUserMessage(msg)) {
-            return msg;
-        }
-    }
-    return null;
 };
 export function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);

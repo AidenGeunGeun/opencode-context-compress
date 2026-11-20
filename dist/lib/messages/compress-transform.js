@@ -64,7 +64,7 @@ function collectSuppressedOrRetainedSpan(rawMessages, triggerIndex, endExclusive
         suppressedMessageIds.add(message.info.id);
     }
 }
-export function buildManagementTurnSuppressionPlan(state, rawMessages) {
+function buildManagementTurnSuppressionPlan(state, rawMessages) {
     const suppressedMessageIds = new Set();
     const retainedTextByMessageId = new Map();
     if (!state.managementTurns?.length) {
@@ -216,25 +216,6 @@ function buildV2CleanupPlan(state, rawMessages) {
         retainedPartsByMessageId,
         protectedMessageIds,
     };
-}
-/** Remove exact Version 2 machinery from material selected into a future summary. */
-export function stripV2MachineryForCompressionSelection(messages, state) {
-    const triggers = new Map(state.managementTurns
-        .filter((turn) => turn.cleanupVersion === 2)
-        .map((turn) => [turn.triggerMessageId, turn]));
-    const completions = new Map(state.managementTurns
-        .filter((turn) => turn.cleanupVersion === 2 && turn.completedMessageId)
-        .map((turn) => [turn.completedMessageId, turn]));
-    return messages.flatMap((message) => {
-        const trigger = triggers.get(message.info.id);
-        if (trigger && !trigger.retainedText)
-            return [];
-        const completion = completions.get(message.info.id);
-        if (!completion)
-            return [message];
-        const parts = withoutCompletionTool(message, completion);
-        return parts.length > 0 ? [{ ...message, parts }] : [];
-    });
 }
 function createRetainedUserMessage(message, retainedText) {
     const parts = Array.isArray(message.parts) ? message.parts : [];

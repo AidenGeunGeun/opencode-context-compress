@@ -1,40 +1,3 @@
-/**
- * Compress context command
- * Shows a visual breakdown of token usage in the current session.
- *
- * TOKEN CALCULATION STRATEGY
- * ==========================
- * We minimize tokenizer estimation by leveraging API-reported values wherever possible.
- *
- * WHAT WE GET FROM THE API (exact):
- *   - tokens.input    : Input tokens for each assistant response
- *   - tokens.output   : Output tokens generated (includes text + tool calls)
- *   - tokens.reasoning: Reasoning tokens used
- *   - tokens.cache    : Cache read/write tokens
- *
- * HOW WE CALCULATE EACH CATEGORY:
- *
- *   SYSTEM = firstAssistant.input + cache.read - tokenizer(firstUserMessage)
- *            The first response's input contains system + first user message.
- *
- *   TOOLS  = tokenizer(toolInputs + toolOutputs), skipping pruned outputs
- *
- *   USER   = tokenizer(all user messages)
- *            User messages are typically small, so estimation is acceptable.
- *
- *   ASSISTANT = total - system - user - tools
- *               Calculated as residual. This absorbs:
- *               - Assistant text output tokens
- *               - Reasoning tokens (if persisted by the model)
- *               - Any estimation errors
- *
- *   TOTAL  = input + output + reasoning + cache.read + cache.write
- *            Matches opencode's UI display.
- *
- * WHY ASSISTANT IS THE RESIDUAL:
- *   If reasoning tokens persist in context (model-dependent), they semantically
- *   belong with "Assistant" since reasoning IS assistant-generated content.
- */
 import { sendIgnoredMessage } from "../ui/notification.js";
 import { formatTokenCount } from "../ui/utils.js";
 import { isMessageCompacted } from "../shared-utils.js";
@@ -133,15 +96,9 @@ function analyzeTokens(state, messages, providerId) {
         breakdown.system = Math.max(0, firstInput - firstUserTokens);
     }
     breakdown.tools = toolInputTokens + toolOutputTokens;
+    // Persisted reasoning belongs to assistant usage, so it absorbs the estimation residual.
     breakdown.assistant = Math.max(0, breakdown.total - breakdown.system - breakdown.user - breakdown.tools);
     return breakdown;
-}
-function createBar(value, maxValue, width, char = "█") {
-    if (maxValue === 0)
-        return "";
-    const filled = Math.round((value / maxValue) * width);
-    const bar = char.repeat(Math.max(0, filled));
-    return bar;
 }
 function formatContextMessage(breakdown) {
     const lines = [];
@@ -163,7 +120,8 @@ function formatContextMessage(breakdown) {
     lines.push("─".repeat(60));
     lines.push("");
     for (const cat of categories) {
-        const bar = createBar(cat.value, breakdown.total, barWidth, cat.char);
+        const filled = breakdown.total === 0 ? 0 : Math.round((cat.value / breakdown.total) * barWidth);
+        const bar = cat.char.repeat(Math.max(0, filled));
         const percentage = breakdown.total > 0 ? ((cat.value / breakdown.total) * 100).toFixed(1) : "0.0";
         const labelWithPct = `${cat.label.padEnd(maxLabelLen)} ${percentage.padStart(5)}% `;
         const valueStr = formatTokenCount(cat.value).padStart(13);

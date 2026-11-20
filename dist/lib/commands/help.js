@@ -1,7 +1,3 @@
-/**
- * Compress help command handler.
- * Shows available compression commands and their descriptions.
- */
 import { sendIgnoredMessage } from "../ui/notification.js";
 function formatHelpMessage() {
     const lines = [];
