@@ -33,7 +33,6 @@ export class Logger {
         for (const [key, value] of Object.entries(data)) {
             if (value === undefined || value === null) continue
 
-            // Format arrays compactly
             if (Array.isArray(value)) {
                 if (value.length === 0) continue
                 parts.push(
@@ -59,11 +58,9 @@ export class Logger {
             const stack = err.stack as unknown as NodeJS.CallSite[]
             Error.prepareStackTrace = originalPrepareStackTrace
 
-            // Skip specified number of frames to get to actual caller
             for (let i = skipFrames; i < stack.length; i++) {
                 const filename = stack[i]?.getFileName()
                 if (filename && !filename.includes("/logger.")) {
-                    // Extract just the filename without path and extension
                     const match = filename.match(/([^/\\]+)\.[tj]s$/)
                     return match ? match[1] : filename
                 }
@@ -133,21 +130,6 @@ export class Logger {
         return this.write("ERROR", component, message, data)
     }
 
-    /**
-     * Strips unnecessary metadata from messages for cleaner debug logs.
-     *
-     * Removed:
-     * - All IDs (id, sessionID, messageID, parentID, callID on parts)
-     * - summary, path, cost, model, agent, mode, finish, providerID, modelID
-     * - step-start and step-finish parts entirely
-     * - snapshot fields
-     * - ignored text parts
-     *
-     * Kept:
-     * - role, time (created only), tokens (input, output, reasoning, cache)
-     * - text, reasoning, tool parts with content
-     * - tool calls with: tool, callID, input, output
-     */
     private minimizeForDebug(messages: readonly unknown[]): Record<string, unknown>[] {
         return messages.map((message) => {
             const msg = isRecord(message) ? message : {}
