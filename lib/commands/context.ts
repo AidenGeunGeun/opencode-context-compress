@@ -6,7 +6,7 @@ import { formatTokenCount } from "../ui/utils.js"
 import { isMessageCompacted } from "../shared-utils.js"
 import { isIgnoredUserMessage } from "../messages/utils.js"
 import { countTokens, getCurrentProviderId } from "../token-utils.js"
-import type { AssistantMessage, TextPart, ToolPart } from "../state/types.js"
+import type { TextPart, ToolPart } from "../state/types.js"
 
 export interface ContextCommandContext {
     client: PluginClient
@@ -41,7 +41,7 @@ function analyzeTokens(
         total: 0,
     }
 
-    let firstAssistant: AssistantMessage | undefined
+    let firstAssistant: WithParts["info"] | undefined
     for (const msg of messages) {
         if (msg.info.role === "assistant") {
             if ((msg.info.tokens?.input ?? 0) > 0 || (msg.info.tokens?.cache?.read ?? 0) > 0) {
@@ -51,7 +51,7 @@ function analyzeTokens(
         }
     }
 
-    let lastAssistant: AssistantMessage | undefined
+    let lastAssistant: WithParts["info"] | undefined
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i]
         if (msg.info.role === "assistant") {
@@ -149,13 +149,6 @@ function analyzeTokens(
     return breakdown
 }
 
-function createBar(value: number, maxValue: number, width: number, char: string): string {
-    if (maxValue === 0) return ""
-    const filled = Math.round((value / maxValue) * width)
-    const bar = char.repeat(Math.max(0, filled))
-    return bar
-}
-
 function formatContextMessage(breakdown: TokenBreakdown): string {
     const lines: string[] = []
     const barWidth = 30
@@ -181,7 +174,9 @@ function formatContextMessage(breakdown: TokenBreakdown): string {
     lines.push("")
 
     for (const cat of categories) {
-        const bar = createBar(cat.value, breakdown.total, barWidth, cat.char)
+        const filled =
+            breakdown.total === 0 ? 0 : Math.round((cat.value / breakdown.total) * barWidth)
+        const bar = cat.char.repeat(Math.max(0, filled))
         const percentage =
             breakdown.total > 0 ? ((cat.value / breakdown.total) * 100).toFixed(1) : "0.0"
         const labelWithPct = `${cat.label.padEnd(maxLabelLen)} ${percentage.padStart(5)}% `

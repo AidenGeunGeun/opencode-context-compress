@@ -186,7 +186,6 @@ function validateConfigTypes(config: Record<string, unknown>): ValidationError[]
     return errors
 }
 
-// Show validation warnings for a config file
 function showConfigValidationWarnings(
     configPath: string,
     configData: Record<string, unknown>,
@@ -259,7 +258,6 @@ function getConfigPaths(ctx?: ConfigContext): {
     configDir: string | null
     project: string | null
 } {
-    // Global: ~/.config/opencode/compress.jsonc|json
     let globalPath: string | null = null
     if (existsSync(GLOBAL_CONFIG_PATH_JSONC)) {
         globalPath = GLOBAL_CONFIG_PATH_JSONC
@@ -267,7 +265,6 @@ function getConfigPaths(ctx?: ConfigContext): {
         globalPath = GLOBAL_CONFIG_PATH_JSON
     }
 
-    // Custom config directory: $OPENCODE_CONFIG_DIR/compress.jsonc|json
     let configDirPath: string | null = null
     const opencodeConfigDir = process.env.OPENCODE_CONFIG_DIR
     if (opencodeConfigDir) {
@@ -280,7 +277,6 @@ function getConfigPaths(ctx?: ConfigContext): {
         }
     }
 
-    // Project: <project>/.opencode/compress.jsonc|json
     let projectPath: string | null = null
     if (ctx?.directory) {
         const opencodeDir = findOpencodeDir(ctx.directory)
@@ -320,7 +316,6 @@ function loadConfigFile(configPath: string): ConfigLoadResult {
     try {
         fileContent = readFileSync(configPath, "utf-8")
     } catch {
-        // File doesn't exist or can't be read - not a parse error
         return { data: null }
     }
 
@@ -416,8 +411,7 @@ function configSignature(paths: ReturnType<typeof getConfigPaths>): string {
     )
 }
 
-// Reloads `config` in place when a config file was added, removed or edited since it was read. Every
-// consumer holds this object, so new values apply from the next call without a server restart.
+// Consumers retain this object, so refresh it in place.
 export function refreshConfig(config: PluginConfig, ctx: ConfigContext): void {
     if (signatures.get(config) === configSignature(getConfigPaths(ctx))) return
     const fresh = getConfig(ctx)
@@ -430,7 +424,6 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
     const configPaths = getConfigPaths(ctx)
     const signature = configSignature(configPaths)
 
-    // Load and merge global config
     if (configPaths.global) {
         const result = loadConfigFile(configPaths.global)
         if (result.parseError) {
@@ -438,16 +431,13 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
                 `Context Compress: Invalid config\n${configPaths.global}\n${result.parseError}\nUsing default values`,
             )
         } else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.global, result.data, false)
             config = mergeConfigLayer(config, result.data)
         }
     } else {
-        // No config exists, create default
         createDefaultConfig()
     }
 
-    // Load and merge $OPENCODE_CONFIG_DIR/compress.jsonc|json (overrides global)
     if (configPaths.configDir) {
         const result = loadConfigFile(configPaths.configDir)
         if (result.parseError) {
@@ -455,13 +445,11 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
                 `Context Compress: Invalid configDir config\n${configPaths.configDir}\n${result.parseError}\nUsing global/default values`,
             )
         } else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.configDir, result.data, true)
             config = mergeConfigLayer(config, result.data)
         }
     }
 
-    // Load and merge project config (overrides global)
     if (configPaths.project) {
         const result = loadConfigFile(configPaths.project)
         if (result.parseError) {
@@ -469,7 +457,6 @@ export function getConfig(ctx: ConfigContext): PluginConfig {
                 `Context Compress: Invalid project config\n${configPaths.project}\n${result.parseError}\nUsing global/default values`,
             )
         } else if (result.data) {
-            // Validate config keys and types
             showConfigValidationWarnings(configPaths.project, result.data, true)
             config = mergeConfigLayer(config, result.data)
         }

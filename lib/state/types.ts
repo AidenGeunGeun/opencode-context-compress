@@ -49,7 +49,6 @@ interface MarkerPart {
     [key: string]: unknown
 }
 
-export type AssistantMessage = MessageBase
 export type Part = TextPart | ToolPart | MarkerPart
 
 export interface WithParts {
