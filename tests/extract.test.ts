@@ -1,7 +1,8 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { isIgnoredUserMessage } from "../lib/messages/utils.ts"
+import { transformV2Messages } from "../lib/messages/v2-transform.ts"
+import { createSessionState } from "../lib/state/state.ts"
 import type { Part, WithParts } from "../lib/state/types.ts"
 
 const userMessage = (id: string, parts: Part[]): WithParts => ({
@@ -9,30 +10,28 @@ const userMessage = (id: string, parts: Part[]): WithParts => ({
     parts,
 })
 
-describe("isIgnoredUserMessage", () => {
-    it("returns true for empty parts", () => {
-        const msg = userMessage("test-1", [])
-        assert.equal(isIgnoredUserMessage(msg), true)
-    })
-
-    it("returns true when all parts are ignored", () => {
-        const msg = userMessage("test-2", [{ type: "text", text: "hello", ignored: true }])
-
-        assert.equal(isIgnoredUserMessage(msg), true)
-    })
-
-    it("returns false for a normal text part", () => {
-        const msg = userMessage("test-3", [{ type: "text", text: "hello" }])
-
-        assert.equal(isIgnoredUserMessage(msg), false)
-    })
-
-    it("returns false for mixed ignored and non-ignored parts", () => {
-        const msg = userMessage("test-4", [
-            { type: "text", text: "hidden", ignored: true },
-            { type: "text", text: "visible" },
-        ])
-
-        assert.equal(isIgnoredUserMessage(msg), false)
-    })
+describe("model-visible user history", () => {
+    for (const [name, parts, retained] of [
+        ["empty", [], false],
+        ["ignored", [{ type: "text", text: "hidden", ignored: true }], false],
+        ["normal", [{ type: "text", text: "visible" }], true],
+        [
+            "mixed",
+            [
+                { type: "text", text: "hidden", ignored: true },
+                { type: "text", text: "visible" },
+            ],
+            true,
+        ],
+    ] satisfies Array<[string, Part[], boolean]>) {
+        it(`keeps only model-visible user messages: ${name}`, () => {
+            const model = [
+                { id: "user", role: "user", content: [{ type: "text", text: "visible" }] },
+            ]
+            assert.deepEqual(
+                transformV2Messages([userMessage("user", parts)], createSessionState(), model),
+                retained ? model : [],
+            )
+        })
+    }
 })

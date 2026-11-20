@@ -1,50 +1,28 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-import { countTokens, isAnthropicProvider } from "../lib/token-utils.ts"
-
-describe("isAnthropicProvider", () => {
-    it("returns true for provider ID containing anthropic", () => {
-        assert.equal(isAnthropicProvider("Anthropic"), true)
-        assert.equal(isAnthropicProvider("anthropic.bedrock"), true)
-    })
-
-    it("returns false for non-anthropic providers", () => {
-        assert.equal(isAnthropicProvider("openai"), false)
-        assert.equal(isAnthropicProvider("google"), false)
-    })
-
-    it("returns false for undefined", () => {
-        assert.equal(isAnthropicProvider(undefined), false)
-    })
-})
+import { countTokens } from "../lib/token-utils.ts"
 
 describe("countTokens", () => {
     it("returns 0 for empty string", () => {
         assert.equal(countTokens(""), 0)
     })
 
-    it("returns a positive token count for text", () => {
-        assert.ok(countTokens("hello world") > 0)
+    it("counts ordinary text rather than returning a positive placeholder", () => {
+        assert.equal(countTokens("hello world"), 2)
     })
 
-    it("uses Anthropic tokenizer when providerId is anthropic", () => {
-        const text =
-            "function calculateTokens(text: string): number { return Math.ceil(text.length / 4); }"
-        const anthropicCount = countTokens(text, "anthropic")
-        const defaultCount = countTokens(text)
-        // Both should be positive
-        assert.ok(anthropicCount > 0)
-        assert.ok(defaultCount > 0)
-        // They should differ for code (Anthropic vs tiktoken use different BPE merges)
-        assert.notEqual(anthropicCount, defaultCount)
-    })
-
-    it("uses tiktoken for non-anthropic providers", () => {
-        const text = "hello world"
-        const openaiCount = countTokens(text, "openai")
-        const defaultCount = countTokens(text)
-        // Without providerId, tiktoken is the default — should match
-        assert.equal(openaiCount, defaultCount)
-    })
+    for (const [provider, expected] of [
+        ["anthropic", 14],
+        ["Anthropic", 14],
+        ["anthropic.bedrock", 14],
+        ["openai", 13],
+        ["google", 13],
+        [undefined, 13],
+    ] as const) {
+        it(`uses the required tokenizer for ${provider ?? "the default provider"}`, () => {
+            // Golden counts from Anthropic's tokenizer and OpenAI's o200k_base vocabulary.
+            assert.equal(countTokens("function add(a, b) { return a + b; }", provider), expected)
+        })
+    }
 })

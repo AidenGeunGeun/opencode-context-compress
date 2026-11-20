@@ -6,6 +6,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { syncBuiltinESMExports } from "node:module"
 import { join } from "node:path"
 
+import { countTokens, getCurrentProviderId } from "../lib/token-utils.ts"
 import type { WithParts } from "../lib/state/types.ts"
 import { isolateHostDirs } from "./helpers.ts"
 
@@ -76,18 +77,13 @@ describe("SessionStateManager", () => {
         assert.equal(subagentState.modelContext, undefined)
     })
 
-    it("returns the same object when the same session is requested again", () => {
+    it("carries session mutations into the next durable save", async () => {
         const manager = new SessionStateManager()
-        const state = manager.get("main-session")
-
-        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
-
-        assert.strictEqual(manager.get("main-session"), state)
-        assert.deepEqual(manager.get("main-session").modelContext, {
-            providerId: "openai",
-            modelId: "gpt-test",
-            contextLimit: 1_000,
-        })
+        manager.get("carried").compressed.toolIds.add("previous-prune")
+        assert.equal(await saveSessionState(manager.get("carried"), logger), true)
+        const loaded = await loadSessionState("carried", logger)
+        assert.equal(loaded.status, "loaded")
+        assert.deepEqual(loaded.state.compressed.toolIds, ["previous-prune"])
     })
 
     it("serializes mutations per session without blocking a different session", async () => {
@@ -176,11 +172,15 @@ describe("SessionStateManager", () => {
 })
 
 describe("ensureSessionInitialized", () => {
-    it("marks state initialized without clearing cached model context", async () => {
+    it("uses the cached provider for token accounting after initialization", async () => {
         const sessionId = `session-state-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const state = createSessionState()
         state.sessionId = sessionId
-        state.modelContext = { providerId: "openai", modelId: "gpt-test", contextLimit: 1_000 }
+        state.modelContext = {
+            providerId: "anthropic",
+            modelId: "claude-test",
+            contextLimit: 1_000,
+        }
 
         const messages: WithParts[] = [
             createMessage("m1", sessionId, "user"),
@@ -192,13 +192,10 @@ describe("ensureSessionInitialized", () => {
 
         await ensureSessionInitialized(state, sessionId, logger, messages)
 
-        assert.equal(state.initialized, true)
-        assert.equal(state.sessionId, sessionId)
-        assert.deepEqual(state.modelContext, {
-            providerId: "openai",
-            modelId: "gpt-test",
-            contextLimit: 1_000,
-        })
+        assert.equal(
+            countTokens("function add(a, b) { return a + b; }", getCurrentProviderId(state, [])),
+            14,
+        )
     })
 
     it("clears legacy compression on native compaction and keeps it cleared after reload", async () => {

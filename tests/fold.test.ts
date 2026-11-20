@@ -394,10 +394,12 @@ describe("fold request", () => {
             return plugin.prompts.at(-1)?.text ?? ""
         }
 
-        assert.match(await requestFor("s5"), /librarian/)
+        assert.match(await requestFor("s5"), /update[\s\S]*documentation/i)
         const subagent = await requestFor("child-s5")
-        assert.doesNotMatch(subagent, /librarian/)
-        assert.match(subagent, /For the parent/)
+        assert.match(subagent, /do not edit documentation/i)
+        assert.match(subagent, /unless[\s\S]*task/i)
+        assert.match(subagent, /decisions[\s\S]*findings[\s\S]*questions[\s\S]*summary/i)
+        assert.match(subagent, /task[\s\S]*boundaries[\s\S]*completion criteria/i)
     })
 })
 

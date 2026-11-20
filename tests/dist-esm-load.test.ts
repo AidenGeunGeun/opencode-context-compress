@@ -14,7 +14,6 @@ import {
     type ModelHookInput,
     type SyntheticInput,
     sessionInfo,
-    type ToolFake,
 } from "./helpers.ts"
 
 describe("built OpenCode 2.3.2 Promise plugin", () => {
@@ -36,49 +35,21 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
             const { default: plugin }: typeof import("../index.ts") = await import(
                 `${bundle}?test=${Date.now()}`
             )
-            assert.equal(plugin.id, "opencode-context-compress")
-            assert.equal(typeof plugin.setup, "function")
-            assert.equal("server" in plugin, false)
 
             const commands: CommandFake[] = []
-            const tools: ToolFake[] = []
             const hooks = new Map<string, (input: ModelHookInput) => Promise<void> | void>()
             const synthetic: SyntheticInput[] = []
             const registration = { dispose: async () => undefined }
             const sessionID = "session-2013-smoke"
             const projected: ContextMessage[] = [
-                { id: "old-user", type: "user", text: "older", time: { created: 1 } },
+                { id: "question", type: "user", text: "Continue working", time: { created: 1 } },
                 {
-                    id: "old-assistant",
-                    type: "assistant",
-                    agent: "build",
-                    model: { providerID: "openai", id: "gpt-test" },
-                    content: [{ type: "text", text: "done" }],
-                    finish: "stop",
-                    tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
-                    time: { created: 2, completed: 3 },
-                },
-                { id: "owner", type: "user", text: "compress now", time: { created: 4 } },
-                {
-                    id: "tool-message",
-                    type: "assistant",
-                    agent: "build",
-                    model: { providerID: "openai", id: "gpt-test" },
-                    content: [
-                        {
-                            type: "tool",
-                            id: "call-compress",
-                            name: "compress",
-                            state: {
-                                status: "running",
-                                input: { summary: "Earlier", topic: "Earlier" },
-                                metadata: {},
-                            },
-                            time: { created: 5 },
-                        },
-                    ],
-                    tokens: { input: 12, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
-                    time: { created: 5 },
+                    id: "feedback",
+                    type: "synthetic",
+                    text: "Status only",
+                    description: "Status only",
+                    metadata: { "opencode.context-compress.ignored": true },
+                    time: { created: 2 },
                 },
             ]
             const events = { async *[Symbol.asyncIterator]() {} }
@@ -91,12 +62,7 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
                             return registration
                         },
                     },
-                    tool: {
-                        transform: async (callback) => {
-                            callback({ add: (tool) => tools.push(tool) })
-                            return registration
-                        },
-                    },
+                    tool: { transform: async () => registration },
                     session: {
                         ...fakeSession({
                             context: async () => projected,
@@ -124,20 +90,9 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
                 }),
             )
 
-            assert.deepEqual(
-                commands.map((command) => command.name),
-                ["compress"],
-            )
-            assert.deepEqual(
-                tools.map((tool) => tool.name),
-                ["compress"],
-            )
-            assert.deepEqual(
-                [...hooks.keys()],
-                ["context", "generate", "compaction", "http.request", "model.request"],
-            )
-
-            await commands[0].execute({
+            const command = commands.find((item) => item.name === "compress")
+            assert.ok(command)
+            await command.execute({
                 sessionID,
                 prompt: { text: "help" },
                 delivery: "steer",
@@ -146,20 +101,12 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
             assert.equal(synthetic[0].resume, false)
 
             const modelMessages: ModelMessage[] = [
-                { id: "old-user", role: "user", content: [{ type: "text", text: "older" }] },
                 {
-                    id: "old-assistant",
-                    role: "assistant",
-                    content: [{ type: "text", text: "done" }],
+                    id: "question",
+                    role: "user",
+                    content: [{ type: "text", text: "Continue working" }],
                 },
-                { id: "owner", role: "user", content: [{ type: "text", text: "compress now" }] },
-                {
-                    id: "tool-message",
-                    role: "assistant",
-                    content: [
-                        { type: "tool-call", id: "call-compress", name: "compress", input: {} },
-                    ],
-                },
+                { id: "feedback", role: "user", content: [{ type: "text", text: "Status only" }] },
             ]
             await hooks.get("context")?.({
                 sessionID,
@@ -170,9 +117,13 @@ describe("built OpenCode 2.3.2 Promise plugin", () => {
                 tools: {},
                 options: {},
             })
-            assert.equal(modelMessages.length, 4)
-
-            assert.equal(projected.length, 4)
+            assert.deepEqual(modelMessages, [
+                {
+                    id: "question",
+                    role: "user",
+                    content: [{ type: "text", text: "Continue working" }],
+                },
+            ])
             await cleanup?.()
         } finally {
             if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME

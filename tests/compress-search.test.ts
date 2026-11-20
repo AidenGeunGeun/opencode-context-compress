@@ -1,10 +1,16 @@
-import { describe, it } from "node:test"
+import { after, describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 
-import { COMPRESS_SUMMARY_PREFIX } from "../lib/messages/utils.ts"
 import { transformMessagesForSearch } from "../lib/messages/compress-transform.ts"
-import { backfillCompressSummaryMessageIds } from "../lib/state/persistence.ts"
 import type { CompressSummary, SessionState, WithParts } from "../lib/state/types.ts"
+import { isolateHostDirs, partText } from "./helpers.ts"
+
+const root = await isolateHostDirs()
+const { loadSessionState } = await import("../lib/state/persistence.ts")
+const { Logger } = await import("../lib/logger.ts")
+after(() => rm(root, { recursive: true, force: true }))
 
 const textMessage = (id: string, text: string, role: "user" | "assistant" = "user"): WithParts => ({
     info: {
@@ -51,20 +57,22 @@ describe("compressed message transformation", () => {
         const state = createState(["m2", "m3"], [summary])
         const { transformed, syntheticMap } = transformMessagesForSearch(rawMessages, state)
 
-        assert.equal(transformed.length, 2)
-        assert.equal(syntheticMap.size, 1)
-        assert.equal(transformed[0].info.id, "m1")
-        const [summaryPart] = transformed[1].parts
-        assert.equal(
-            summaryPart.type === "text" && summaryPart.text.startsWith(COMPRESS_SUMMARY_PREFIX),
-            true,
+        assert.deepEqual(
+            transformed.map((message) => [message.info.role, ...message.parts.map(partText)]),
+            [
+                ["user", "alpha start"],
+                [
+                    "user",
+                    "[Compressed conversation block]\n\n[b0]\n\nlegacy block summary with needle",
+                ],
+            ],
         )
+        assert.equal(syntheticMap.size, 1)
     })
 })
 
 describe("compress summary maintenance", () => {
-    it("backfills missing messageIds from anchor and compressed message run", () => {
-        const summaries = [{ anchorMessageId: "m2", summary: "legacy" }]
+    it("renders older saved summaries without messageIds through the persistence consumer", async () => {
         const messages = [
             textMessage("m1", "pre"),
             textMessage("m2", "start"),
@@ -73,12 +81,33 @@ describe("compress summary maintenance", () => {
             textMessage("m5", "post"),
         ]
 
-        const result = backfillCompressSummaryMessageIds(
-            summaries,
-            messages,
-            new Set(["m2", "m3", "m4"]),
+        const storage = join(root, "data", "opencode", "storage", "plugin", "compress")
+        await mkdir(storage, { recursive: true })
+        await writeFile(
+            join(storage, "session-test.json"),
+            JSON.stringify({
+                compressed: { toolIds: [], messageIds: ["m2", "m3", "m4"] },
+                compressSummaries: [{ anchorMessageId: "m2", summary: "legacy" }],
+                lastUpdated: "2026-01-01T00:00:00.000Z",
+            }),
         )
-
-        assert.deepEqual(result[0].messageIds, ["m2", "m3", "m4"])
+        const loaded = await loadSessionState(
+            "session-test",
+            new Logger({ daily: false, context: false }),
+            messages,
+        )
+        assert.equal(loaded.status, "loaded")
+        assert.deepEqual(loaded.state.compressSummaries, [
+            { anchorMessageId: "m2", messageIds: ["m2", "m3", "m4"], summary: "legacy" },
+        ])
+        const state = createState(
+            loaded.state.compressed.messageIds,
+            loaded.state.compressSummaries,
+        )
+        const { transformed } = transformMessagesForSearch(messages, state)
+        assert.deepEqual(
+            transformed.map((message) => message.parts.map(partText)),
+            [["pre"], ["[Compressed conversation block]\n\n[b0]\n\nlegacy"], ["post"]],
+        )
     })
 })

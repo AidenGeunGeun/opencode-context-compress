@@ -11,12 +11,12 @@ import {
     type ModelRequestHookInput,
     modelRequest,
     sessionInfo,
+    startContextHook,
 } from "./helpers.ts"
 
 const root = await isolateHostDirs()
-const { PROTECTED_TOOLS, pruneStaleToolOutputs } = await import("../lib/messages/prune.ts")
+const { pruneStaleToolOutputs } = await import("../lib/messages/prune.ts")
 const { setup } = await import("../lib/plugin.ts")
-const { transformV2Messages } = await import("../lib/messages/v2-transform.ts")
 const { Logger } = await import("../lib/logger.ts")
 const { SessionStateManager } = await import("../lib/state/state.ts")
 const { loadSessionState } = await import("../lib/state/persistence.ts")
@@ -25,6 +25,22 @@ after(() => rm(root, { recursive: true, force: true }))
 const logger = new Logger({ daily: false, context: false })
 const NOW = Date.now()
 const MINUTE = 60_000
+const protectedTools = [
+    "patch",
+    "edit",
+    "write",
+    "subagent",
+    "task",
+    "skill",
+    "todowrite",
+    "todoread",
+    "question",
+    "compress",
+    "squash",
+    "get_goal",
+    "create_goal",
+    "update_goal",
+]
 
 const step = (
     id: string,
@@ -85,24 +101,20 @@ describe("background pruning", () => {
     it("prunes every aged output in one batch and keeps recent and protected calls", async () => {
         const outputs: Array<[string, string]> = [
             ["read", "r".repeat(20_000)],
-            ["edit", "Edit applied"],
-            ["subagent", "Subagent report"],
             ["shell", "s".repeat(20_000)],
-            ...Array.from({ length: 12 }, (): [string, string] => ["shell", "ok"]),
+            ...protectedTools.map((tool): [string, string] => [tool, "protected output"]),
+            ...Array.from({ length: 10 }, (): [string, string] => ["shell", "recent"]),
         ]
-        const messages = transcript(outputs, 10)
+        const messages = transcript(outputs, 61)
         messages.splice(2, 0, step("failed", "shell", "", NOW - 30 * MINUTE, "error"))
         const state = freshState()
 
         await pruneStaleToolOutputs(messages, state, logger, false)
 
-        assert.deepEqual([...state.compressed.toolIds].sort(), [
-            "call-a0",
-            "call-a3",
-            "call-a4",
-            "call-a5",
-            "call-failed",
-        ])
+        assert.deepEqual(
+            new Set(state.compressed.toolIds),
+            new Set(["call-a0", "call-a1", "call-failed"]),
+        )
     })
 
     it("waits while the reads paid so far are small next to the cache rewrite", async () => {
@@ -186,47 +198,61 @@ describe("background pruning", () => {
         assert.deepEqual(new Set(reloaded.state.compressed.toolIds), new Set(allMarks))
     })
 
-    it("keeps request bytes stable and shows the stub in place of pruned output", async () => {
-        const outputs: Array<[string, string]> = Array.from(
-            { length: 14 },
-            (_, index): [string, string] => ["shell", index < 2 ? "x".repeat(20_000) : "ok"],
+    it("appends requests without rewriting the already-pruned prefix", async () => {
+        const messages = transcript(
+            Array.from({ length: 14 }, (_, index): [string, string] => [
+                "shell",
+                index < 2 ? "x".repeat(20_000) : "ok",
+            ]),
+            10,
         )
-        const messages = transcript(outputs, 10)
-        const state = freshState()
-        await pruneStaleToolOutputs(messages, state, logger, false)
-        const marked = [...state.compressed.toolIds]
-        assert.deepEqual(marked, ["call-a0", "call-a1", "call-a2", "call-a3"])
-
-        // Nothing new has aged past the protected steps, so a later request changes no marks.
-        await pruneStaleToolOutputs(messages, state, logger, false)
-        assert.deepEqual([...state.compressed.toolIds], marked)
-
-        const model = messages.slice(1, 3).flatMap((message) => {
-            const part = message.parts[1]
-            if (part.type !== "tool") return []
-            return [
+        const context = await startContextHook(setup, root, { context: async () => messages })
+        const request = () =>
+            modelRequest(messages).flatMap((message) => [
+                message,
+                ...message.content.flatMap((part) =>
+                    part.type === "tool-call"
+                        ? [
+                              {
+                                  role: "tool",
+                                  content: [
+                                      {
+                                          type: "tool-result",
+                                          id: part.id,
+                                          result: { type: "text", value: "raw evidence" },
+                                      },
+                                  ],
+                              },
+                          ]
+                        : [],
+                ),
+            ])
+        const first = request()
+        await context("prune-prefix", first)
+        assert.deepEqual(first[2], {
+            role: "tool",
+            content: [
                 {
-                    id: message.info.id,
-                    role: "assistant",
-                    content: [{ type: "tool-call", id: part.callID, name: part.tool, input: {} }],
+                    type: "tool-result",
+                    id: "call-a0",
+                    result: { type: "text", value: "[Output pruned to save context.]" },
                 },
-                {
-                    role: "tool",
-                    content: [
-                        {
-                            type: "tool-result",
-                            id: part.callID,
-                            result: { type: "text", value: "original" },
-                        },
-                    ],
-                },
-            ]
+            ],
         })
-        const first = transformV2Messages(messages, state, model)
-        const second = transformV2Messages(messages, state, model)
-        assert.equal(JSON.stringify(first), JSON.stringify(second))
-        assert.match(JSON.stringify(first), /Output pruned to save context/)
-        assert.doesNotMatch(JSON.stringify(first), /"value":"original"/)
+        messages.push(step("appended", "shell", "new output", NOW + MINUTE))
+        const second = request()
+        await context("prune-prefix", second)
+        assert.deepEqual(second.slice(0, first.length), first)
+        assert.deepEqual(second.at(-1), {
+            role: "tool",
+            content: [
+                {
+                    type: "tool-result",
+                    id: "call-appended",
+                    result: { type: "text", value: "raw evidence" },
+                },
+            ],
+        })
     })
 
     it("prices the rewrite from the system prompt unless the request anchors the cache", async () => {
@@ -307,7 +333,7 @@ describe("background pruning", () => {
                 options: {},
             }
             await hooks.get("context")?.(event)
-            return JSON.stringify(event.messages).includes("[Output pruned to save context.]")
+            return event.messages
         }
         const request = async (kind: ModelRequestHookInput["kind"]) => {
             const headers: Record<string, string> = {}
@@ -318,22 +344,33 @@ describe("background pruning", () => {
                 kind,
                 headers,
             })
-            return [headers["x-opencode-cache-anchors"], headers["x-opencode-tool-clearing"]]
+            const raw = headers["x-opencode-tool-clearing"]
+            const clearing = raw ? JSON.parse(raw) : undefined
+            return [
+                headers["x-opencode-cache-anchors"],
+                clearing ? { from: clearing.from, exclude: new Set(clearing.exclude) } : undefined,
+            ]
         }
-        const clearing = JSON.stringify({ from: "call-a4", exclude: [...PROTECTED_TOOLS] })
+        const clearing = { from: "call-a4", exclude: new Set(protectedTools) }
 
         // The prune reaches Anthropic only as server-side clearing of the calls before call-a4.
-        assert.equal(await context("anthropic"), false)
+        const first = await context("anthropic")
+        assert.doesNotMatch(JSON.stringify(first), /Output pruned to save context/)
         assert.deepEqual(await request("title"), [undefined, undefined])
         assert.deepEqual(await request("primary"), ["call-a1,call-a4", clearing])
         assert.deepEqual(await request("primary"), [undefined, clearing])
 
         // A retry finds the prune already saved; the old frontier stays anchored until the next prune.
-        assert.equal(await context("anthropic"), false)
+        assert.deepEqual(await context("anthropic"), first)
         assert.deepEqual(await request("primary"), ["call-a1,call-a4", clearing])
 
+        messages.push(step("anthropic-next", "shell", "next", NOW + MINUTE))
+        const appended = await context("anthropic")
+        assert.deepEqual(appended.slice(0, first.length), first)
+        assert.doesNotMatch(JSON.stringify(appended), /Output pruned to save context/)
+
         // Other providers see the stubs and send neither header.
-        assert.equal(await context("openai"), true)
+        assert.match(JSON.stringify(await context("openai")), /Output pruned to save context/)
     })
 
     it("does not prune while a management turn is open", async () => {
